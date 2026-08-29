@@ -1,0 +1,155 @@
+# rommd local daemon — test requests
+# Works with httpyac, VS Code REST Client, or JetBrains HTTP Client.
+
+@base = http://localhost:7497
+
+# ── Health ────────────────────────────────────────────────────────────────────
+
+### Health
+GET {{base}}/health
+
+###
+
+# ── Emulators ─────────────────────────────────────────────────────────────────
+
+### List emulators
+GET {{base}}/emulators
+
+###
+
+# ── Status ────────────────────────────────────────────────────────────────────
+
+### Status
+GET {{base}}/status
+
+###
+
+# ── Launch ────────────────────────────────────────────────────────────────────
+
+### Launch Kings Field
+# Fetches ROM metadata from RomM, downloads if not cached, then starts DuckStation.
+# Replace rom_id with the actual ID from your RomM instance.
+POST {{base}}/launch
+Content-Type: application/json
+
+{
+  "rom_id": 195,
+  "emulator": "duckstation"
+}
+
+###
+
+### Launch Kings Field with profile
+# The disc serial is auto-derived from SYSTEM.CNF or DuckStation's gamelist.cache.
+POST {{base}}/launch
+Content-Type: application/json
+
+{
+  "rom_id": 195,
+  "emulator": "duckstation",
+  "profile": {
+    "overlay": {
+      "GPU.ResolutionScale": "3",
+      "GPU.PGXPEnable": "true",
+      "CPU.OverclockEnable": "true",
+      "CPU.OverclockNumerator": "200",
+      "CPU.OverclockDenominator": "100"
+    }
+  }
+}
+
+###
+
+### Launch from local path
+# Skips RomM entirely — useful for ROMs you already have on disk.
+POST {{base}}/launch
+Content-Type: application/json
+
+{
+  "rom_id": 195,
+  "emulator": "duckstation",
+  "local_path": "/Users/arseen/Roms/psx/Kings Field (USA).iso"
+}
+
+###
+
+### Launch Mario vs. Donkey Kong (mGBA)
+# rom_id 20 — single .gba file, no serial, save named after ROM filename stem.
+POST {{base}}/launch
+Content-Type: application/json
+
+{
+  "rom_id": 20,
+  "emulator": "mgba"
+}
+
+###
+
+### Launch Mario vs. Donkey Kong with profile (mGBA)
+# 2× window size (960×640) + full GBA color correction.
+# Color correction makes the palette look as it did on original GBA hardware —
+# immediately noticeable: warmer shadows, less washed-out highlights.
+POST {{base}}/launch
+Content-Type: application/json
+
+{
+  "rom_id": 20,
+  "emulator": "mgba",
+  "profile": {
+    "overlay": {
+      "ports.qt.width": "960",
+      "ports.qt.height": "640",
+      "ports.qt.colorCorrection": "2",
+      "ports.qt.interframeBlending": "1"
+    }
+  }
+}
+
+###
+
+# ── Snapshot ──────────────────────────────────────────────────────────────────
+
+### Snapshot running DuckStation game
+# Reads the per-game gamesettings for whichever DuckStation game is currently
+# running, cleans it, and returns a ProfileBlob suitable for saving to RomM.
+POST {{base}}/snapshot
+Content-Type: application/json
+
+{
+  "emulator": "duckstation"
+}
+
+###
+
+### Snapshot running mGBA game
+# Returns the full mGBA config.ini as a flat overlay — useful as a base for
+# building or diffing profiles.
+POST {{base}}/snapshot
+Content-Type: application/json
+
+{
+  "emulator": "mgba"
+}
+
+###
+
+# ── Stop ──────────────────────────────────────────────────────────────────────
+
+### Stop by PID
+# Get the PID from the /launch or /status response.
+POST {{base}}/stop
+Content-Type: application/json
+
+{
+  "pid": 12345
+}
+
+###
+
+### Stop all
+POST {{base}}/stop
+Content-Type: application/json
+
+{}
+
+###

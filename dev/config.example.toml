@@ -1,0 +1,25 @@
+# rommd configuration — copy to ~/.config/rommd/config.toml and edit.
+
+[server]
+port = 7497
+
+# ROMs are stored under roms_dir/<platform_slug>/<rom_file>.
+# ~ is expanded automatically. Defaults to the platform data directory:
+#   Linux:   ~/.local/share/rommd/roms
+#   macOS:   ~/Library/Application Support/rommd/roms
+#   Windows: %LOCALAPPDATA%\rommd\roms
+# roms_dir = "~/Roms"
+
+[romm]
+base_url = "https://your-romm.example.com"
+
+# API token (recommended) — create one in RomM → Settings → API Tokens.
+api_token = "your_api_token_here"
+
+# Or authenticate with username and password instead:
+# username = "your_username"
+# password = "your_password"
+
+[emulators.duckstation]
+binary     = "/Applications/DuckStation.app/Contents/MacOS/DuckStation"
+config_dir = "~/Library/Application Support/DuckStation"
