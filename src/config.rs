@@ -196,6 +196,10 @@ port = 7497
 # binary     = "/Applications/mGBA.app/Contents/MacOS/mGBA"
 # config_dir = "~/.config/mgba"
 #
+# [emulators.dolphin]
+# binary     = "/Applications/Dolphin.app/Contents/MacOS/Dolphin"
+# config_dir = "~/Library/Application Support/Dolphin"
+#
 # Windows
 # -------
 # [emulators.duckstation]
@@ -206,6 +210,10 @@ port = 7497
 # binary     = "C:/Program Files/mGBA/mGBA.exe"
 # config_dir = "%APPDATA%/mGBA"
 #
+# [emulators.dolphin]
+# binary     = "C:/Program Files/Dolphin/Dolphin.exe"
+# config_dir = "%APPDATA%/Dolphin"
+#
 # Linux
 # -----
 # [emulators.duckstation]
@@ -215,6 +223,10 @@ port = 7497
 # [emulators.mgba]
 # binary     = "/usr/bin/mgba-qt"
 # config_dir = "~/.config/mgba"
+#
+# [emulators.dolphin]
+# binary     = "/usr/bin/dolphin-emu"
+# config_dir = "~/.config/dolphin-emu"
 "#;
 
 #[cfg(test)]

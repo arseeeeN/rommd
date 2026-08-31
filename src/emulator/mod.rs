@@ -1,3 +1,4 @@
+pub mod dolphin;
 pub mod duckstation;
 pub mod mgba;
 pub mod ps1;

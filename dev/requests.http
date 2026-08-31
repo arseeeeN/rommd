@@ -73,6 +73,51 @@ Content-Type: application/json
 
 ###
 
+### Launch Mario Party 8 (Dolphin)
+# Game ID (RM8E01 etc.) is auto-read from the RVZ/ISO/GCM disc header at launch.
+POST {{base}}/launch
+Content-Type: application/json
+
+{
+  "rom_id": 128,
+  "emulator": "dolphin"
+}
+
+###
+
+### Launch Mario Party 8 with profile (Dolphin)
+# Profile overlay targets GameSettings/<GameID>.ini (persistent, per-game).
+# Controls: WiimoteSource 0=None, 1=Emulated, 2=Real.
+# InternalResolution: value maps directly to the multiplier (3=3×, 4=4×, etc.)
+POST {{base}}/launch
+Content-Type: application/json
+
+{
+  "rom_id": 128,
+  "emulator": "dolphin",
+  "profile": {
+    "overlay": {
+      "Controls.WiimoteSource0": "2",
+      "Controls.WiimoteSource1": "2",
+      "Controls.WiimoteSource2": "2",
+      "Controls.WiimoteSource3": "2",
+      "Video_Settings.InternalResolution": "4"
+    }
+  }
+}
+
+###
+
+### Snapshot running Dolphin game
+POST {{base}}/snapshot
+Content-Type: application/json
+
+{
+  "emulator": "dolphin"
+}
+
+###
+
 ### Launch Mario vs. Donkey Kong (mGBA)
 # rom_id 20 — single .gba file, no serial, save named after ROM filename stem.
 POST {{base}}/launch

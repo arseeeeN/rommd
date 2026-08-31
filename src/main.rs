@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use config::Config;
-use emulator::{duckstation::DuckStation, mgba::MGba, Emulator};
+use emulator::{dolphin::Dolphin, duckstation::DuckStation, mgba::MGba, Emulator};
 use process::ProcessManager;
 use romm::RommClient;
 use server::state::AppState;
@@ -39,6 +39,8 @@ async fn main() -> Result<()> {
     emulators.insert(ds.id().to_owned(), Arc::new(ds));
     let mgba = MGba;
     emulators.insert(mgba.id().to_owned(), Arc::new(mgba));
+    let dolphin = Dolphin;
+    emulators.insert(dolphin.id().to_owned(), Arc::new(dolphin));
 
     let state = Arc::new(AppState {
         config,
