@@ -6,6 +6,7 @@ mod process;
 mod profile;
 mod romm;
 mod server;
+mod switch;
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -13,7 +14,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use config::Config;
-use emulator::{dolphin::Dolphin, duckstation::DuckStation, mgba::MGba, Emulator};
+use emulator::{dolphin::Dolphin, duckstation::DuckStation, mgba::MGba, ryujinx::Ryujinx, Emulator};
 use process::ProcessManager;
 use romm::RommClient;
 use server::state::AppState;
@@ -41,6 +42,8 @@ async fn main() -> Result<()> {
     emulators.insert(mgba.id().to_owned(), Arc::new(mgba));
     let dolphin = Dolphin;
     emulators.insert(dolphin.id().to_owned(), Arc::new(dolphin));
+    let ryujinx = Ryujinx;
+    emulators.insert(ryujinx.id().to_owned(), Arc::new(ryujinx));
 
     let state = Arc::new(AppState {
         config,

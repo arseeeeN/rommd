@@ -2,6 +2,7 @@ pub mod dolphin;
 pub mod duckstation;
 pub mod mgba;
 pub mod ps1;
+pub mod ryujinx;
 
 use anyhow::Result;
 use async_trait::async_trait;

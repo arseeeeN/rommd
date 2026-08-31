@@ -108,6 +108,20 @@ Content-Type: application/json
 
 ###
 
+### Launch Super Mario Odyssey (Ryujinx)
+# Title ID is read from the NSP header using prod.keys when not in the filename.
+# Save sync is skipped — Ryujinx stores saves in runtime-indexed slot directories
+# (bis/user/save/<id>/0/ and .../1/) which require recursive sync (not yet implemented).
+POST {{base}}/launch
+Content-Type: application/json
+
+{
+  "rom_id": 198,
+  "emulator": "ryujinx"
+}
+
+###
+
 ### Snapshot running Dolphin game
 POST {{base}}/snapshot
 Content-Type: application/json

@@ -378,6 +378,25 @@ async fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
 /// Find the file to launch from an extracted ROM directory.
 /// Prefers .m3u (multi-disc games); falls back to the single non-zip file
 /// for ROMs that RomM stores compressed but are really single-file (e.g. GBA).
+async fn first_m3u_entry(m3u_path: &Path, dir: &Path) -> Option<PathBuf> {
+    let content = tokio::fs::read_to_string(m3u_path).await.ok()?;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // Skip entries in subdirectories — the base game is always at the root.
+        if line.contains('/') || line.contains('\\') {
+            continue;
+        }
+        let candidate = dir.join(line);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 async fn find_launch_file(dir: &Path) -> Result<Option<PathBuf>> {
     let mut entries = tokio::fs::read_dir(dir).await?;
     let mut m3u: Option<PathBuf> = None;
@@ -397,11 +416,29 @@ async fn find_launch_file(dir: &Path) -> Result<Option<PathBuf>> {
         }
     }
 
-    // Prefer playlist > cue sheet > lone file. .bin files alongside a .cue are
-    // not launch targets on their own — the .cue references them.
-    if let Some(m3u) = m3u { return Ok(Some(m3u)); }
+    // .m3u is the right launch target for PS1/PS2 multi-disc games where the
+    // playlist ties together multiple .cue/.bin pairs. For modern single-container
+    // formats (.nsp, .xci) RomM still generates an .m3u, but the emulator expects
+    // the actual game file — skip .m3u when the other files are not disc images.
+    let is_disc_game = !others.is_empty()
+        && others.iter().all(|p| {
+            matches!(
+                p.extension().and_then(|e| e.to_str()),
+                Some("bin") | Some("iso") | Some("img") | Some("chd") | Some("sbi")
+            )
+        });
+    if is_disc_game {
+        if let Some(m3u) = m3u { return Ok(Some(m3u)); }
+    }
     if let Some(cue) = cue { return Ok(Some(cue)); }
     if others.len() == 1 { return Ok(others.into_iter().next()); }
+    // Multiple non-disc files (e.g. base + update + DLC all at the top level):
+    // treat the .m3u as an ordered index — the base game is listed first.
+    if let Some(m3u_path) = m3u {
+        if let Some(primary) = first_m3u_entry(&m3u_path, dir).await {
+            return Ok(Some(primary));
+        }
+    }
     Ok(None)
 }
 

@@ -200,6 +200,10 @@ port = 7497
 # binary     = "/Applications/Dolphin.app/Contents/MacOS/Dolphin"
 # config_dir = "~/Library/Application Support/Dolphin"
 #
+# [emulators.ryujinx]
+# binary     = "/Applications/Ryujinx.app/Contents/MacOS/Ryujinx"
+# config_dir = "~/Library/Application Support/Ryujinx"
+#
 # Windows
 # -------
 # [emulators.duckstation]
@@ -214,6 +218,10 @@ port = 7497
 # binary     = "C:/Program Files/Dolphin/Dolphin.exe"
 # config_dir = "%APPDATA%/Dolphin"
 #
+# [emulators.ryujinx]
+# binary     = "C:/Program Files/Ryujinx/Ryujinx.exe"
+# config_dir = "%APPDATA%/Ryujinx"
+#
 # Linux
 # -----
 # [emulators.duckstation]
@@ -227,6 +235,10 @@ port = 7497
 # [emulators.dolphin]
 # binary     = "/usr/bin/dolphin-emu"
 # config_dir = "~/.config/dolphin-emu"
+#
+# [emulators.ryujinx]
+# binary     = "/usr/bin/Ryujinx"
+# config_dir = "~/.config/Ryujinx"
 "#;
 
 #[cfg(test)]
