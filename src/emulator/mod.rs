@@ -69,6 +69,17 @@ pub trait Emulator: Send + Sync {
         None
     }
 
+    /// Find the emulator-specific save directory for this game. Returns `None`
+    /// to fall back to the generic `saves_dir()`. Override for emulators whose
+    /// saves live in runtime-assigned directories (e.g. Ryujinx slot dirs).
+    async fn game_saves_dir(
+        &self,
+        _config: &EmulatorConfig,
+        _game_id: &str,
+    ) -> Option<PathBuf> {
+        None
+    }
+
     /// Compute the filename prefixes for save and savestate file filtering.
     /// The default implementation uses `game_id` for both; override when
     /// saves and savestates follow different naming conventions.

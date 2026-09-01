@@ -72,12 +72,22 @@ pub async fn launch(
     let saves_dir = emulator.saves_dir(emu_config);
     let states_dir = emulator.states_dir(emu_config);
 
+    // Resolve game-specific save slot dir for emulators that use one (Ryujinx).
+    let slot_dir = match &game_id {
+        Some(id) => emulator.game_saves_dir(emu_config, id).await,
+        None => None,
+    };
+
     // Upload any existing local saves to RomM before the session starts.
     // This bootstraps saves that predate rommd; the on-exit sync is still
     // mtime-filtered so it only uploads what changed during this session.
     if let Some(romm) = &state.romm {
-        process::sync_saves_pre_launch(romm, req.rom_id, &req.emulator, &saves_dir, &save_filter).await;
-        process::sync_states_pre_launch(romm, req.rom_id, &req.emulator, &states_dir, &save_filter).await;
+        if let Some(ref slot) = slot_dir {
+            process::sync_profile_saves_pre_launch(romm, req.rom_id, &req.emulator, slot).await;
+        } else {
+            process::sync_saves_pre_launch(romm, req.rom_id, &req.emulator, &saves_dir, &save_filter).await;
+            process::sync_states_pre_launch(romm, req.rom_id, &req.emulator, &states_dir, &save_filter).await;
+        }
     }
 
     let (child, launch_ctx) = emulator
@@ -100,6 +110,7 @@ pub async fn launch(
                 rom_path,
                 started_at,
                 launch_ctx,
+                slot_dir,
             },
         )
         .await;

@@ -2,12 +2,99 @@ use anyhow::{Context, Result};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-/// Extract the Switch title ID from an NSP file.
+struct Pfs0Entry {
+    data_offset: u64,
+    data_size: u64,
+    name_offset: u32,
+}
+
+/// Parse the PFS0 (NSP) directory and return (entries, string_table, data_base).
+/// `data_base` is the absolute file offset where file payloads begin.
+fn read_pfs0_index(f: &mut std::fs::File) -> Result<(Vec<Pfs0Entry>, Vec<u8>, u64)> {
+    let mut magic = [0u8; 4];
+    f.read_exact(&mut magic)?;
+    anyhow::ensure!(&magic == b"PFS0", "not a PFS0/NSP file (magic {:?})", magic);
+
+    let num_files = read_u32_le(f)?;
+    let string_table_size = read_u32_le(f)?;
+    let _reserved = read_u32_le(f)?;
+
+    let mut entries = Vec::with_capacity(num_files as usize);
+    for _ in 0..num_files {
+        let data_offset = read_u64_le(f)?;
+        let data_size = read_u64_le(f)?;
+        let name_offset = read_u32_le(f)?;
+        let _reserved = read_u32_le(f)?;
+        entries.push(Pfs0Entry { data_offset, data_size, name_offset });
+    }
+
+    let mut string_table = vec![0u8; string_table_size as usize];
+    f.read_exact(&mut string_table)?;
+
+    let data_base = f.stream_position()?;
+    Ok((entries, string_table, data_base))
+}
+
+/// Extract the Switch title ID from an NSP by reading the ticket (`.tik`) file.
+///
+/// The ticket's Rights ID is in plaintext at a fixed offset; its first 8 bytes
+/// are the title ID (big-endian). No cryptographic keys are required.
+pub fn read_title_id_from_ticket(nsp_path: &Path) -> Result<u64> {
+    let mut f = std::fs::File::open(nsp_path)
+        .with_context(|| format!("opening {}", nsp_path.display()))?;
+
+    let (entries, string_table, data_base) = read_pfs0_index(&mut f)?;
+
+    for entry in &entries {
+        if !cstr_at(&string_table, entry.name_offset as usize).ends_with(".tik") {
+            continue;
+        }
+        // Need at least enough bytes to reach the Rights ID.
+        // For RSA-2048 tickets (most common), Rights ID is at 0x1A8.
+        let read_len = entry.data_size.min(0x200) as usize;
+        anyhow::ensure!(read_len >= 0x1C0, "ticket too small ({} bytes)", read_len);
+        let mut tik = vec![0u8; read_len];
+        f.seek(SeekFrom::Start(data_base + entry.data_offset))?;
+        f.read_exact(&mut tik)?;
+
+        // Body offset depends on the signature type prepended to the ticket.
+        // The Rights ID is at body_offset + 0x68 (16 bytes); title ID = first 8 bytes (BE).
+        let sig_type = u32::from_le_bytes(tik[0..4].try_into().unwrap());
+        let body_offset: usize = match sig_type {
+            0x00010000 | 0x00010003 => 4 + 512 + 60, // RSA-4096 (SHA-1 / SHA-256)
+            0x00010001 | 0x00010004 => 4 + 256 + 60, // RSA-2048 (SHA-1 / SHA-256); Switch retail uses 0x00010004
+            0x00010002 | 0x00010005 => 4 + 60 + 64,  // ECDSA (SHA-1 / SHA-256)
+            _ => anyhow::bail!("unsupported ticket signature type: {:#010x}", sig_type),
+        };
+        let rights_id_offset = body_offset + 0x68;
+        anyhow::ensure!(
+            read_len >= rights_id_offset + 8,
+            "ticket too small for rights ID (need {} bytes, have {})",
+            rights_id_offset + 8,
+            read_len
+        );
+        let title_id =
+            u64::from_be_bytes(tik[rights_id_offset..rights_id_offset + 8].try_into().unwrap());
+        anyhow::ensure!(
+            (title_id >> 56) == 0x01,
+            "rights ID title ID doesn't look like a valid Switch title: {:#018x}",
+            title_id
+        );
+        return Ok(title_id);
+    }
+
+    anyhow::bail!("no .tik file found in NSP")
+}
+
+/// Extract the Switch title ID from an NSP file via NCA header decryption.
 ///
 /// Strategy:
 /// 1. Parse the PFS0 container to find the `.cnmt.nca` (content meta NCA).
 /// 2. Decrypt NCA header sector 1 with `header_key` from prod.keys (AES-XTS).
 /// 3. Read the title ID (u64 LE) at decrypted offset 0x10.
+///
+/// This is a fallback for ticketless NSPs. Requires a fully derived `header_key`
+/// in prod.keys (exported by tools like Lockpick_RCM with key derivation enabled).
 pub fn read_title_id_from_nsp(nsp_path: &Path, prod_keys_path: &Path) -> Result<u64> {
     let header_key = parse_header_key(prod_keys_path)
         .with_context(|| format!("reading header_key from {}", prod_keys_path.display()))?;
@@ -53,32 +140,7 @@ fn extract_cnmt_nca_header(nsp_path: &Path) -> Result<Vec<u8>> {
     let mut f = std::fs::File::open(nsp_path)
         .with_context(|| format!("opening {}", nsp_path.display()))?;
 
-    let mut magic = [0u8; 4];
-    f.read_exact(&mut magic)?;
-    anyhow::ensure!(&magic == b"PFS0", "not a PFS0/NSP file (magic {:?})", magic);
-
-    let num_files = read_u32_le(&mut f)?;
-    let string_table_size = read_u32_le(&mut f)?;
-    let _reserved = read_u32_le(&mut f)?;
-
-    struct Entry {
-        data_offset: u64,
-        data_size: u64,
-        name_offset: u32,
-    }
-    let mut entries = Vec::with_capacity(num_files as usize);
-    for _ in 0..num_files {
-        let data_offset = read_u64_le(&mut f)?;
-        let data_size = read_u64_le(&mut f)?;
-        let name_offset = read_u32_le(&mut f)?;
-        let _reserved = read_u32_le(&mut f)?;
-        entries.push(Entry { data_offset, data_size, name_offset });
-    }
-
-    let mut string_table = vec![0u8; string_table_size as usize];
-    f.read_exact(&mut string_table)?;
-
-    let data_base = f.stream_position()?;
+    let (entries, string_table, data_base) = read_pfs0_index(&mut f)?;
 
     for entry in &entries {
         if cstr_at(&string_table, entry.name_offset as usize).ends_with(".cnmt.nca") {
@@ -90,7 +152,7 @@ fn extract_cnmt_nca_header(nsp_path: &Path) -> Result<Vec<u8>> {
         }
     }
 
-    anyhow::bail!("no .cnmt.nca found in NSP (checked {} files)", num_files)
+    anyhow::bail!("no .cnmt.nca found in NSP (checked {} files)", entries.len())
 }
 
 /// Extract the title ID from the first two XTS sectors of an NCA header.
@@ -168,6 +230,34 @@ fn gf128_mul_alpha(t: &mut [u8; 16]) {
         t[i] = (t[i] << 1) | (t[i - 1] >> 7);
     }
     t[0] = (t[0] << 1) ^ if carry != 0 { 0x87 } else { 0 };
+}
+
+/// Extract a Switch title ID from a filename's bracket notation, e.g.
+/// `Super Mario Odyssey[0100000000010000][V0].nsp` → `0x0100000000010000`.
+///
+/// Only returns an ID if it is exactly 16 hex chars and the top byte is 0x01
+/// (all retail Switch applications start with 0x01xxxxxxxxxxxxxx).
+pub fn title_id_from_filename(path: &Path) -> Option<u64> {
+    let stem = path.file_stem()?.to_str()?;
+    // Scan for [...] tokens that contain exactly 16 hex characters.
+    let mut start = 0;
+    while let Some(open) = stem[start..].find('[') {
+        let abs_open = start + open;
+        if let Some(close) = stem[abs_open..].find(']') {
+            let token = &stem[abs_open + 1..abs_open + close];
+            if token.len() == 16 && token.chars().all(|c| c.is_ascii_hexdigit()) {
+                if let Ok(id) = u64::from_str_radix(token, 16) {
+                    if (id >> 56) == 0x01 {
+                        return Some(id);
+                    }
+                }
+            }
+            start = abs_open + close + 1;
+        } else {
+            break;
+        }
+    }
+    None
 }
 
 fn cstr_at(table: &[u8], offset: usize) -> &str {

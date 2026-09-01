@@ -23,6 +23,10 @@ pub struct GameProcess {
     pub rom_path: PathBuf,
     pub started_at: SystemTime,
     pub launch_ctx: LaunchContext,
+    /// For emulators with profile-dir saves (e.g. Ryujinx): the resolved save
+    /// slot directory. When set, profile-aware sync is used instead of the
+    /// standard flat-file sync.
+    pub slot_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -236,6 +240,140 @@ pub async fn sync_states_pre_launch(
     }
 }
 
+/// Pre-launch save sync for profile-dir emulators (Ryujinx).
+///
+/// `slot_dir` is the resolved save slot (e.g. `bis/user/save/0000000000000001/`).
+/// Each immediate subdir of `slot_dir` is a profile (`0/`, `1/`); its name becomes
+/// the RomM `slot` parameter. Files within each profile dir are synced flat.
+pub async fn sync_profile_saves_pre_launch(
+    romm: &RommClient,
+    rom_id: i64,
+    emulator: &str,
+    slot_dir: &Path,
+) {
+    let romm_saves = match romm.get_saves(rom_id).await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("could not fetch RomM saves for rom {}: {}", rom_id, e);
+            return;
+        }
+    };
+
+    let mut local_seen: HashSet<(String, String)> = HashSet::new(); // (profile, filename)
+
+    // ── local files ────────────────────────────────────────────────────────────
+    // If the slot dir doesn't exist yet (game never run before), there's nothing
+    // to upload; we still fall through to download any saves already in RomM.
+    if let Ok(mut rd) = tokio::fs::read_dir(slot_dir).await {
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let profile_dir = entry.path();
+            if !profile_dir.is_dir() {
+                continue;
+            }
+            let profile = entry.file_name().to_string_lossy().into_owned();
+
+            for (path, local_mtime) in collect_save_files(&profile_dir, "").await {
+                let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                local_seen.insert((profile.clone(), name.clone()));
+
+                let romm_save = romm_saves.iter().find(|s| {
+                    s.file_name == name && s.slot.as_deref() == Some(&profile)
+                });
+                match romm_save {
+                    None => {
+                        match romm.upload_save(rom_id, emulator, Some(&profile), &path).await {
+                            Ok(()) => info!("pre-launch: uploaded {}/{} (not in RomM)", profile, name),
+                            Err(e) => warn!("pre-launch upload failed for {}: {}", path.display(), e),
+                        }
+                    }
+                    Some(save) => {
+                        let romm_newer = parse_romm_time(&save.updated_at)
+                            .map_or(false, |t| t > local_mtime);
+                        if romm_newer {
+                            match romm.download_save(save.id, &path).await {
+                                Ok(()) => info!("pre-launch: downloaded {}/{} (RomM newer)", profile, name),
+                                Err(e) => warn!("pre-launch download failed for {}: {}", path.display(), e),
+                            }
+                        } else {
+                            match romm.upload_save(rom_id, emulator, Some(&profile), &path).await {
+                                Ok(()) => info!("pre-launch: uploaded {}/{} (local newer)", profile, name),
+                                Err(e) => warn!("pre-launch upload failed for {}: {}", path.display(), e),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── RomM saves not present locally ────────────────────────────────────────
+    for save in &romm_saves {
+        if save.emulator.as_deref() != Some(emulator) {
+            continue;
+        }
+        let profile = match &save.slot {
+            Some(s) => s.clone(),
+            None => continue,
+        };
+        if local_seen.contains(&(profile.clone(), save.file_name.clone())) {
+            continue;
+        }
+        let profile_dir = slot_dir.join(&profile);
+        if let Err(e) = tokio::fs::create_dir_all(&profile_dir).await {
+            warn!("could not create profile dir {}: {}", profile_dir.display(), e);
+            continue;
+        }
+        let dest = profile_dir.join(&save.file_name);
+        match romm.download_save(save.id, &dest).await {
+            Ok(()) => info!("pre-launch: downloaded {}/{} (not present locally)", profile, save.file_name),
+            Err(e) => warn!("pre-launch download failed for {}: {}", dest.display(), e),
+        }
+    }
+}
+
+/// Post-exit save sync for profile-dir emulators (Ryujinx).
+/// Uploads files modified since session start from each profile subdir.
+async fn sync_profile_saves(romm: &RommClient, game: &GameProcess, slot_dir: &Path) {
+    let mut rd = match tokio::fs::read_dir(slot_dir).await {
+        Ok(e) => e,
+        Err(e) => {
+            warn!("could not read slot dir {}: {}", slot_dir.display(), e);
+            return;
+        }
+    };
+
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        let profile_dir = entry.path();
+        if !profile_dir.is_dir() {
+            continue;
+        }
+        let profile = entry.file_name().to_string_lossy().into_owned();
+
+        let mut files = match tokio::fs::read_dir(&profile_dir).await {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        while let Ok(Some(file_entry)) = files.next_entry().await {
+            let path = file_entry.path();
+            if path.is_dir() {
+                continue;
+            }
+            let modified = match std::fs::metadata(&path).and_then(|m| m.modified()) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            if modified <= game.started_at {
+                continue;
+            }
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            match romm.upload_save(game.rom_id, &game.emulator, Some(&profile), &path).await {
+                Ok(()) => info!("synced {}/{} to RomM", profile, name),
+                Err(e) => warn!("failed to sync {}: {}", path.display(), e),
+            }
+        }
+    }
+}
+
 async fn collect_save_files(dir: &Path, game_id: &str) -> Vec<(PathBuf, SystemTime)> {
     let mut result = Vec::new();
     let mut entries = match tokio::fs::read_dir(dir).await {
@@ -304,19 +442,23 @@ pub fn monitor(
             }
 
             if let Some(romm) = romm {
-                // Re-derive the save filter now that the emulator has exited.
-                // DuckStation (and others) write their gamelist cache on shutdown,
-                // so a first-session game that had no title entry at launch time
-                // will have one now — giving us the proper memcard filename prefix.
-                let save_filter = {
-                    let fresh = emulator.save_filter(
-                        &emu_config,
-                        &game.rom_path,
-                        game.game_id.as_deref(),
-                    );
-                    if !fresh.saves.is_empty() { fresh } else { game.save_filter.clone() }
-                };
-                sync_saves(&romm, &game, &save_filter, &saves_dir, &states_dir).await;
+                if let Some(ref slot_dir) = game.slot_dir {
+                    sync_profile_saves(&romm, &game, slot_dir).await;
+                } else {
+                    // Re-derive the save filter now that the emulator has exited.
+                    // DuckStation (and others) write their gamelist cache on shutdown,
+                    // so a first-session game that had no title entry at launch time
+                    // will have one now — giving us the proper memcard filename prefix.
+                    let save_filter = {
+                        let fresh = emulator.save_filter(
+                            &emu_config,
+                            &game.rom_path,
+                            game.game_id.as_deref(),
+                        );
+                        if !fresh.saves.is_empty() { fresh } else { game.save_filter.clone() }
+                    };
+                    sync_saves(&romm, &game, &save_filter, &saves_dir, &states_dir).await;
+                }
             }
         }
     });
