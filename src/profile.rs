@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 /// Portable settings overlay for one game on one emulator.
 /// Identity (emulator, game_id) is carried by the API request/response,
 /// not by the blob itself.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ProfileBlob {
-    /// Flat "Section.Key" → "Value" overlay in the emulator's native INI format.
+    /// Flat `"Section.Key"` → `"Value"` overlay in the emulator's native INI format.
     pub overlay: IndexMap<String, String>,
 }
 

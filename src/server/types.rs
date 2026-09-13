@@ -6,40 +6,47 @@ use crate::profile::ProfileBlob;
 
 // ── /launch ───────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LaunchRequest {
+    /// RomM ROM ID to download and launch.
     pub rom_id: i64,
+    /// Emulator ID (e.g. `"duckstation"`, `"ryujinx"`).
     pub emulator: String,
+    /// Optional settings overlay to apply before launch.
     pub profile: Option<ProfileBlob>,
     /// Skip RomM download and use this local path directly.
     pub local_path: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LaunchResponse {
+    /// PID of the spawned emulator process.
     pub pid: u32,
 }
 
 // ── /status ───────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct StatusResponse {
     pub running: Vec<RunningGameInfo>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RunningGameInfo {
     pub pid: u32,
     pub rom_id: i64,
     pub emulator: String,
     pub game_id: Option<String>,
+    #[schema(value_type = String)]
     pub rom_path: PathBuf,
+    /// Unix timestamp as `{"secs_since_epoch": u64, "nanos_since_epoch": u32}`.
+    #[schema(value_type = Object)]
     pub started_at: SystemTime,
 }
 
 // ── /stop ─────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct StopRequest {
     /// PID to stop. Omit to stop all running games.
     pub pid: Option<u32>,
@@ -47,12 +54,12 @@ pub struct StopRequest {
 
 // ── /snapshot ─────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SnapshotRequest {
     pub emulator: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SnapshotResponse {
     pub game_id: String,
     pub profile: ProfileBlob,
@@ -60,7 +67,7 @@ pub struct SnapshotResponse {
 
 // ── /health ───────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct HealthResponse {
     pub status: &'static str,
     pub version: &'static str,
@@ -69,7 +76,7 @@ pub struct HealthResponse {
 
 // ── /emulators ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct EmulatorInfo {
     pub id: String,
     pub display_name: String,

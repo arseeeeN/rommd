@@ -13,6 +13,13 @@ use super::types::*;
 use crate::error::AppError;
 use crate::process::{self, GameProcess, monitor};
 
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Daemon is running", body = HealthResponse)
+    )
+)]
 pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(HealthResponse {
         status: "ok",
@@ -21,6 +28,13 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     })
 }
 
+#[utoipa::path(
+    get,
+    path = "/emulators",
+    responses(
+        (status = 200, description = "List of known emulators", body = Vec<EmulatorInfo>)
+    )
+)]
 pub async fn list_emulators(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(emulator_list(&state))
 }
@@ -37,6 +51,16 @@ fn emulator_list(state: &AppState) -> Vec<EmulatorInfo> {
         .collect()
 }
 
+#[utoipa::path(
+    post,
+    path = "/launch",
+    request_body = LaunchRequest,
+    responses(
+        (status = 201, description = "Game launched", body = LaunchResponse),
+        (status = 400, description = "Emulator not configured or RomM not available"),
+        (status = 500, description = "Launch failed")
+    )
+)]
 pub async fn launch(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LaunchRequest>,
@@ -129,6 +153,13 @@ pub async fn launch(
     Ok((StatusCode::CREATED, Json(LaunchResponse { pid })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/status",
+    responses(
+        (status = 200, description = "Currently running games", body = StatusResponse)
+    )
+)]
 pub async fn status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let running = state
         .processes
@@ -148,6 +179,15 @@ pub async fn status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(StatusResponse { running })
 }
 
+#[utoipa::path(
+    post,
+    path = "/stop",
+    request_body = StopRequest,
+    responses(
+        (status = 204, description = "Game(s) stopped"),
+        (status = 500, description = "Error stopping process")
+    )
+)]
 pub async fn stop(
     State(state): State<Arc<AppState>>,
     Json(req): Json<StopRequest>,
@@ -167,6 +207,16 @@ pub async fn stop(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/snapshot",
+    request_body = SnapshotRequest,
+    responses(
+        (status = 200, description = "Emulator profile snapshot", body = SnapshotResponse),
+        (status = 400, description = "No game running for this emulator"),
+        (status = 500, description = "Snapshot failed")
+    )
+)]
 pub async fn snapshot(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SnapshotRequest>,
