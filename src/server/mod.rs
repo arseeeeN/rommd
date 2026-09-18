@@ -26,18 +26,22 @@ use crate::profile::ProfileBlob;
         handlers::status,
         handlers::stop,
         handlers::snapshot,
+        handlers::list_controllers,
     ),
     components(schemas(
         HealthResponse,
         EmulatorInfo,
         LaunchRequest,
         LaunchResponse,
+        ControllerSlot,
         StatusResponse,
         RunningGameInfo,
         StopRequest,
         SnapshotRequest,
         SnapshotResponse,
         ProfileBlob,
+        ControllerInfo,
+        ControllerType,
     ))
 )]
 struct ApiDoc;
@@ -50,6 +54,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/status", get(handlers::status))
         .route("/stop", post(handlers::stop))
         .route("/snapshot", post(handlers::snapshot))
+        .route("/controllers", get(handlers::list_controllers))
         .route("/openapi.json", get(|| async { Json(ApiDoc::openapi()) }))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

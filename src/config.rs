@@ -14,6 +14,54 @@ pub struct Config {
     pub roms_dir: Option<PathBuf>,
     #[serde(default)]
     pub emulators: HashMap<String, EmulatorConfig>,
+    #[serde(default)]
+    pub controllers: HashMap<String, ControllerConfig>,
+}
+
+/// Physical controller registered on this machine.
+///
+/// The `type` field selects the variant. Machine-specific details (MAC address,
+/// VID/PID, device expressions) stay local and are never sent to RomM.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ControllerConfig {
+    /// Generic Bluetooth gamepad identified by MAC address.
+    Bluetooth {
+        name: String,
+        mac: String,
+        /// SDL device name used to match the live SDL index at launch time.
+        sdl_name: Option<String>,
+    },
+    /// USB gamepad identified by VID + PID (+ optional serial for duplicates).
+    Usb {
+        name: String,
+        vid: String,
+        pid: String,
+        serial: Option<String>,
+    },
+    /// Wiimote managed directly by Dolphin's own Bluetooth stack.
+    DolphinWiimote {
+        name: String,
+        /// Dolphin device expression, e.g. `"Bluetooth/0/Nintendo RVL-CNT-01-TR"`.
+        device_expr: String,
+    },
+    /// DSU protocol device (phones, Steam Deck gyro, Wii U Gamepad via Cemuhook).
+    Dsu {
+        name: String,
+        /// DSU device expression, e.g. `"DSUClient/0/0"`.
+        device_expr: String,
+    },
+}
+
+impl ControllerConfig {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Bluetooth { name, .. }
+            | Self::Usb { name, .. }
+            | Self::DolphinWiimote { name, .. }
+            | Self::Dsu { name, .. } => name,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -106,6 +154,7 @@ impl Default for Config {
             romm: None,
             roms_dir: None,
             emulators: HashMap::new(),
+            controllers: HashMap::new(),
         }
     }
 }
@@ -239,6 +288,38 @@ port = 7497
 # [emulators.ryujinx]
 # binary     = "/usr/bin/Ryujinx"
 # config_dir = "~/.config/Ryujinx"
+
+# ── Controllers ───────────────────────────────────────────────────────────────
+# Register physical controllers here. The id (e.g. "dualshock_mine") is what
+# you reference in launch requests. These entries are machine-local and are
+# never sent to RomM.
+#
+# Bluetooth gamepad (identified by MAC address):
+# [controllers.dualshock_mine]
+# type     = "bluetooth"
+# name     = "My DualShock 4"
+# mac      = "AA:BB:CC:DD:EE:FF"
+# sdl_name = "DualSense Wireless Controller"   # used for live SDL index matching
+#
+# USB gamepad (identified by VID + PID):
+# [controllers.xbox_living_room]
+# type   = "usb"
+# name   = "Living Room Xbox"
+# vid    = "045E"
+# pid    = "02EA"
+# serial = ""   # optional — disambiguates multiple identical devices
+#
+# Wiimote managed by Dolphin's own Bluetooth stack:
+# [controllers.wiimote_1]
+# type        = "dolphin_wiimote"
+# name        = "Wiimote 1"
+# device_expr = "Bluetooth/0/Nintendo RVL-CNT-01-TR"
+#
+# DSU protocol device (phone, Steam Deck gyro, Wii U Gamepad via Cemuhook):
+# [controllers.phone_dsu]
+# type        = "dsu"
+# name        = "Phone (DSU)"
+# device_expr = "DSUClient/0/0"
 "#;
 
 #[cfg(test)]

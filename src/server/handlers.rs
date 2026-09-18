@@ -10,6 +10,7 @@ use tracing::info;
 
 use super::state::AppState;
 use super::types::*;
+use crate::config::ControllerConfig;
 use crate::error::AppError;
 use crate::process::{self, GameProcess, monitor};
 
@@ -205,6 +206,37 @@ pub async fn stop(
         }
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    get,
+    path = "/controllers",
+    responses(
+        (status = 200, description = "Locally configured controllers", body = Vec<ControllerInfo>)
+    )
+)]
+pub async fn list_controllers(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let mut controllers: Vec<ControllerInfo> = state
+        .config
+        .controllers
+        .iter()
+        .map(|(id, cfg)| {
+            let controller_type = match cfg {
+                ControllerConfig::Bluetooth { .. } => ControllerType::Bluetooth,
+                ControllerConfig::Usb { .. } => ControllerType::Usb,
+                ControllerConfig::DolphinWiimote { .. } => ControllerType::DolphinWiimote,
+                ControllerConfig::Dsu { .. } => ControllerType::Dsu,
+            };
+            ControllerInfo {
+                id: id.clone(),
+                name: cfg.name().to_owned(),
+                controller_type,
+                connected: None, // connection detection deferred
+            }
+        })
+        .collect();
+    controllers.sort_by(|a, b| a.id.cmp(&b.id));
+    Json(controllers)
 }
 
 #[utoipa::path(

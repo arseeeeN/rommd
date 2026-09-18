@@ -16,6 +16,18 @@ pub struct LaunchRequest {
     pub profile: Option<ProfileBlob>,
     /// Skip RomM download and use this local path directly.
     pub local_path: Option<String>,
+    /// Physical controller bindings for each slot. Omit to launch without
+    /// applying any controller configuration.
+    pub controller_slots: Option<Vec<ControllerSlot>>,
+}
+
+/// Binds a locally configured physical controller to an emulator slot.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ControllerSlot {
+    /// Emulator slot number (1-indexed).
+    pub slot: u8,
+    /// ID of a controller registered in the local rommd config.
+    pub controller_id: String,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -83,4 +95,27 @@ pub struct EmulatorInfo {
     /// Whether binary + config_dir have been set in the daemon config.
     /// False means the emulator is known but cannot be launched yet.
     pub configured: bool,
+}
+
+// ── /controllers ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ControllerInfo {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    #[schema(rename = "type")]
+    pub controller_type: ControllerType,
+    /// Whether the controller is currently connected. `null` when the
+    /// connection state cannot be determined (Dolphin Wiimotes, DSU devices).
+    pub connected: Option<bool>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ControllerType {
+    Bluetooth,
+    Usb,
+    DolphinWiimote,
+    Dsu,
 }
