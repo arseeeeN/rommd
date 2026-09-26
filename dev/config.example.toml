@@ -1,25 +1,67 @@
 # rommd configuration — copy to ~/.config/rommd/config.toml and edit.
+# Both ~ and %ENVVAR% are expanded in path fields.
 
 [server]
 port = 7497
 
 # ROMs are stored under roms_dir/<platform_slug>/<rom_file>.
-# ~ is expanded automatically. Defaults to the platform data directory:
+# Defaults to the platform data directory if not set:
 #   Linux:   ~/.local/share/rommd/roms
 #   macOS:   ~/Library/Application Support/rommd/roms
 #   Windows: %LOCALAPPDATA%\rommd\roms
-# roms_dir = "~/Roms"
+roms_dir = "~/Roms"
+
+# ── RomM ──────────────────────────────────────────────────────────────────────
 
 [romm]
-base_url = "https://your-romm.example.com"
+base_url = "https://romm.example.com"
 
 # API token (recommended) — create one in RomM → Settings → API Tokens.
 api_token = "your_api_token_here"
 
-# Or authenticate with username and password instead:
+# Or authenticate with username and password:
 # username = "your_username"
 # password = "your_password"
+
+# ── Emulators ─────────────────────────────────────────────────────────────────
 
 [emulators.duckstation]
 binary     = "/Applications/DuckStation.app/Contents/MacOS/DuckStation"
 config_dir = "~/Library/Application Support/DuckStation"
+
+[emulators.mgba]
+binary     = "/Applications/mGBA.app/Contents/MacOS/mGBA"
+config_dir = "~/.config/mgba"
+
+[emulators.dolphin]
+binary     = "/Applications/Dolphin.app/Contents/MacOS/Dolphin"
+config_dir = "~/Library/Application Support/Dolphin"
+
+[emulators.ryujinx]
+binary     = "/Applications/Ryujinx.app/Contents/MacOS/Ryujinx"
+config_dir = "~/Library/Application Support/Ryujinx"
+
+# ── Controllers ───────────────────────────────────────────────────────────────
+# The id (e.g. "dualshock_mine") is what you reference in launch requests.
+# These entries are machine-local and are never sent to RomM.
+
+[controllers.dualshock_mine]
+type     = "bluetooth"
+name     = "My DualShock 4"
+mac      = "AA:BB:CC:DD:EE:FF"
+sdl_name = "Wireless Controller"    # shown by `sdl2-controller-list` or similar
+
+[controllers.wiimote_1]
+type        = "dolphin_wiimote"
+name        = "Wiimote 1"
+device_expr = "Bluetooth/0/Nintendo RVL-CNT-01-TR"
+
+[controllers.wiimote_2]
+type        = "dolphin_wiimote"
+name        = "Wiimote 2"
+device_expr = "Bluetooth/1/Nintendo RVL-CNT-01-TR"
+
+[controllers.phone_dsu]
+type        = "dsu"
+name        = "Phone (DSU)"
+device_expr = "DSUClient/0/0"
