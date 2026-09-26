@@ -120,6 +120,11 @@ pub async fn sync_saves_pre_launch(
     let local = collect_save_files(saves_dir, game_id).await;
 
     // ── local files ────────────────────────────────────────────────────────────
+    // Pre-launch uploads only bootstrap files not yet in RomM. Files already in
+    // RomM are downloaded if RomM is newer, otherwise left alone — the post-exit
+    // sync uploads anything the game actually modified during the session. This
+    // prevents a ping-pong where downloading a file advances its local mtime past
+    // RomM's updated_at, triggering an upload next launch, and so on.
     let mut local_names: HashSet<String> = HashSet::new();
     for (path, local_mtime) in &local {
         let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
@@ -142,13 +147,8 @@ pub async fn sync_saves_pre_launch(
                         Ok(()) => info!("pre-launch: downloaded {} (RomM newer)", path.display()),
                         Err(e) => warn!("pre-launch download failed for {}: {}", path.display(), e),
                     }
-                } else {
-                    let slot = extract_slot(&name);
-                    match romm.upload_save(rom_id, emulator, slot.as_deref(), path).await {
-                        Ok(()) => info!("pre-launch: uploaded {} (local newer)", path.display()),
-                        Err(e) => warn!("pre-launch upload failed for {}: {}", path.display(), e),
-                    }
                 }
+                // local newer or equal: skip — post-exit sync handles modified files
             }
         }
     }
@@ -294,12 +294,8 @@ pub async fn sync_profile_saves_pre_launch(
                                 Ok(()) => info!("pre-launch: downloaded {}/{} (RomM newer)", profile, name),
                                 Err(e) => warn!("pre-launch download failed for {}: {}", path.display(), e),
                             }
-                        } else {
-                            match romm.upload_save(rom_id, emulator, Some(&profile), &path).await {
-                                Ok(()) => info!("pre-launch: uploaded {}/{} (local newer)", profile, name),
-                                Err(e) => warn!("pre-launch upload failed for {}: {}", path.display(), e),
-                            }
                         }
+                        // local newer or equal: skip — post-exit sync handles modified files
                     }
                 }
             }

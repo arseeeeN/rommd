@@ -203,9 +203,10 @@ fn aes_xts_decrypt_sector(
     let dec1 = Aes128::new_from_slice(key1)
         .map_err(|e| anyhow::anyhow!("AES-128 key1 init: {e}"))?;
 
-    // Initial tweak = AES_key2(sector_num as 128-bit little-endian, zero-padded).
+    // Nintendo XTS tweak: sector_num as a 128-bit big-endian integer (non-standard —
+    // IEEE P1619 uses little-endian; Nintendo puts the u64 in the high 8 bytes).
     let mut tweak = [0u8; 16];
-    tweak[..8].copy_from_slice(&sector_num.to_le_bytes());
+    tweak[8..].copy_from_slice(&sector_num.to_be_bytes());
     enc2.encrypt_block(GenericArray::from_mut_slice(&mut tweak));
 
     for chunk in sector.chunks_exact_mut(16) {
@@ -230,34 +231,6 @@ fn gf128_mul_alpha(t: &mut [u8; 16]) {
         t[i] = (t[i] << 1) | (t[i - 1] >> 7);
     }
     t[0] = (t[0] << 1) ^ if carry != 0 { 0x87 } else { 0 };
-}
-
-/// Extract a Switch title ID from a filename's bracket notation, e.g.
-/// `Super Mario Odyssey[0100000000010000][V0].nsp` → `0x0100000000010000`.
-///
-/// Only returns an ID if it is exactly 16 hex chars and the top byte is 0x01
-/// (all retail Switch applications start with 0x01xxxxxxxxxxxxxx).
-pub fn title_id_from_filename(path: &Path) -> Option<u64> {
-    let stem = path.file_stem()?.to_str()?;
-    // Scan for [...] tokens that contain exactly 16 hex characters.
-    let mut start = 0;
-    while let Some(open) = stem[start..].find('[') {
-        let abs_open = start + open;
-        if let Some(close) = stem[abs_open..].find(']') {
-            let token = &stem[abs_open + 1..abs_open + close];
-            if token.len() == 16 && token.chars().all(|c| c.is_ascii_hexdigit()) {
-                if let Ok(id) = u64::from_str_radix(token, 16) {
-                    if (id >> 56) == 0x01 {
-                        return Some(id);
-                    }
-                }
-            }
-            start = abs_open + close + 1;
-        } else {
-            break;
-        }
-    }
-    None
 }
 
 fn cstr_at(table: &[u8], offset: usize) -> &str {

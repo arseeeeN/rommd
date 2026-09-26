@@ -59,31 +59,12 @@ impl Emulator for Ryujinx {
             return None;
         }
         match crate::switch::read_title_id_from_nsp(rom_path, &keys) {
-            Ok(id) => return Some(format!("{:016x}", id)),
-            Err(e) => debug!("NCA header decryption failed for {} ({}), trying filename", rom_path.display(), e),
+            Ok(id) => Some(format!("{:016x}", id)),
+            Err(e) => {
+                warn!("could not read title ID from {}: {:#}", rom_path.display(), e);
+                None
+            }
         }
-
-        // Tier 3: filename bracket notation — e.g. `Game[0100000000010000][V0].nsp`.
-        // Used as a last resort when both the ticket and NCA header are unavailable
-        // (common for scene NSPs with zeroed tickets and unexported header keys).
-        // The ExtraData0 scan in game_saves_dir provides secondary verification:
-        // if the ID doesn't match any save slot, sync is skipped harmlessly.
-        if let Some(id) = crate::switch::title_id_from_filename(rom_path) {
-            warn!(
-                "using title ID {:016x} from filename for {} — \
-                 ticket was zeroed and NCA header decryption unavailable; \
-                 save sync may be skipped if no matching save slot exists",
-                id,
-                rom_path.display()
-            );
-            return Some(format!("{:016x}", id));
-        }
-
-        warn!(
-            "could not determine title ID for {} — save sync unavailable",
-            rom_path.display()
-        );
-        None
     }
 
     fn save_filter(
