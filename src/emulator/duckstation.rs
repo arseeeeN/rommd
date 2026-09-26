@@ -101,12 +101,12 @@ impl Emulator for DuckStation {
         SaveFilter { saves, states }
     }
 
-    fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf {
+    async fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf {
         read_folder(config, "MemoryCards", "Directory", "memcards")
     }
 
-    fn states_dir(&self, config: &EmulatorConfig) -> PathBuf {
-        read_folder(config, "Folders", "SaveStates", "savestates")
+    async fn states_dir(&self, config: &EmulatorConfig) -> Option<PathBuf> {
+        Some(read_folder(config, "Folders", "SaveStates", "savestates"))
     }
 }
 

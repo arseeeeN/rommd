@@ -88,14 +88,16 @@ impl Emulator for MGba {
         Ok(ProfileBlob::new(overlay))
     }
 
-    fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf {
+    async fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf {
         read_path_key(config, "savegamePath")
             .unwrap_or_else(|| config.config_dir.join("saves"))
     }
 
-    fn states_dir(&self, config: &EmulatorConfig) -> PathBuf {
-        read_path_key(config, "savestatePath")
-            .unwrap_or_else(|| config.config_dir.join("states"))
+    async fn states_dir(&self, config: &EmulatorConfig) -> Option<PathBuf> {
+        Some(
+            read_path_key(config, "savestatePath")
+                .unwrap_or_else(|| config.config_dir.join("states")),
+        )
     }
 }
 

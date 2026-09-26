@@ -94,8 +94,8 @@ pub async fn launch(
 
     let save_filter = emulator.save_filter(emu_config, &rom_path, game_id.as_deref());
 
-    let saves_dir = emulator.saves_dir(emu_config);
-    let states_dir = emulator.states_dir(emu_config);
+    let saves_dir = emulator.saves_dir(emu_config).await;
+    let states_dir = emulator.states_dir(emu_config).await;
 
     // Resolve game-specific save slot dir for emulators that use one (Ryujinx).
     let slot_dir = match &game_id {
@@ -111,7 +111,9 @@ pub async fn launch(
             process::sync_profile_saves_pre_launch(romm, req.rom_id, &req.emulator, slot).await;
         } else {
             process::sync_saves_pre_launch(romm, req.rom_id, &req.emulator, &saves_dir, &save_filter).await;
-            process::sync_states_pre_launch(romm, req.rom_id, &req.emulator, &states_dir, &save_filter).await;
+            if let Some(ref sd) = states_dir {
+                process::sync_states_pre_launch(romm, req.rom_id, &req.emulator, sd, &save_filter).await;
+            }
         }
     }
 
@@ -148,7 +150,7 @@ pub async fn launch(
         emulator.clone(),
         emu_config.clone(),
         saves_dir,
-        states_dir,
+        states_dir,  // Option<PathBuf>
     );
 
     Ok((StatusCode::CREATED, Json(LaunchResponse { pid })))

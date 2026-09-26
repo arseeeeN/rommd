@@ -59,8 +59,11 @@ pub trait Emulator: Send + Sync {
     /// and return a portable profile blob. For DuckStation, `game_id` is the disc serial.
     async fn snapshot(&self, config: &EmulatorConfig, game_id: &str) -> Result<ProfileBlob>;
 
-    fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf;
-    fn states_dir(&self, config: &EmulatorConfig) -> PathBuf;
+    async fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf;
+
+    /// Directory where this emulator stores save states, or `None` if the
+    /// emulator does not support save states (e.g. Ryujinx, Eden).
+    async fn states_dir(&self, config: &EmulatorConfig) -> Option<PathBuf>;
 
     /// Return the game identifier that can be derived from the ROM and the
     /// emulator's local state (config, cache files). Returns `None` when the

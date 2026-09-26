@@ -92,12 +92,12 @@ impl Emulator for Dolphin {
     // GC memory card saves live under GC/<REGION>/Card A/*.gci (GCI folder mode).
     // Wii saves are in the Wii/ NAND tree which is too complex to scope by game ID —
     // left for a future pass.
-    fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf {
+    async fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf {
         config.config_dir.join("GC")
     }
 
-    fn states_dir(&self, config: &EmulatorConfig) -> PathBuf {
-        config.config_dir.join("StateSaves")
+    async fn states_dir(&self, config: &EmulatorConfig) -> Option<PathBuf> {
+        Some(config.config_dir.join("StateSaves"))
     }
 }
 

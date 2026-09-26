@@ -86,10 +86,6 @@ impl Emulator for Ryujinx {
         None
     }
 
-    // Ryujinx stores saves under bis/user/save/<save_data_id>/ — a runtime-assigned
-    // index unrelated to the title ID. Each slot contains profile subdirectories (0/, 1/)
-    // whose contents are the actual save files. Syncing requires recursive directory
-    // traversal which the current SaveFilter prefix mechanism does not support.
     fn save_filter(
         &self,
         _config: &EmulatorConfig,
@@ -99,13 +95,12 @@ impl Emulator for Ryujinx {
         SaveFilter::default()
     }
 
-    fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf {
+    async fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf {
         config.config_dir.join("bis").join("user").join("save")
     }
 
-    // Ryujinx (and Eden) do not support emulator-level save states.
-    fn states_dir(&self, config: &EmulatorConfig) -> PathBuf {
-        config.config_dir.join("bis").join("user").join("save")
+    async fn states_dir(&self, _config: &EmulatorConfig) -> Option<PathBuf> {
+        None
     }
 
     /// Scan `bis/user/save/*/ExtraData0` for the slot whose title ID matches
@@ -113,7 +108,7 @@ impl Emulator for Ryujinx {
     /// hasn't been created yet (game not launched before, or first-ever save).
     async fn game_saves_dir(&self, config: &EmulatorConfig, game_id: &str) -> Option<PathBuf> {
         let title_id = u64::from_str_radix(game_id, 16).ok()?;
-        find_account_save_slot(&self.saves_dir(config), title_id).await
+        find_account_save_slot(&self.saves_dir(config).await, title_id).await
     }
 
     async fn launch(

@@ -421,7 +421,7 @@ pub fn monitor(
     emulator: Arc<dyn Emulator>,
     emu_config: EmulatorConfig,
     saves_dir: PathBuf,
-    states_dir: PathBuf,
+    states_dir: Option<PathBuf>,
 ) {
     tokio::spawn(async move {
         match child.wait().await {
@@ -457,7 +457,7 @@ pub fn monitor(
                         );
                         if !fresh.saves.is_empty() { fresh } else { game.save_filter.clone() }
                     };
-                    sync_saves(&romm, &game, &save_filter, &saves_dir, &states_dir).await;
+                    sync_saves(&romm, &game, &save_filter, &saves_dir, states_dir.as_deref()).await;
                 }
             }
         }
@@ -469,14 +469,16 @@ async fn sync_saves(
     game: &GameProcess,
     filter: &SaveFilter,
     saves_dir: &Path,
-    states_dir: &Path,
+    states_dir: Option<&Path>,
 ) {
     if filter.is_unscoped() {
         warn!("skipping save sync: no file prefix available for rom_id={}", game.rom_id);
         return;
     }
     sync_dir(romm, game.rom_id, &game.emulator, saves_dir, &filter.saves, true, game.started_at).await;
-    sync_dir(romm, game.rom_id, &game.emulator, states_dir, &filter.states, false, game.started_at).await;
+    if let Some(sd) = states_dir {
+        sync_dir(romm, game.rom_id, &game.emulator, sd, &filter.states, false, game.started_at).await;
+    }
 }
 
 /// Upload files in `dir` modified after `since`. When `game_id` is non-empty,
