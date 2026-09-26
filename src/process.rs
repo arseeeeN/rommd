@@ -274,6 +274,11 @@ pub async fn sync_profile_saves_pre_launch(
 
             for (path, local_mtime) in collect_save_files(&profile_dir, "").await {
                 let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                // Skip timestamped backup files (e.g. "Common [2026-09-01_12-00-00].bin").
+                // Ryujinx creates these alongside the canonical save files on each save.
+                if name.contains('[') {
+                    continue;
+                }
                 local_seen.insert((profile.clone(), name.clone()));
 
                 let romm_save = romm_saves.iter().find(|s| {
@@ -311,6 +316,9 @@ pub async fn sync_profile_saves_pre_launch(
             Some(s) => s.clone(),
             None => continue,
         };
+        if save.file_name.contains('[') {
+            continue; // skip timestamped backups already in RomM
+        }
         if local_seen.contains(&(profile.clone(), save.file_name.clone())) {
             continue;
         }
@@ -354,6 +362,11 @@ async fn sync_profile_saves(romm: &RommClient, game: &GameProcess, slot_dir: &Pa
             if path.is_dir() {
                 continue;
             }
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            // Skip timestamped backup files (e.g. "Common [2026-09-01_12-00-00].bin").
+            if name.contains('[') {
+                continue;
+            }
             let modified = match std::fs::metadata(&path).and_then(|m| m.modified()) {
                 Ok(t) => t,
                 Err(_) => continue,
@@ -361,7 +374,6 @@ async fn sync_profile_saves(romm: &RommClient, game: &GameProcess, slot_dir: &Pa
             if modified <= game.started_at {
                 continue;
             }
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
             match romm.upload_save(game.rom_id, &game.emulator, Some(&profile), &path).await {
                 Ok(()) => info!("synced {}/{} to RomM", profile, name),
                 Err(e) => warn!("failed to sync {}: {}", path.display(), e),
