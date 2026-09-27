@@ -281,8 +281,12 @@ pub async fn sync_profile_saves_pre_launch(
                 }
                 local_seen.insert((profile.clone(), name.clone()));
 
+                // Match by stem so a local `Common.bin` finds the RomM entry stored
+                // as `Common [timestamp].bin` (RomM adds timestamps on creation).
+                let local_stem = save_name_stem(&name);
                 let romm_save = romm_saves.iter().find(|s| {
-                    s.file_name == name && s.slot.as_deref() == Some(&profile)
+                    save_name_stem(&s.file_name) == local_stem
+                        && s.slot.as_deref() == Some(&profile)
                 });
                 match romm_save {
                     None => {
@@ -319,7 +323,9 @@ pub async fn sync_profile_saves_pre_launch(
         if save.file_name.contains('[') {
             continue; // skip timestamped backups already in RomM
         }
-        if local_seen.contains(&(profile.clone(), save.file_name.clone())) {
+        // Skip if we already handled this stem (local file exists with this stem).
+        let stem = save_name_stem(&save.file_name);
+        if local_seen.iter().any(|(p, n)| p == &profile && save_name_stem(n) == stem) {
             continue;
         }
         let profile_dir = slot_dir.join(&profile);
@@ -337,7 +343,18 @@ pub async fn sync_profile_saves_pre_launch(
 
 /// Post-exit save sync for profile-dir emulators (Ryujinx).
 /// Uploads files modified since session start from each profile subdir.
+/// Uses PUT (update by ID) when the save already exists in RomM to avoid
+/// accumulating timestamped duplicate entries.
 async fn sync_profile_saves(romm: &RommClient, game: &GameProcess, slot_dir: &Path) {
+    // Fetch current saves once up front so we can look up existing IDs.
+    let romm_saves = match romm.get_saves(game.rom_id).await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("could not fetch RomM saves for rom {}: {}", game.rom_id, e);
+            return;
+        }
+    };
+
     let mut rd = match tokio::fs::read_dir(slot_dir).await {
         Ok(e) => e,
         Err(e) => {
@@ -362,7 +379,7 @@ async fn sync_profile_saves(romm: &RommClient, game: &GameProcess, slot_dir: &Pa
             if path.is_dir() {
                 continue;
             }
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
             // Skip timestamped backup files (e.g. "Common [2026-09-01_12-00-00].bin").
             if name.contains('[') {
                 continue;
@@ -374,9 +391,29 @@ async fn sync_profile_saves(romm: &RommClient, game: &GameProcess, slot_dir: &Pa
             if modified <= game.started_at {
                 continue;
             }
-            match romm.upload_save(game.rom_id, &game.emulator, Some(&profile), &path).await {
-                Ok(()) => info!("synced {}/{} to RomM", profile, name),
-                Err(e) => warn!("failed to sync {}: {}", path.display(), e),
+
+            // Check if a save with the same stem already exists in RomM for this slot.
+            // Match by stem so `Common.bin` finds `Common [timestamp].bin` (RomM adds
+            // timestamps on creation; PUT updates in-place without adding a new entry).
+            let local_stem = save_name_stem(&name);
+            let existing = romm_saves.iter().find(|s| {
+                save_name_stem(&s.file_name) == local_stem
+                    && s.slot.as_deref() == Some(&profile)
+            });
+
+            match existing {
+                Some(save) => {
+                    match romm.update_save(save.id, &path).await {
+                        Ok(()) => info!("synced {}/{} to RomM (updated id={})", profile, name, save.id),
+                        Err(e) => warn!("failed to update save id={} {}: {}", save.id, path.display(), e),
+                    }
+                }
+                None => {
+                    match romm.upload_save(game.rom_id, &game.emulator, Some(&profile), &path).await {
+                        Ok(()) => info!("synced {}/{} to RomM (new)", profile, name),
+                        Err(e) => warn!("failed to sync {}: {}", path.display(), e),
+                    }
+                }
             }
         }
     }
@@ -544,6 +581,20 @@ async fn sync_dir(
             Ok(()) => info!("synced {} to RomM", path.display()),
             Err(e) => warn!("failed to sync {}: {}", path.display(), e),
         }
+    }
+}
+
+/// Strip the extension and any ` [timestamp]` suffix from a save filename.
+///
+/// RomM adds a timestamp when it stores saves, and Ryujinx does the same for
+/// its own backups. Stripping these lets us match a local `Common.bin` against
+/// a RomM-stored `Common [2026-09-27_08-46-10].bin`.
+fn save_name_stem(filename: &str) -> &str {
+    let no_ext = filename.rsplit_once('.').map_or(filename, |(s, _)| s);
+    if let Some(pos) = no_ext.rfind(" [") {
+        &no_ext[..pos]
+    } else {
+        no_ext
     }
 }
 

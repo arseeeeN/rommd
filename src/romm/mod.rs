@@ -242,6 +242,47 @@ impl RommClient {
         Ok(())
     }
 
+    /// Update an existing save in-place by ID.
+    ///
+    /// Use this instead of `upload_save` when a save already exists in RomM — the
+    /// PUT endpoint overwrites the stored file without creating a new entry, so we
+    /// never accumulate duplicate timestamped copies.
+    pub async fn update_save(&self, save_id: i64, file_path: &Path) -> Result<()> {
+        let token = self.tokens.get_token().await?;
+        let file_name = file_path
+            .file_name()
+            .context("save file has no name")?
+            .to_string_lossy()
+            .into_owned();
+
+        let file = tokio::fs::File::open(file_path)
+            .await
+            .with_context(|| format!("opening save {}", file_path.display()))?;
+        let part = reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
+            ReaderStream::new(file),
+        ))
+        .file_name(file_name);
+        let form = reqwest::multipart::Form::new().part("saveFile", part);
+
+        let resp = self
+            .client
+            .put(format!("{}/api/saves/{}", self.base_url, save_id))
+            .bearer_auth(token)
+            .multipart(form)
+            .send()
+            .await
+            .context("PUT /api/saves/{id}")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("save update failed: {} — {}", status, body);
+        }
+
+        debug!("updated save id={} with {}", save_id, file_path.display());
+        Ok(())
+    }
+
     pub async fn download_save(&self, save_id: i64, dest_path: &Path) -> Result<()> {
         let bytes = self
             .authed_get(&format!("{}/api/saves/{}/content", self.base_url, save_id))
