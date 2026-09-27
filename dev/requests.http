@@ -108,6 +108,18 @@ Content-Type: application/json
 
 ###
 
+### Launch Mario Kart: Double Dash!! (Dolphin, GameCube)
+# The game's .gci files in GC/<region>/Card A/ sync as one flat zip (argosy's format).
+POST {{base}}/launch
+Content-Type: application/json
+
+{
+  "rom_id": 66,
+  "emulator": "dolphin"
+}
+
+###
+
 ### Launch Super Mario Odyssey (Ryujinx)
 # Title ID comes from the NSP ticket, or the NCA header via prod.keys.
 # The save dir is synced as one zip shared with Eden (and argosy-launcher).
