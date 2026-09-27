@@ -1,0 +1,52 @@
+# Backlog
+
+Deferred work with enough context to pick it up later.
+
+## Create Ryujinx save slots so a fresh install can restore before first boot
+
+**Problem.** A Ryujinx save slot (`bis/user/save/<id>/`) only exists after
+Ryujinx has booted the game once, because the slot must also be registered in
+its save index. On a fresh install rommd has nowhere to restore a RomM save
+before launch, so the first session starts from a new game. The fallback today:
+post-exit re-resolves the slot, and since a save created that session never wins
+a conflict, the RomM save is restored into it for the *next* launch.
+
+**Rejected: boot, watch, kill, relaunch.** The user would see the game boot
+twice (10–60 s with shader compilation). Killing Ryujinx right after the slot
+appears can interrupt its write to `imkvdb.arc`, which indexes every game's
+saves. And some games only create their save at the title screen or after a
+prompt, so the watch could wait indefinitely.
+
+**Proposed: create the slot the way Ryujinx does.**
+- Allocate a new save data ID and create `bis/user/save/<id>/0/` and `1/`.
+- Write `ExtraData0` / `ExtraData1` (SaveDataAttribute: program ID u64 at 0x00,
+  user ID at 0x08, type u8 at 0x20 — 1 Account, 3 Device — plus owner ID, sizes).
+- Add the entry to the save index `bis/system/save/8000000000000000/0/imkvdb.arc`
+  (LibHac KVDB: `IMKV` header, `IMEN` entries keyed by the 0x40-byte
+  SaveDataAttribute, value = SaveDataIndexerValue with the save data ID).
+- Find out how the last published save data ID is persisted so new IDs don't
+  collide.
+- Pick the user ID from Ryujinx's active profile (`system/Profiles.json`) for
+  Account saves.
+
+**Needs.** Real Ryujinx files to build and verify against, e.g. a copy of
+`bis/system/save/8000000000000000/` and one `bis/user/save/<slot>/` from an
+existing install. Back up `imkvdb.arc` before every write, and refuse to write
+if its format isn't the one we recognise. Keep the post-exit fallback.
+
+## Register rommd as a RomM device
+
+RomM (5.x) tracks per-device sync state (`/api/devices`, `device_id` on save
+uploads and downloads, `device_syncs` on saves) and offers `POST
+/api/sync/negotiate`, which argosy-launcher uses. rommd keeps its own three-way
+sync state instead, because negotiate expects the client to track the
+last-synced hash anyway, matches saves on `emulator` (at odds with the Switch
+save family), and covers saves but not states. Registering a device and passing
+`device_id` would still let RomM's own tracking and UI see rommd.
+
+## Content hashes for save states
+
+RomM returns no `content_hash` for states, so state sync falls back to comparing
+`updated_at` with the last synced value. Differing states with no sync history
+always count as a conflict, resolved newest-wins with a backup. Revisit if RomM
+adds hashes for states.

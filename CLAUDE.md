@@ -131,6 +131,9 @@ devices. Write endpoints and `/controllers/scan` are explicitly deferred.
 
 See `dev/controller-design.md` for the full design rationale.
 
+Deferred work (Ryujinx slot creation, RomM device registration, state hashes)
+is tracked in `dev/backlog.md`.
+
 ## RomM API
 
 Base URL and credentials are in config. The client is `src/romm/mod.rs`.
