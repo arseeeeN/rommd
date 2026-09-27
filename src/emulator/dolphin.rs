@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tokio::process::Child;
 use tracing::{debug, warn};
 
-use super::{Emulator, FileMatcher, FileSet, GameSaveDir, LaunchContext, SaveLayout, SaveSet};
+use super::{Emulator, FileSet, GameSaveDir, LaunchContext, SaveLayout, SaveSet};
 use crate::config::EmulatorConfig;
 use crate::ini::IniFile;
 use crate::profile::ProfileBlob;
@@ -170,7 +170,7 @@ fn gc_saves(config: &EmulatorConfig, ini: Option<&IniFile>, game_id: &str) -> Op
             return None;
         }
     }
-    let matcher = FileMatcher::Gci(game_id.to_owned());
+
     // Newer Dolphin versions call the override GCIFolderAPath.
     let dir = match ini_value(ini, "Core", "GCIFolderAPath")
         .or_else(|| ini_value(ini, "Core", "GCIFolderAPathOverride"))
@@ -183,11 +183,11 @@ fn gc_saves(config: &EmulatorConfig, ini: Option<&IniFile>, game_id: &str) -> Op
             GC_REGIONS
                 .iter()
                 .map(|region| gc.join(region).join("Card A"))
-                .find(|dir| !FileSet { dir: dir.clone(), matcher: matcher.clone() }.files().is_empty())
+                .find(|dir| !FileSet::gci(dir.clone(), game_id).files().is_empty())
                 .unwrap_or_else(|| gc.join(gc_region_dir(game_id)).join("Card A"))
         }
     };
-    Some(SaveSet::Bundle(FileSet { dir, matcher }))
+    Some(SaveSet::Bundle(FileSet::gci(dir, game_id)))
 }
 
 /// Region folder Dolphin uses for a game, from the region code in the 4th

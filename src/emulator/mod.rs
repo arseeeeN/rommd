@@ -13,7 +13,7 @@ use tokio::process::Child;
 
 use crate::config::EmulatorConfig;
 use crate::profile::ProfileBlob;
-pub use layout::{FileMatcher, FileSet, GameSaveDir, SaveLayout, SaveSet};
+pub use layout::{FileSet, GameSaveDir, SaveLayout, SaveSet};
 
 /// Command for spawning an emulator. On Unix the emulator becomes the leader of
 /// its own process group, so stopping it and waiting for it cover every process

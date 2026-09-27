@@ -79,7 +79,8 @@ impl Emulator for DuckStation {
     /// Save states are named after the disc serial (`SLUS-00255_1.sav`). Memory
     /// cards follow the card naming mode in settings.ini (`Card1Type`, which
     /// almost all games use): by serial, by ROM file name, or by default by the
-    /// game title from DuckStation's gamelist cache (`<Title>_1.mcd`).
+    /// game's save title (`<Title>_1.mcd`). A game's cards (`_1`, `_2`) sync
+    /// as one bundle so they stay consistent and keep a version history.
     async fn save_layout(
         &self,
         config: &EmulatorConfig,
@@ -98,7 +99,7 @@ impl Emulator for DuckStation {
         let cards = read_folder(config, "MemoryCards", "Directory", "memcards");
         let states = read_folder(config, "Folders", "SaveStates", "savestates");
         SaveLayout {
-            saves: FileSet::stem(cards, card_name).map(SaveSet::Files),
+            saves: FileSet::stem(cards, card_name).map(SaveSet::Bundle),
             states: FileSet::stem(states, serial),
         }
     }

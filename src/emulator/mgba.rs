@@ -28,7 +28,9 @@ impl Emulator for MGba {
     }
 
     /// mGBA names saves and states after the ROM file stem (`Game.sav`,
-    /// `Game.ss1`).
+    /// `Game.ss1`). RomM's web player (EmulatorJS, mGBA core) stores the same
+    /// battery save as `<rom stem>.srm`, so those restore as `.sav` and the
+    /// save moves between the browser and desktop mGBA.
     async fn save_layout(
         &self,
         config: &EmulatorConfig,
@@ -44,7 +46,8 @@ impl Emulator for MGba {
         let states_dir = read_path_key(config, "savestatePath")
             .unwrap_or_else(|| config.config_dir.join("states"));
         SaveLayout {
-            saves: FileSet::stem(saves_dir, stem.clone()).map(SaveSet::Files),
+            saves: FileSet::stem(saves_dir, stem.clone())
+                .map(|set| SaveSet::Files(set.with_remote_extensions(&[("srm", "sav")]))),
             states: FileSet::stem(states_dir, stem),
         }
     }

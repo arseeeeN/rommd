@@ -76,10 +76,12 @@ content uploaded by either side is recognised without history. States have no
 new version (RomM tags the file name with the upload time) and the newest one
 is the slot's current save. Archive saves POST a new version into `autosave`
 with `autocleanup` (RomM keeps the newest 10 per ROM and slot, across
-emulators), like argosy-launcher. Single files carry no slot and update in
-place (PUT the emulator's own entry, else POST): RomM's cleanup is scoped by
-ROM and slot only, so a game's several files in one slot (DuckStation's two
-cards) would delete each other's versions. Uploads always send
+emulators), like argosy-launcher. RomM's cleanup is scoped by ROM and slot
+only, not file name, so a single-file save gets the same history only while it
+is the game's one save file and no other file sits in the slot
+(`single_file_history_ok`); otherwise it updates in place (PUT the emulator's
+own entry, else POST without a slot) so one file's versions can never delete
+another's only copy. Games with several save files should be a `Bundle`. Uploads always send
 `overwrite=true`, or RomM answers content already in the slot with that older
 entry, and a revert would be undone by the next sync. **Downloads** back up the local
 version to `save-backups/<emu>/<rom_id>/<time>/` (last 5 kept per game) and
@@ -127,7 +129,14 @@ tells GameCube from Wii.
   that folder name like argosy. It only counts as a save once `data/` has files
   (`required_subdir`), since Dolphin writes `content/title.tmd` on first boot.
 
-**DuckStation:** states are `<serial>_N.sav`. Memory cards in the default
+**mGBA:** `<rom stem>.sav`. RomM's web player (EmulatorJS) uploads the same
+raw battery save as `<rom stem> [<time>].srm` tagged `mgba`, so the `FileSet`
+maps `.srm` to `.sav` (`remote_extensions`) and saves move between browser and
+desktop. Other libretro cores need a per-emulator check before such a mapping:
+N64's `.srm`, for one, combines several save types in one file.
+
+**DuckStation:** states are `<serial>_N.sav`. A game's memory cards (`_1`,
+`_2`) are one `Bundle`, so they stay consistent and keep a history. Cards in the default
 per-game-title mode are named by the *save title* from DuckStation's game
 database (`cache/gamedb.cache`: length-prefixed serial, title, sort title,
 localized title, save title), falling back to the gamelist cache title.

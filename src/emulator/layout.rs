@@ -59,6 +59,10 @@ pub struct GameSaveDir {
 pub struct FileSet {
     pub dir: PathBuf,
     pub matcher: FileMatcher,
+    /// Extensions other clients store the same file format under, mapped to
+    /// the local one, e.g. RomM's web player uploads GBA battery saves as
+    /// `.srm` where mGBA uses `.sav`.
+    pub remote_extensions: &'static [(&'static str, &'static str)],
 }
 
 impl FileSet {
@@ -66,7 +70,28 @@ impl FileSet {
     /// stem would attribute every file in the directory to this game.
     pub fn stem(dir: PathBuf, stem: impl Into<String>) -> Option<Self> {
         let stem = stem.into();
-        (!stem.is_empty()).then(|| Self { dir, matcher: FileMatcher::Stem(stem) })
+        (!stem.is_empty()).then(|| Self { dir, matcher: FileMatcher::Stem(stem), remote_extensions: &[] })
+    }
+
+    pub fn gci(dir: PathBuf, game_id: impl Into<String>) -> Self {
+        Self { dir, matcher: FileMatcher::Gci(game_id.into()), remote_extensions: &[] }
+    }
+
+    pub fn with_remote_extensions(mut self, map: &'static [(&'static str, &'static str)]) -> Self {
+        self.remote_extensions = map;
+        self
+    }
+
+    /// The local file name for a file another client stored as `name`.
+    pub fn local_name(&self, name: &str) -> String {
+        if let Some((stem, ext)) = name.rsplit_once('.') {
+            for (remote, local) in self.remote_extensions {
+                if ext.eq_ignore_ascii_case(remote) {
+                    return format!("{}.{}", stem, local);
+                }
+            }
+        }
+        name.to_owned()
     }
 
     /// The matching files present now, sorted.
@@ -147,13 +172,21 @@ mod tests {
     }
 
     #[test]
+    fn maps_remote_extensions() {
+        let set = FileSet::stem(PathBuf::from("/x"), "anguna").unwrap().with_remote_extensions(&[("srm", "sav")]);
+        assert_eq!(set.local_name("anguna.srm"), "anguna.sav");
+        assert_eq!(set.local_name("anguna.SRM"), "anguna.sav");
+        assert_eq!(set.local_name("anguna.ss1"), "anguna.ss1");
+    }
+
+    #[test]
     fn gci_matches_by_header() {
         let dir = std::env::temp_dir().join(format!("rommd-gci-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("01-GALE-SuperSmashBros.gci"), b"GALE01\x00rest").unwrap();
         std::fs::write(dir.join("01-GALE-renamed-other.gci"), b"GMSE01\x00rest").unwrap();
         std::fs::write(dir.join("notes.txt"), b"GALE01").unwrap();
-        let set = FileSet { dir: dir.clone(), matcher: FileMatcher::Gci("GALE01".into()) };
+        let set = FileSet::gci(dir.clone(), "GALE01");
         assert_eq!(set.files(), vec![dir.join("01-GALE-SuperSmashBros.gci")]);
         let _ = std::fs::remove_dir_all(&dir);
     }

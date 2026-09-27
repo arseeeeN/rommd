@@ -16,7 +16,7 @@ pub mod decide;
 pub mod state;
 
 use anyhow::Result;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tracing::{debug, info, warn};
@@ -149,7 +149,7 @@ async fn flat_units(ctx: &SyncCtx<'_>, kind: Kind, set: &FileSet) -> Result<Vec<
         let set = set.clone();
         tokio::task::spawn_blocking(move || set.files()).await.unwrap_or_default()
     };
-    let unit = |path: PathBuf, group: &[Remote]| {
+    let unit = |path: PathBuf, group: &[Remote], history: bool| {
         let own = newest(group.iter().filter(|r| r.emulator.as_deref() == Some(ctx.emulator.id())));
         Unit {
             kind,
@@ -157,8 +157,8 @@ async fn flat_units(ctx: &SyncCtx<'_>, kind: Kind, set: &FileSet) -> Result<Vec<
             local: Local::File(path),
             remote: newest(group.iter()).cloned(),
             own_remote: own.map(|r| r.id),
-            slot: None,
-            keep_versions: None,
+            slot: history.then(|| AUTOSAVE_SLOT.to_owned()),
+            keep_versions: history.then_some(SLOT_VERSIONS_KEPT),
             local_is_fresh: false,
         }
     };
@@ -167,9 +167,19 @@ async fn flat_units(ctx: &SyncCtx<'_>, kind: Kind, set: &FileSet) -> Result<Vec<
         Ok(r) => r,
         Err(e) => {
             warn!("could not fetch RomM {}s for rom {}: {:#}", kind.label(), ctx.rom_id, e);
-            return Err(local_files.into_iter().map(|p| unit(p, &[])).collect());
+            return Err(local_files.into_iter().map(|p| unit(p, &[], false)).collect());
         }
     };
+    let local_name = |r: &Remote| local_file_name(&r.file_name).map(|n| set.local_name(&n));
+    // Names already in the autosave slot, from any emulator or client: RomM's
+    // cleanup counts them all together.
+    let slot_names: BTreeSet<String> = remotes
+        .iter()
+        .filter(|r| r.slot.as_deref() == Some(AUTOSAVE_SLOT))
+        .filter_map(local_name)
+        .collect();
+    let local_count = local_files.len();
+    let history = |name: &str| kind == Kind::Save && single_file_history_ok(&slot_names, local_count, name);
     // RomM tags stored names with an upload timestamp; group entries by the
     // name the emulator actually uses. Older rommd versions created duplicates,
     // so a group can hold several entries — the newest one is used.
@@ -178,7 +188,7 @@ async fn flat_units(ctx: &SyncCtx<'_>, kind: Kind, set: &FileSet) -> Result<Vec<
         if !ctx.emulator.accepts_saves_from(r.emulator.as_deref()) {
             continue;
         }
-        match local_file_name(&r.file_name) {
+        match local_name(&r) {
             Some(name) => groups.entry(name).or_default().push(r),
             None => warn!("ignoring RomM {} with unusable name {:?}", kind.label(), r.file_name),
         }
@@ -188,14 +198,23 @@ async fn flat_units(ctx: &SyncCtx<'_>, kind: Kind, set: &FileSet) -> Result<Vec<
     for path in local_files {
         let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
         let group = groups.remove(&name).unwrap_or_default();
-        units.push(unit(path, &group));
+        units.push(unit(path, &group, history(&name)));
     }
     for (name, group) in groups {
         if set.matcher.matches_name(&name) {
-            units.push(unit(set.dir.join(&name), &group));
+            units.push(unit(set.dir.join(&name), &group, history(&name)));
         }
     }
     Ok(units)
+}
+
+/// Whether a single-file save can keep a version history in the autosave
+/// slot. RomM's cleanup keeps the newest N saves per ROM and slot regardless of
+/// file name, so this is only safe while the game has one save file and the
+/// slot holds no other file — otherwise one file's versions could delete
+/// another file's only copy. When it isn't, the file updates in place.
+fn single_file_history_ok(slot_names: &BTreeSet<String>, local_files: usize, name: &str) -> bool {
+    local_files <= 1 && slot_names.iter().all(|n| n == name)
 }
 
 /// RomM file name for an archive save: `<rom file stem>.zip`, as argosy does.
@@ -347,9 +366,10 @@ async fn upload(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: String) -> Resu
                 zip
             }
         };
-        let remote = match unit.own_remote {
-            Some(id) => unit.kind.update(ctx, id, &file).await?,
-            None => unit.kind.create(ctx, unit.slot.as_deref(), unit.keep_versions, &file).await?,
+        // A save with history adds a version; otherwise update in place.
+        let remote = match (unit.keep_versions, unit.own_remote) {
+            (None, Some(id)) => unit.kind.update(ctx, id, &file).await?,
+            _ => unit.kind.create(ctx, unit.slot.as_deref(), unit.keep_versions, &file).await?,
         };
         if remote.content_hash.as_deref().is_some_and(|h| h != hash) {
             debug!("RomM hashed {} as {:?}, local hash {}", file.display(), remote.content_hash, hash);
@@ -425,7 +445,10 @@ fn apply_download(local: &Local, downloaded: &Path, backup: &Path, expected_hash
             save_archive::restore_zip(downloaded, &save.archive_root, &targets, &backup.join(&save.archive_root))?;
         }
         Local::Bundle(set) => {
-            let accept = |p: &Path| set.matcher.matches_file(p);
+            let accept = |p: &Path| {
+                let name = p.file_name().unwrap_or_default().to_string_lossy();
+                set.matcher.matches_name(&name) && set.matcher.matches_file(p)
+            };
             save_archive::restore_bundle(downloaded, &set.dir, &set.files(), accept, backup)?;
         }
     }
@@ -488,7 +511,7 @@ async fn resolve_conflict(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: Strin
 
 // ── RomM entries ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Save,
     State,
@@ -702,6 +725,16 @@ mod tests {
         );
         // A bracket tag that is not a RomM timestamp is part of the real name.
         assert_eq!(local_file_name("Game [v1].sav").as_deref(), Some("Game [v1].sav"));
+    }
+
+    #[test]
+    fn single_file_history_only_when_alone_in_the_slot() {
+        let slot = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<BTreeSet<_>>();
+        assert!(single_file_history_ok(&slot(&[]), 1, "Game.sav"));
+        assert!(single_file_history_ok(&slot(&["Game.sav"]), 1, "Game.sav"));
+        assert!(single_file_history_ok(&slot(&["Game.sav"]), 0, "Game.sav"));
+        assert!(!single_file_history_ok(&slot(&["Game.zip"]), 1, "Game.sav"));
+        assert!(!single_file_history_ok(&slot(&[]), 2, "Game_1.mcd"));
     }
 
     #[test]
