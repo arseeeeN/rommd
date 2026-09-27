@@ -49,7 +49,17 @@ pub struct SyncCtx<'a> {
 }
 
 /// Sync a directory save (Switch) as one argosy-compatible zip.
-pub async fn sync_dir_save(ctx: &SyncCtx<'_>, save: &GameSaveDir, rom_path: &Path) {
+///
+/// `created_this_session` marks a save the emulator created during a session
+/// that started without one (Ryujinx's first boot of a game). Such a save is a
+/// fresh start, so on conflict the existing RomM save wins however new the
+/// local one is.
+pub async fn sync_dir_save(
+    ctx: &SyncCtx<'_>,
+    save: &GameSaveDir,
+    rom_path: &Path,
+    created_this_session: bool,
+) {
     let remotes = match Kind::Save.list(ctx).await {
         Ok(r) => r,
         Err(e) => {
@@ -71,6 +81,7 @@ pub async fn sync_dir_save(ctx: &SyncCtx<'_>, save: &GameSaveDir, rom_path: &Pat
             own_remote: own.map(|r| r.id),
             slot: Some(AUTOSAVE_SLOT.to_owned()),
             upload_name: dir_save_upload_name(rom_path),
+            local_is_fresh: created_this_session,
         },
     )
     .await;
@@ -149,6 +160,7 @@ fn flat_unit(ctx: &SyncCtx<'_>, kind: Kind, path: PathBuf, name: String, group: 
             Kind::State => None,
         },
         upload_name: name,
+        local_is_fresh: false,
     }
 }
 
@@ -170,6 +182,8 @@ struct Unit {
     own_remote: Option<i64>,
     slot: Option<String>,
     upload_name: String,
+    /// The local save is a fresh start and must not win a conflict.
+    local_is_fresh: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -355,11 +369,12 @@ async fn resolve_conflict(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: Strin
     let remote = unit.remote.as_ref().unwrap();
     let local_time = unit.local.mtime();
     let remote_time = parse_romm_time(&remote.updated_at);
-    let keep_local = match (local_time, remote_time) {
-        (Some(l), Some(r)) => l > r,
-        (Some(_), None) => true,
-        _ => false,
-    };
+    let keep_local = !unit.local_is_fresh
+        && match (local_time, remote_time) {
+            (Some(l), Some(r)) => l > r,
+            (Some(_), None) => true,
+            _ => false,
+        };
 
     let loser_backup = if keep_local {
         let dest = backup_dir(ctx).join("romm").join(&remote.file_name);

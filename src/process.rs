@@ -128,13 +128,13 @@ pub fn monitor(
                 };
                 // Ryujinx only creates a game's save slot on first boot, so a
                 // first session starts without one; look again now.
-                let dir_save = match (&game.dir_save, &game.game_id) {
-                    (Some(s), _) => Some(s.clone()),
-                    (None, Some(id)) => emulator.game_saves_dir(&emu_config, id).await,
-                    (None, None) => None,
+                let (dir_save, created_this_session) = match (&game.dir_save, &game.game_id) {
+                    (Some(s), _) => (Some(s.clone()), false),
+                    (None, Some(id)) => (emulator.game_saves_dir(&emu_config, id).await, true),
+                    (None, None) => (None, false),
                 };
                 if let Some(ref save) = dir_save {
-                    sync::sync_dir_save(&ctx, save, &game.rom_path).await;
+                    sync::sync_dir_save(&ctx, save, &game.rom_path, created_this_session).await;
                 } else {
                     // Re-derive the save filter now that the emulator has exited.
                     // DuckStation (and others) write their gamelist cache on shutdown,

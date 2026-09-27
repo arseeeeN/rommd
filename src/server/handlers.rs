@@ -111,7 +111,7 @@ pub async fn launch(
             emulator: emulator.as_ref(),
         };
         match &dir_save {
-            Some(save) => sync::sync_dir_save(&ctx, save, &rom_path).await,
+            Some(save) => sync::sync_dir_save(&ctx, save, &rom_path, false).await,
             None => sync::sync_flat(&ctx, &saves_dir, states_dir.as_deref(), &save_filter).await,
         }
     }

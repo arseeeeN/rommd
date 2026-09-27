@@ -92,7 +92,9 @@ first; with no local save, `switch::DEVICE_SAVE_TITLES` decides.
   committed save and `1/` the working copy of the two-phase commit — **not user
   profiles**. `0/` is read; restores write both. A slot exists only after
   Ryujinx has booted the game once (it must be in `imkvdb`), so a fresh install
-  cannot receive a save until then; post-exit re-resolves the slot.
+  cannot receive a save until then. Post-exit re-resolves the slot; a save
+  created that session is a fresh start and never wins a conflict, so an
+  existing RomM save is restored into the new slot (the fresh one is backed up).
 
 **Flat-file path (everyone else):** files in `saves_dir` / `states_dir` whose
 name starts with the `save_filter` prefix; a kind with an empty prefix is
