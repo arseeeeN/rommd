@@ -5,6 +5,7 @@ mod ini;
 mod process;
 mod profile;
 mod romm;
+mod save_archive;
 mod server;
 mod switch;
 
@@ -14,7 +15,9 @@ use std::sync::Arc;
 use tracing::info;
 
 use config::Config;
-use emulator::{dolphin::Dolphin, duckstation::DuckStation, mgba::MGba, ryujinx::Ryujinx, Emulator};
+use emulator::{
+    dolphin::Dolphin, duckstation::DuckStation, eden::Eden, mgba::MGba, ryujinx::Ryujinx, Emulator,
+};
 use process::ProcessManager;
 use romm::RommClient;
 use server::state::AppState;
@@ -44,6 +47,8 @@ async fn main() -> Result<()> {
     emulators.insert(dolphin.id().to_owned(), Arc::new(dolphin));
     let ryujinx = Ryujinx;
     emulators.insert(ryujinx.id().to_owned(), Arc::new(ryujinx));
+    let eden = Eden;
+    emulators.insert(eden.id().to_owned(), Arc::new(eden));
 
     let state = Arc::new(AppState {
         config,

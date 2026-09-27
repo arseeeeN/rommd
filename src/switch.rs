@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+use tracing::{debug, warn};
 
 struct Pfs0Entry {
     data_offset: u64,
@@ -33,6 +34,77 @@ fn read_pfs0_index(f: &mut std::fs::File) -> Result<(Vec<Pfs0Entry>, Vec<u8>, u6
 
     let data_base = f.stream_position()?;
     Ok((entries, string_table, data_base))
+}
+
+/// Emulators whose save directories hold the same raw save filesystem contents
+/// for a title, so a save made in one can be restored into any other.
+pub const SAVE_COMPATIBLE_EMULATORS: &[&str] =
+    &["eden", "ryujinx", "yuzu", "citron", "sudachi", "suyu"];
+
+/// Titles that keep a single save per console (Switch "device" save data)
+/// instead of one per user. Only consulted when no save exists locally yet —
+/// otherwise the save type found on disk decides. Same list as argosy-launcher.
+pub const DEVICE_SAVE_TITLES: &[&str] = &[
+    "01006F8002326000", // Animal Crossing: New Horizons
+    "0100D2F00D5C0000", // Nintendo Switch Sports
+    "01000320000CC000", // 1-2-Switch
+    "01002FF008C24000", // Ring Fit Adventure
+    "0100C4B0034B2000", // Nintendo Labo Toy-Con 01: Variety Kit
+    "01009AB0034E0000", // Nintendo Labo Toy-Con 02: Robot Kit
+    "01001E9003502000", // Nintendo Labo Toy-Con 03: Vehicle Kit
+    "0100165003504000", // Nintendo Labo Toy-Con 04: VR Kit
+    "0100C1800A9B6000", // Go Vacation
+];
+
+/// Read the application title ID (16 lowercase hex chars) from an NSP. Filenames
+/// are deliberately not used — they can be wrong and would silently scope saves
+/// to the wrong game.
+///
+/// Tier 1 is the ticket (plaintext, no keys); tier 2 decrypts the `.cnmt.nca`
+/// header with `header_key` from `prod_keys`. Update NSPs (`...800`) are mapped
+/// to their base title, since saves always belong to the base application.
+pub fn title_id_for_rom(rom_path: &Path, prod_keys: &Path) -> Option<String> {
+    let ext = rom_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if ext != "nsp" {
+        warn!(
+            "cannot read title ID from .{} files — only NSP is supported; \
+             save scoping unavailable for {}",
+            ext,
+            rom_path.display()
+        );
+        return None;
+    }
+
+    let id = match read_title_id_from_ticket(rom_path) {
+        Ok(id) => id,
+        Err(e) => {
+            debug!("ticket read failed for {} ({}), trying NCA header", rom_path.display(), e);
+            if !prod_keys.exists() {
+                warn!(
+                    "prod.keys not found at {} — title ID unavailable for {}",
+                    prod_keys.display(),
+                    rom_path.display()
+                );
+                return None;
+            }
+            match read_title_id_from_nsp(rom_path, prod_keys) {
+                Ok(id) => id,
+                Err(e) => {
+                    warn!("could not read title ID from {}: {:#}", rom_path.display(), e);
+                    return None;
+                }
+            }
+        }
+    };
+    Some(format!("{:016x}", base_title_id(id)))
+}
+
+fn base_title_id(id: u64) -> u64 {
+    if id & 0xFFF == 0x800 { id & !0xFFF } else { id }
 }
 
 /// Extract the Switch title ID from an NSP by reading the ticket (`.tik`) file.
@@ -270,4 +342,16 @@ fn read_u64_le(r: &mut impl Read) -> Result<u64> {
     let mut buf = [0u8; 8];
     r.read_exact(&mut buf)?;
     Ok(u64::from_le_bytes(buf))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_title_maps_to_base() {
+        assert_eq!(base_title_id(0x0100000000010800), 0x0100000000010000);
+        assert_eq!(base_title_id(0x0100000000010000), 0x0100000000010000);
+        assert_eq!(base_title_id(0x0100000000011001), 0x0100000000011001);
+    }
 }

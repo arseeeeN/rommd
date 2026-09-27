@@ -1,5 +1,6 @@
 pub mod dolphin;
 pub mod duckstation;
+pub mod eden;
 pub mod mgba;
 pub mod ps1;
 pub mod ryujinx;
@@ -17,6 +18,18 @@ use crate::profile::ProfileBlob;
 pub struct LaunchContext {
     pub temp_files: Vec<PathBuf>,
     pub temp_dirs: Vec<PathBuf>,
+}
+
+/// A game's save stored as a whole directory (Switch emulators).
+#[derive(Debug, Clone)]
+pub struct GameSaveDir {
+    /// Directory whose contents are the game's save.
+    pub dir: PathBuf,
+    /// Root folder name inside the uploaded zip (the title ID, uppercase).
+    pub archive_root: String,
+    /// Directories that must receive the same contents when a save is restored
+    /// (Ryujinx's working copy `1/` alongside the committed `0/`).
+    pub mirrors: Vec<PathBuf>,
 }
 
 /// Filename prefixes used to scope save and savestate file operations to the
@@ -72,15 +85,30 @@ pub trait Emulator: Send + Sync {
         None
     }
 
-    /// Find the emulator-specific save directory for this game. Returns `None`
-    /// to fall back to the generic `saves_dir()`. Override for emulators whose
-    /// saves live in runtime-assigned directories (e.g. Ryujinx slot dirs).
+    /// Locate this game's directory save. Returning `Some` switches sync to the
+    /// whole-directory zip path; `None` falls back to flat-file sync of
+    /// `saves_dir()`. The directory need not exist yet if the emulator can pick
+    /// it up when created by rommd (Eden); Ryujinx returns `None` until it has
+    /// created the slot itself.
     async fn game_saves_dir(
         &self,
         _config: &EmulatorConfig,
         _game_id: &str,
-    ) -> Option<PathBuf> {
+    ) -> Option<GameSaveDir> {
         None
+    }
+
+    /// Emulator IDs whose RomM saves can be restored by this emulator. Empty
+    /// means only saves tagged with this emulator's own `id()`.
+    fn save_family(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    fn accepts_saves_from(&self, emulator: Option<&str>) -> bool {
+        match emulator {
+            Some(e) => e == self.id() || self.save_family().contains(&e),
+            None => false,
+        }
     }
 
     /// Compute the filename prefixes for save and savestate file filtering.

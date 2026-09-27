@@ -97,8 +97,7 @@ pub async fn launch(
     let saves_dir = emulator.saves_dir(emu_config).await;
     let states_dir = emulator.states_dir(emu_config).await;
 
-    // Resolve game-specific save slot dir for emulators that use one (Ryujinx).
-    let slot_dir = match &game_id {
+    let folder_save = match &game_id {
         Some(id) => emulator.game_saves_dir(emu_config, id).await,
         None => None,
     };
@@ -107,8 +106,9 @@ pub async fn launch(
     // This bootstraps saves that predate rommd; the on-exit sync is still
     // mtime-filtered so it only uploads what changed during this session.
     if let Some(romm) = &state.romm {
-        if let Some(ref slot) = slot_dir {
-            process::sync_profile_saves_pre_launch(romm, req.rom_id, &req.emulator, slot).await;
+        if let Some(ref save) = folder_save {
+            let name = process::folder_save_upload_name(&rom_path);
+            process::sync_folder_save_pre_launch(romm, req.rom_id, emulator.as_ref(), save, &name).await;
         } else {
             process::sync_saves_pre_launch(romm, req.rom_id, &req.emulator, &saves_dir, &save_filter).await;
             if let Some(ref sd) = states_dir {
@@ -137,7 +137,7 @@ pub async fn launch(
                 rom_path,
                 started_at,
                 launch_ctx,
-                slot_dir,
+                folder_save,
             },
         )
         .await;
