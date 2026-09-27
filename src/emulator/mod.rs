@@ -13,6 +13,18 @@ use tokio::process::Child;
 use crate::config::EmulatorConfig;
 use crate::profile::ProfileBlob;
 
+/// Command for spawning an emulator. On Unix the emulator becomes the leader of
+/// its own process group, so stopping it and waiting for it cover every process
+/// it runs. This matters for launchers that keep the real emulator as a child:
+/// uruntime AppImages (Eden) stay alive as the parent, and killing only that
+/// PID would orphan the emulator.
+pub fn emulator_command(binary: &Path) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(binary);
+    #[cfg(unix)]
+    cmd.process_group(0);
+    cmd
+}
+
 /// Resources created during launch that must be cleaned up after the game exits.
 #[derive(Debug, Default)]
 pub struct LaunchContext {

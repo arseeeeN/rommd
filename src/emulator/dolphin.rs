@@ -67,7 +67,7 @@ impl Emulator for Dolphin {
             _ => {}
         }
 
-        let child = tokio::process::Command::new(&config.binary)
+        let child = super::emulator_command(&config.binary)
             .arg("-e")
             .arg(rom_path)
             .spawn()

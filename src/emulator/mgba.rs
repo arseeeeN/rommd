@@ -46,7 +46,7 @@ impl Emulator for MGba {
         ensure_paths_configured(config).await?;
 
         let mut launch_ctx = LaunchContext::default();
-        let mut cmd = tokio::process::Command::new(&config.binary);
+        let mut cmd = super::emulator_command(&config.binary);
 
         if let Some(profile) = profile {
             // Write a merged config to a temp dir and redirect mGBA's config

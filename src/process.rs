@@ -106,6 +106,7 @@ pub fn monitor(
             Ok(status) => info!("game pid={} exited: {}", pid, status),
             Err(e) => warn!("error waiting for pid={}: {}", pid, e),
         }
+        wait_for_process_group(pid).await;
 
         if let Some(game) = manager.remove(pid).await {
             for path in &game.launch_ctx.temp_files {
@@ -155,35 +156,60 @@ pub fn monitor(
     });
 }
 
+/// Stop a game gracefully, then force it after 5 s. Signals go to the whole
+/// process group (see `emulator_command`), so emulators behind a launcher
+/// process are stopped too.
 fn kill_pid(pid: u32) -> Result<()> {
     #[cfg(unix)]
     {
-        use nix::sys::signal::{kill, Signal};
+        use nix::sys::signal::{Signal, killpg};
         use nix::unistd::Pid;
-        let nix_pid = Pid::from_raw(pid as i32);
-        kill(nix_pid, Signal::SIGTERM)
-            .map_err(|e| anyhow::anyhow!("kill(SIGTERM) failed: {}", e))?;
-        // Some emulators (e.g. DuckStation) show a confirmation popup on SIGTERM
-        // and won't exit until dismissed. After 5 s we force-kill so the monitor
-        // task can complete and sync saves.
+        let pgid = Pid::from_raw(pid as i32);
+        killpg(pgid, Signal::SIGTERM)
+            .map_err(|e| anyhow::anyhow!("killpg(SIGTERM) failed: {}", e))?;
+        // Some emulators show a confirmation popup on SIGTERM (DuckStation) or
+        // ignore it while a game runs (Eden). After 5 s we force-kill so the
+        // monitor task can complete and sync saves.
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            let _ = kill(nix_pid, Signal::SIGKILL);
+            let _ = killpg(pgid, Signal::SIGKILL);
         });
     }
     #[cfg(windows)]
     {
-        // Post WM_CLOSE to all windows owned by the process (graceful, like SIGTERM).
+        // Post WM_CLOSE to the process tree (graceful, like SIGTERM).
         let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string()])
+            .args(["/T", "/PID", &pid.to_string()])
             .output();
         // Force-kill after 5 s in case the process shows a confirmation dialog.
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             let _ = std::process::Command::new("taskkill")
-                .args(["/F", "/PID", &pid.to_string()])
+                .args(["/F", "/T", "/PID", &pid.to_string()])
                 .output();
         });
     }
     Ok(())
+}
+
+/// Wait until no process of the game's process group is left. The spawned
+/// process can exit before the emulator does (a uruntime AppImage parent that
+/// was killed), and syncing then would read saves the emulator may still write.
+async fn wait_for_process_group(pid: u32) {
+    #[cfg(unix)]
+    {
+        use nix::sys::signal::killpg;
+        use nix::unistd::Pid;
+        let pgid = Pid::from_raw(pid as i32);
+        let mut logged = false;
+        while killpg(pgid, None).is_ok() {
+            if !logged {
+                info!("game pid={} exited; waiting for the rest of its process group", pid);
+                logged = true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+    #[cfg(windows)]
+    let _ = pid;
 }

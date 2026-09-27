@@ -35,7 +35,7 @@ impl Emulator for DuckStation {
             _ => {}
         }
 
-        let child = tokio::process::Command::new(&config.binary)
+        let child = super::emulator_command(&config.binary)
             .arg(rom_path)
             .spawn()
             .with_context(|| format!("spawning DuckStation from {}", config.binary.display()))?;

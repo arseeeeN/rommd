@@ -77,7 +77,7 @@ impl Emulator for Ryujinx {
         _game_id: Option<&str>,
         _profile: Option<&ProfileBlob>,
     ) -> Result<(Child, LaunchContext)> {
-        let child = tokio::process::Command::new(&config.binary)
+        let child = super::emulator_command(&config.binary)
             .arg(rom_path)
             .spawn()
             .with_context(|| format!("spawning Ryujinx from {}", config.binary.display()))?;
