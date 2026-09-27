@@ -415,3 +415,20 @@ async fn states_without_history_are_compared_by_content() {
     assert_eq!(conflicts.len(), 1, "only the state that differs: {:?}", conflicts);
     assert!(conflicts[0].local_path.ends_with("Game.ss2"));
 }
+
+#[tokio::test]
+async fn empty_folders_in_a_save_survive_the_round_trip() {
+    // A 3DS game formats its save archive (an empty 00000001/ next to its
+    // metadata) before writing anything to it.
+    let fake = FakeRomm::start().await;
+    let (a, b) = (Device::new("empty-a"), Device::new("empty-b"));
+    write(&a.path("save/00000001.metadata"), b"format info");
+    std::fs::create_dir_all(a.path("save/00000001")).unwrap();
+    a.sync(&fake, &EDEN, &a.switch(), None).await;
+    let hash_without_dirs = content_hash(&zip_bytes(&[(&format!("{TITLE}/00000001.metadata"), b"format info")]));
+    assert_eq!(fake.saves(ROM)[0].content_hash, hash_without_dirs, "folders don't change the hash");
+
+    b.sync(&fake, &EDEN, &b.switch(), None).await;
+    assert!(b.path("save/00000001").is_dir());
+    assert_eq!(read(b.path("save/00000001.metadata")), b"format info");
+}

@@ -287,6 +287,16 @@ impl Local {
         }
     }
 
+    /// Empty directories to keep in a directory-save zip.
+    fn empty_dirs(&self) -> Result<Vec<String>> {
+        let Local::Dir(s) = self else { return Ok(Vec::new()) };
+        let mut dirs = save_archive::dir_empty_dirs(&s.dir, &s.archive_root)?;
+        for (root, dir) in &s.extra_roots {
+            dirs.extend(save_archive::dir_empty_dirs(dir, root)?);
+        }
+        Ok(dirs)
+    }
+
     fn hash(&self) -> Result<Option<String>> {
         match self {
             Local::File(p) if p.is_file() => Ok(Some(save_archive::file_md5(p)?)),
@@ -401,7 +411,10 @@ async fn upload(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: String) -> Resu
             archive => {
                 let zip = work.join(&unit.upload_name);
                 let (local, dest) = (archive.clone(), zip.clone());
-                tokio::task::spawn_blocking(move || save_archive::zip_entries(&local.entries()?, &dest)).await??;
+                tokio::task::spawn_blocking(move || {
+                    save_archive::zip_entries_with_dirs(&local.entries()?, &local.empty_dirs()?, &dest)
+                })
+                .await??;
                 zip
             }
         };

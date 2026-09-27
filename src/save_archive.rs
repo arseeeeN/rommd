@@ -100,13 +100,38 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// Empty directories under `dir`, named `<root>/<rel>/`, so a directory save
+/// keeps folders a game created but has not written to yet (a 3DS save archive
+/// formatted before the first save). Zip directory entries do not count
+/// towards `content_hash`, for RomM or argosy.
+pub fn dir_empty_dirs(dir: &Path, root: &str) -> Result<Vec<String>> {
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for rel in walk_dirs(dir)? {
+        if std::fs::read_dir(dir.join(&rel))?.next().is_none() {
+            out.push(format!("{}/{}/", root, rel.to_string_lossy().replace('\\', "/")));
+        }
+    }
+    Ok(out)
+}
+
 /// Write a zip with these entries to `dest`.
 pub fn zip_entries(entries: &[(PathBuf, String)], dest: &Path) -> Result<()> {
+    zip_entries_with_dirs(entries, &[], dest)
+}
+
+/// Write a zip with these file entries and empty directory entries.
+pub fn zip_entries_with_dirs(entries: &[(PathBuf, String)], dirs: &[String], dest: &Path) -> Result<()> {
     anyhow::ensure!(!entries.is_empty(), "no files to archive");
     let out = std::fs::File::create(dest).with_context(|| format!("creating {}", dest.display()))?;
     let mut zip = zip::ZipWriter::new(out);
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
+    for dir in dirs {
+        zip.add_directory(dir.as_str(), opts)?;
+    }
     for (path, name) in entries {
         zip.start_file(name.as_str(), opts)?;
         let mut buf = Vec::new();
@@ -265,6 +290,9 @@ fn replace_dir_contents(src: &Path, dest: &Path) -> Result<()> {
 
 fn copy_dir(src: &Path, dest: &Path) -> Result<()> {
     std::fs::create_dir_all(dest)?;
+    for rel in walk_dirs(src)? {
+        std::fs::create_dir_all(dest.join(rel))?;
+    }
     for (path, rel) in walk_files(src)? {
         let out = dest.join(rel);
         if let Some(parent) = out.parent() {
@@ -273,6 +301,23 @@ fn copy_dir(src: &Path, dest: &Path) -> Result<()> {
         std::fs::copy(&path, &out)?;
     }
     Ok(())
+}
+
+/// All directories under `dir` (not `dir` itself), relative to it, sorted.
+fn walk_dirs(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for entry in std::fs::read_dir(&d)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                out.push(path.strip_prefix(dir).unwrap().to_path_buf());
+                stack.push(path);
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
 }
 
 /// All files under `dir` as (absolute path, path relative to `dir`), sorted.

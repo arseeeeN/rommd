@@ -97,7 +97,8 @@ argosy-launcher compatible: file name `<rom stem>.zip`, slot `autosave`,
 from *any* emulator in `save_family`, so Switch saves move between Eden and Ryujinx (their raw
 contents are identical). A `Dir` zip's entries sit under `archive_root/` (and
 any `extra_roots`); a zip with any other root is refused, a root it lacks
-leaves its directory untouched; a `Bundle` zip is flat and every file must
+leaves its directory untouched (empty folders are kept as zip directory
+entries, which don't count towards `content_hash`); a `Bundle` zip is flat and every file must
 pass the matcher (GCI header), so another game's save is never restored.
 
 **Switch (Eden, Ryujinx):** only the active user is synced.
