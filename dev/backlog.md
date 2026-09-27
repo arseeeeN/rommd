@@ -47,9 +47,9 @@ save family), and covers saves but not states. Registering a device and passing
 ## Content hashes for save states
 
 RomM returns no `content_hash` for states, so state sync falls back to comparing
-`updated_at` with the last synced value. Differing states with no sync history
-always count as a conflict, resolved newest-wins with a backup. Revisit if RomM
-adds hashes for states.
+`updated_at` with the last synced value, and on first contact downloads RomM's
+copy to compare (states can be tens of MB, so that costs one download per state
+on a new device). Revisit if RomM adds hashes for states.
 
 ## Named save histories (slots)
 

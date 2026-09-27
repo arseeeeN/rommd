@@ -334,13 +334,21 @@ async fn sync_unit(ctx: &SyncCtx<'_>, unit: &Unit, key: &str) -> bool {
     });
 
     let had_local = hash.is_some();
-    let result = match decide(hash.as_deref(), view, base.as_ref()) {
+    let mut action = decide(hash.as_deref(), view, base.as_ref());
+    if action == Action::Conflict && base.is_none() {
+        if let (Some(h), Some(r)) = (&hash, &unit.remote) {
+            if r.content_hash.is_none() && remote_matches(ctx, unit, r, h).await {
+                action = Action::InSync;
+            }
+        }
+    }
+    let result = match action {
         Action::Nothing => {
             debug!("{} unchanged", path);
             Ok(had_local)
         }
         Action::InSync => {
-            let (Some(h), Some(r)) = (hash, &unit.remote) else { unreachable!() };
+            let (Some(h), Some(r)) = (hash, &unit.remote) else { unreachable!("in sync needs both sides") };
             ctx.store.set_base(key, r.base_for(h)).await;
             debug!("{} already in sync with RomM id={}", path, r.id);
             Ok(true)
@@ -356,6 +364,33 @@ async fn sync_unit(ctx: &SyncCtx<'_>, unit: &Unit, key: &str) -> bool {
             had_local
         }
     }
+}
+
+/// Whether RomM's copy has this content, by downloading and hashing it. Only
+/// used when RomM gives no `content_hash` (save states) and there is no sync
+/// history: without it every state on a new device would be a conflict.
+async fn remote_matches(ctx: &SyncCtx<'_>, unit: &Unit, remote: &Remote, local_hash: &str) -> bool {
+    let Ok(work) = scratch_dir() else { return false };
+    let file = work.join("probe");
+    let matches = match unit.kind.download(ctx, remote.id, &file).await {
+        Ok(()) => {
+            let local = unit.local.clone();
+            tokio::task::spawn_blocking(move || match local {
+                Local::File(_) => save_archive::file_md5(&file).ok(),
+                _ => save_archive::zip_content_hash(&file).ok(),
+            })
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|h| h == local_hash)
+        }
+        Err(e) => {
+            debug!("could not fetch RomM {} {} to compare: {:#}", unit.kind.label(), remote.id, e);
+            false
+        }
+    };
+    let _ = tokio::fs::remove_dir_all(&work).await;
+    matches
 }
 
 async fn upload(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: String) -> Result<()> {

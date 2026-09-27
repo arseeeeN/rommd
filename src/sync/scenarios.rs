@@ -397,3 +397,21 @@ async fn a_3ds_save_carries_title_data_and_extdata_separately() {
     assert_eq!(read(b.path("extdata/00001744/user/progress.bin")), b"ext progress");
     assert_eq!(read(b.path("title/data/00000001/local.bin")), b"b's own title data", "a root the zip lacks stays");
 }
+
+#[tokio::test]
+async fn states_without_history_are_compared_by_content() {
+    // RomM has no content hash for states, so a device meeting RomM's states
+    // for the first time must compare the bytes instead of calling a conflict.
+    let fake = FakeRomm::start().await;
+    let (a, b) = (Device::new("st-a"), Device::new("st-b"));
+    write(&a.path("states/Game.ss1"), b"same state");
+    write(&a.path("states/Game.ss2"), b"a's state");
+    a.sync(&fake, &MGBA, &a.gba(), None).await;
+
+    write(&b.path("states/Game.ss1"), b"same state");
+    write(&b.path("states/Game.ss2"), b"b's state");
+    b.sync(&fake, &MGBA, &b.gba(), None).await;
+    let conflicts = b.store.conflicts().await;
+    assert_eq!(conflicts.len(), 1, "only the state that differs: {:?}", conflicts);
+    assert!(conflicts[0].local_path.ends_with("Game.ss2"));
+}

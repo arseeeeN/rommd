@@ -72,7 +72,9 @@ new hash as the base.
 MD5 of the file, or for zips MD5 over the sorted `"<entry name>:<md5>"` lines
 joined by `\n` — the same as argosy-launcher, so
 content uploaded by either side is recognised without history. States have no
-`content_hash` in RomM; they fall back to comparing `updated_at` with the base.
+`content_hash` in RomM; they fall back to comparing `updated_at` with the base,
+and on first contact (no base) RomM's copy is downloaded and hashed, so an
+identical state on a new device is in sync rather than a conflict.
 
 **Uploads.** A RomM *slot* is a named save history: each slotted upload is a
 new version (RomM tags the file name with the upload time) and the newest one
