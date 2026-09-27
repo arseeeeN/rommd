@@ -28,8 +28,12 @@ use crate::save_archive;
 use decide::{Action, RemoteView, decide};
 pub use state::{ConflictRecord, SyncBase, SyncStore};
 
-/// RomM slot for directory saves; matches argosy-launcher's latest-save channel.
+/// RomM slot for archive saves; matches argosy-launcher's latest-save channel.
+/// A slot is a named save history: each upload adds a version, and the newest
+/// one is the slot's current save.
 const AUTOSAVE_SLOT: &str = "autosave";
+/// Versions RomM keeps per slot, as argosy-launcher does.
+const SLOT_VERSIONS_KEPT: u32 = 10;
 const BACKUPS_KEPT: usize = 5;
 
 pub fn data_dir() -> PathBuf {
@@ -116,6 +120,7 @@ async fn units_for_saves(ctx: &SyncCtx<'_>, saves: &SaveSet, rom_path: &Path) ->
         remote: None,
         own_remote: None,
         slot: Some(AUTOSAVE_SLOT.to_owned()),
+        keep_versions: Some(SLOT_VERSIONS_KEPT),
         upload_name: archive_upload_name(rom_path),
         local_is_fresh: false,
     };
@@ -126,15 +131,14 @@ async fn units_for_saves(ctx: &SyncCtx<'_>, saves: &SaveSet, rom_path: &Path) ->
             return Err(vec![unit]);
         }
     };
-    // One archive per game: the newest zip from any compatible emulator is the
-    // current save; uploads update this emulator's own entry.
-    let zips: Vec<&Remote> = remotes
-        .iter()
-        .filter(|r| is_archive_save(r) && ctx.emulator.accepts_saves_from(r.emulator.as_deref()))
-        .collect();
-    unit.remote = newest(zips.iter().copied()).cloned();
-    unit.own_remote = newest(zips.iter().copied().filter(|r| r.emulator.as_deref() == Some(ctx.emulator.id())))
-        .map(|r| r.id);
+    // One archive per game: the slot's newest zip from any compatible emulator
+    // is the current save. Uploads add a version to the slot.
+    unit.remote = newest(
+        remotes
+            .iter()
+            .filter(|r| is_archive_save(r) && ctx.emulator.accepts_saves_from(r.emulator.as_deref())),
+    )
+    .cloned();
     Ok(vec![unit])
 }
 
@@ -154,6 +158,7 @@ async fn flat_units(ctx: &SyncCtx<'_>, kind: Kind, set: &FileSet) -> Result<Vec<
             remote: newest(group.iter()).cloned(),
             own_remote: own.map(|r| r.id),
             slot: None,
+            keep_versions: None,
             local_is_fresh: false,
         }
     };
@@ -206,10 +211,15 @@ struct Unit {
     local: Local,
     /// The RomM entry this unit syncs against: the newest compatible one.
     remote: Option<Remote>,
-    /// This emulator's own entry, updated in place on upload. Other emulators'
-    /// entries are never overwritten.
+    /// For single files: this emulator's own entry, updated in place on
+    /// upload. Other emulators' entries are never overwritten.
     own_remote: Option<i64>,
     slot: Option<String>,
+    /// For archive saves: upload a new version into `slot`, keeping this many.
+    /// Single files never use slot history: several files of one game would
+    /// share the slot, and RomM's cleanup would delete one file's only copy to
+    /// keep another's versions.
+    keep_versions: Option<u32>,
     upload_name: String,
     /// The local save is a fresh start and must not win a conflict.
     local_is_fresh: bool,
@@ -339,7 +349,7 @@ async fn upload(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: String) -> Resu
         };
         let remote = match unit.own_remote {
             Some(id) => unit.kind.update(ctx, id, &file).await?,
-            None => unit.kind.create(ctx, unit.slot.as_deref(), &file).await?,
+            None => unit.kind.create(ctx, unit.slot.as_deref(), unit.keep_versions, &file).await?,
         };
         if remote.content_hash.as_deref().is_some_and(|h| h != hash) {
             debug!("RomM hashed {} as {:?}, local hash {}", file.display(), remote.content_hash, hash);
@@ -554,10 +564,10 @@ impl Kind {
         }
     }
 
-    async fn create(self, ctx: &SyncCtx<'_>, slot: Option<&str>, file: &Path) -> Result<Remote> {
+    async fn create(self, ctx: &SyncCtx<'_>, slot: Option<&str>, keep: Option<u32>, file: &Path) -> Result<Remote> {
         let emulator = ctx.emulator.id();
         Ok(match self {
-            Kind::Save => ctx.romm.upload_save(ctx.rom_id, emulator, slot, file).await?.into(),
+            Kind::Save => ctx.romm.upload_save(ctx.rom_id, emulator, slot, keep, file).await?.into(),
             Kind::State => ctx.romm.upload_state(ctx.rom_id, emulator, file).await?.into(),
         })
     }

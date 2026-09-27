@@ -193,11 +193,21 @@ impl RommClient {
             .context("parsing saves")
     }
 
+    /// Upload a save. With a `slot`, RomM stores it as a new version in that
+    /// slot (tagging the file name with the upload time); `keep_versions` then
+    /// has RomM delete all but the newest N saves in the slot — of every file
+    /// and emulator, since its cleanup is scoped by ROM and slot only. Without
+    /// a slot, RomM updates the entry with the same file name in place.
+    ///
+    /// `overwrite` is always set: without it RomM answers a slotted upload
+    /// whose content already exists in the slot with that older entry instead
+    /// of a new version, and a newer entry would stay the slot's latest.
     pub async fn upload_save(
         &self,
         rom_id: i64,
         emulator: &str,
         slot: Option<&str>,
+        keep_versions: Option<u32>,
         file_path: &Path,
     ) -> Result<SaveSchema> {
         let token = self.tokens.get_token().await?;
@@ -229,6 +239,9 @@ impl RommClient {
 
         if let Some(slot) = slot {
             req = req.query(&[("slot", slot)]);
+        }
+        if let Some(keep) = keep_versions {
+            req = req.query(&[("autocleanup", "true".to_owned()), ("autocleanup_limit", keep.to_string())]);
         }
 
         let resp = req.send().await.context("POST /api/saves")?;

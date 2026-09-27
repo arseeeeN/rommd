@@ -50,3 +50,22 @@ RomM returns no `content_hash` for states, so state sync falls back to comparing
 `updated_at` with the last synced value. Differing states with no sync history
 always count as a conflict, resolved newest-wins with a backup. Revisit if RomM
 adds hashes for states.
+
+## Named save histories (slots)
+
+A RomM slot is a named save history: every upload into it is a new version, the
+newest is the slot's current save, and `autocleanup` keeps the last N (see
+CLAUDE.md, Save sync). rommd always plays and syncs `autosave`, the same
+default history argosy-launcher uses. Separate histories would let a player
+keep, say, a speedrun or a 100% run apart from their main playthrough.
+
+- Add an optional `slot` to `POST /launch`, so a game syncs against that
+  history instead of `autosave`: pick the slot's newest entry as the unit's
+  remote, upload new versions into it, and key the sync state by slot as well.
+- The sync state and the conflict rule already work per unit, so switching
+  histories is a restore, like switching emulators.
+- Single-file saves have no slot today (see CLAUDE.md for why); named histories
+  for them need per-file slot names or a RomM cleanup scoped by file name.
+- In RomM's UI, an editable dropdown on the game page to choose which history
+  to play and to create new ones would pass the chosen slot to the launcher.
+  That is a RomM feature and would need upstreaming there.

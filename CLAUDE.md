@@ -72,15 +72,23 @@ joined by `\n` — the same as argosy-launcher, so
 content uploaded by either side is recognised without history. States have no
 `content_hash` in RomM; they fall back to comparing `updated_at` with the base.
 
-**Uploads** PUT the emulator's own entry when one exists and POST otherwise.
-Other emulators' entries are never overwritten. **Downloads** back up the local
+**Uploads.** A RomM *slot* is a named save history: each slotted upload is a
+new version (RomM tags the file name with the upload time) and the newest one
+is the slot's current save. Archive saves POST a new version into `autosave`
+with `autocleanup` (RomM keeps the newest 10 per ROM and slot, across
+emulators), like argosy-launcher. Single files carry no slot and update in
+place (PUT the emulator's own entry, else POST): RomM's cleanup is scoped by
+ROM and slot only, so a game's several files in one slot (DuckStation's two
+cards) would delete each other's versions. Uploads always send
+`overwrite=true`, or RomM answers content already in the slot with that older
+entry, and a revert would be undone by the next sync. **Downloads** back up the local
 version to `save-backups/<emu>/<rom_id>/<time>/` (last 5 kept per game) and
 write atomically (flat files via temp + rename).
 
-**Archive saves (`Dir`, `Bundle`)** are one RomM save each, argosy-launcher
-compatible: file name `<rom stem>.zip`, slot `autosave`, `emulator` = the real
-emulator id. The unit's remote is the newest zip from *any* emulator in
-`save_family`, so Switch saves move between Eden and Ryujinx (their raw
+**Archive saves (`Dir`, `Bundle`)** are one save history per game,
+argosy-launcher compatible: file name `<rom stem>.zip`, slot `autosave`,
+`emulator` = the real emulator id. The unit's remote is the slot's newest zip
+from *any* emulator in `save_family`, so Switch saves move between Eden and Ryujinx (their raw
 contents are identical). A `Dir` zip's entries sit under `archive_root/` and a
 zip with another root is refused; a `Bundle` zip is flat and every file must
 pass the matcher (GCI header), so another game's save is never restored.
@@ -157,8 +165,8 @@ devices. Write endpoints and `/controllers/scan` are explicitly deferred.
 
 See `dev/controller-design.md` for the full design rationale.
 
-Deferred work (Ryujinx slot creation, RomM device registration, state hashes)
-is tracked in `dev/backlog.md`.
+Deferred work (Ryujinx slot creation, RomM device registration, state hashes,
+named save histories) is tracked in `dev/backlog.md`.
 
 ## RomM API
 
