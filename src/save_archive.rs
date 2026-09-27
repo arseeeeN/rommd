@@ -8,6 +8,8 @@ use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
+use md5::Digest;
+
 /// Newest mtime of any file under `dir`, recursively. `None` when the directory
 /// is missing or holds no files — i.e. there is no local save.
 pub fn newest_mtime(dir: &Path) -> Option<SystemTime> {
@@ -18,6 +20,61 @@ pub fn newest_mtime(dir: &Path) -> Option<SystemTime> {
         }
     }
     newest
+}
+
+/// RomM's `content_hash` for a directory save, as if zipped under `root/`:
+/// MD5 over the sorted `"<root>/<rel>:<md5 hex>"` lines joined by `\n`. This is
+/// the scheme RomM and argosy-launcher use for zips, so a local directory can
+/// be compared with a remote zip without downloading it.
+pub fn dir_content_hash(dir: &Path, root: &str) -> Result<Option<String>> {
+    if !dir.is_dir() {
+        return Ok(None);
+    }
+    let mut lines = Vec::new();
+    for (path, rel) in walk_files(dir)? {
+        let name = format!("{}/{}", root, rel.to_string_lossy().replace('\\', "/"));
+        lines.push((name, file_md5(&path)?));
+    }
+    if lines.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(finalize_hash(lines)))
+}
+
+/// RomM's `content_hash` for a zip file (see `dir_content_hash`).
+pub fn zip_content_hash(zip_path: &Path) -> Result<String> {
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(zip_path)?)?;
+    let mut lines = Vec::new();
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        if entry.is_dir() {
+            continue;
+        }
+        let mut ctx = md5::Md5::new();
+        std::io::copy(&mut entry, &mut ctx)?;
+        lines.push((entry.name().to_owned(), hex(&ctx.finalize())));
+    }
+    Ok(finalize_hash(lines))
+}
+
+pub fn file_md5(path: &Path) -> Result<String> {
+    let mut ctx = md5::Md5::new();
+    std::io::copy(&mut std::fs::File::open(path)?, &mut ctx)?;
+    Ok(hex(&ctx.finalize()))
+}
+
+fn finalize_hash(mut lines: Vec<(String, String)>) -> String {
+    lines.sort();
+    let joined = lines
+        .iter()
+        .map(|(name, hash)| format!("{}:{}", name, hash))
+        .collect::<Vec<_>>()
+        .join("\n");
+    hex(&md5::Md5::digest(joined.as_bytes()))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 /// Zip the contents of `dir` into `dest`, placing every entry under `root/`.
@@ -200,6 +257,29 @@ mod tests {
             assert!(!d.join("stale.bin").exists());
         }
         assert_eq!(std::fs::read(backup.join("stale.bin")).unwrap(), b"old");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn content_hash_matches_romm() {
+        // Directory and zip hashing must agree, and follow the RomM scheme.
+        let base = scratch("hash");
+        let src = base.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("a.bin"), b"a").unwrap();
+        std::fs::write(src.join("b.bin"), b"b").unwrap();
+        let expected = {
+            let lines = format!(
+                "ROOT/a.bin:{}\nROOT/b.bin:{}",
+                hex(&md5::Md5::digest(b"a")),
+                hex(&md5::Md5::digest(b"b"))
+            );
+            hex(&md5::Md5::digest(lines.as_bytes()))
+        };
+        assert_eq!(dir_content_hash(&src, "ROOT").unwrap().as_deref(), Some(expected.as_str()));
+        let zip = base.join("s.zip");
+        zip_dir(&src, "ROOT", &zip).unwrap();
+        assert_eq!(zip_content_hash(&zip).unwrap(), expected);
         let _ = std::fs::remove_dir_all(&base);
     }
 

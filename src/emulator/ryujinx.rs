@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use tokio::process::Child;
-use tracing::debug;
+use tracing::{debug, info};
 
 use super::{Emulator, GameSaveDir, LaunchContext, SaveFilter};
 use crate::config::EmulatorConfig;
@@ -56,7 +56,13 @@ impl Emulator for Ryujinx {
     /// source of truth, and restores write both so neither holds a stale copy.
     async fn game_saves_dir(&self, config: &EmulatorConfig, game_id: &str) -> Option<GameSaveDir> {
         let title_id = u64::from_str_radix(game_id, 16).ok()?;
-        let slot = find_save_slot(&self.saves_dir(config).await, title_id).await?;
+        let Some(slot) = find_save_slot(&self.saves_dir(config).await, title_id).await else {
+            info!(
+                "no Ryujinx save slot for {} yet; saves sync once Ryujinx has booted the game and created it",
+                game_id
+            );
+            return None;
+        };
         Some(GameSaveDir {
             dir: slot.join("0"),
             archive_root: game_id.to_uppercase(),

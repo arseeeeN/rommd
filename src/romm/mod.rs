@@ -199,7 +199,7 @@ impl RommClient {
         emulator: &str,
         slot: Option<&str>,
         file_path: &Path,
-    ) -> Result<()> {
+    ) -> Result<SaveSchema> {
         let token = self.tokens.get_token().await?;
         let file_name = file_path
             .file_name()
@@ -239,7 +239,7 @@ impl RommClient {
         }
 
         debug!("uploaded save {}", file_path.display());
-        Ok(())
+        resp.json::<SaveSchema>().await.context("parsing save upload response")
     }
 
     /// Update an existing save in-place by ID.
@@ -247,7 +247,7 @@ impl RommClient {
     /// Use this instead of `upload_save` when a save already exists in RomM — the
     /// PUT endpoint overwrites the stored file without creating a new entry, so we
     /// never accumulate duplicate timestamped copies.
-    pub async fn update_save(&self, save_id: i64, file_path: &Path) -> Result<()> {
+    pub async fn update_save(&self, save_id: i64, file_path: &Path) -> Result<SaveSchema> {
         let token = self.tokens.get_token().await?;
         let file_name = file_path
             .file_name()
@@ -280,7 +280,7 @@ impl RommClient {
         }
 
         debug!("updated save id={} with {}", save_id, file_path.display());
-        Ok(())
+        resp.json::<SaveSchema>().await.context("parsing save update response")
     }
 
     pub async fn download_save(&self, save_id: i64, dest_path: &Path) -> Result<()> {
@@ -314,7 +314,7 @@ impl RommClient {
         rom_id: i64,
         emulator: &str,
         file_path: &Path,
-    ) -> Result<()> {
+    ) -> Result<StateSchema> {
         let token = self.tokens.get_token().await?;
         let file_name = file_path
             .file_name()
@@ -349,7 +349,44 @@ impl RommClient {
         }
 
         debug!("uploaded state {}", file_path.display());
-        Ok(())
+        resp.json::<StateSchema>().await.context("parsing state upload response")
+    }
+
+    /// Update an existing state in-place by ID (see `update_save`).
+    pub async fn update_state(&self, state_id: i64, file_path: &Path) -> Result<StateSchema> {
+        let token = self.tokens.get_token().await?;
+        let file_name = file_path
+            .file_name()
+            .context("state file has no name")?
+            .to_string_lossy()
+            .into_owned();
+
+        let file = tokio::fs::File::open(file_path)
+            .await
+            .with_context(|| format!("opening state {}", file_path.display()))?;
+        let part = reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
+            ReaderStream::new(file),
+        ))
+        .file_name(file_name);
+        let form = reqwest::multipart::Form::new().part("stateFile", part);
+
+        let resp = self
+            .client
+            .put(format!("{}/api/states/{}", self.base_url, state_id))
+            .bearer_auth(token)
+            .multipart(form)
+            .send()
+            .await
+            .context("PUT /api/states/{id}")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("state update failed: {} — {}", status, body);
+        }
+
+        debug!("updated state id={} with {}", state_id, file_path.display());
+        resp.json::<StateSchema>().await.context("parsing state update response")
     }
 
     pub async fn download_state(&self, state_id: i64, dest_path: &Path) -> Result<()> {

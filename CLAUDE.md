@@ -12,12 +12,13 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 
 - **`src/main.rs`** — startup, emulator registry, config loading
 - **`src/server/`** — axum HTTP handlers, OpenAPI spec (utoipa), request/response types
-- **`src/process.rs`** — process tracking, save sync logic (pre-launch + post-exit)
+- **`src/process.rs`** — process tracking, post-exit sync trigger
 - **`src/emulator/`** — one file per emulator, all implement the `Emulator` trait
 - **`src/romm/`** — RomM HTTP client (ROM download, save/state upload/download)
 - **`src/config.rs`** — config file parsing, controller registry
 - **`src/switch.rs`** — Switch NSP title ID extraction (ticket + NCA header decryption)
-- **`src/save_archive.rs`** — zip/restore of whole-directory saves (Switch)
+- **`src/sync/`** — save/state sync engine, three-way decision, persistent sync state
+- **`src/save_archive.rs`** — zip/restore and RomM-compatible hashing of directory saves
 - **`src/profile.rs`** — portable settings overlay (ProfileBlob)
 - **`src/ini.rs`** — INI file read/write used by DuckStation and Dolphin
 
@@ -41,25 +42,44 @@ Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
 Adding a new emulator: create `src/emulator/<name>.rs`, implement the trait,
 add `pub mod <name>` to `mod.rs`, register in `main.rs`.
 
-## Save sync
+## Save sync (`src/sync/`)
 
-Two sync paths, chosen at launch time based on whether `game_saves_dir` returns
-a `Some`:
+Every save is a **unit**: one local file (flat-file emulators) or one directory
+(Switch), paired with at most one RomM entry. The same `sync_unit` runs before
+launch and after exit; the path is chosen by whether `game_saves_dir` returns
+`Some`.
 
-**Directory path (Switch: Eden, Ryujinx):** the game's save directory is zipped
-as one RomM save, argosy-launcher compatible: entries under a `<TITLE_ID>/` root,
-file name `<rom stem>.zip`, slot `autosave`, `emulator` = the real emulator id.
-Pre-launch picks the newest zip from *any* emulator in `save_family`, so saves
-move between Eden and Ryujinx (their raw contents are identical). On restore,
-the zip's root folder must equal the title ID, and the local save is first
-copied to `~/.local/share/rommd/save-backups/<emu>/<TITLE_ID>/<time>/` (last 5
-kept). Post-exit uploads if any file changed, PUTting the emulator's own entry
-if it exists. Only the active user is synced.
+**Three-way decision (`sync/decide.rs`):** compares the local content hash, the
+RomM entry, and the `SyncBase` recorded at the last sync (`SyncStore`, persisted
+to `~/.local/share/rommd/sync-state.json`). Equal hashes → in sync. Only local
+changed → upload. Only RomM changed → download. Both changed, or they differ with
+no history → conflict: the newer side wins (local mtime vs RomM `updated_at`),
+the losing version is always kept in the backup dir, and the conflict is listed
+at `GET /saves/conflicts`. A side that is missing is recreated from the other.
+This replaces the old mtime rules and cannot ping-pong: a download records the
+new hash as the base.
+
+**Hashes** use RomM's `content_hash` scheme (verified against a live server):
+MD5 of the file, or for zips / directory saves MD5 over the sorted
+`"<root>/<rel>:<md5>"` lines joined by `\n` — the same as argosy-launcher, so
+content uploaded by either side is recognised without history. States have no
+`content_hash` in RomM; they fall back to comparing `updated_at` with the base.
+
+**Uploads** PUT the emulator's own entry when one exists and POST otherwise.
+Other emulators' entries are never overwritten. **Downloads** back up the local
+version to `save-backups/<emu>/<rom_id>/<time>/` (last 5 kept per game) and
+write atomically (flat files via temp + rename).
+
+**Directory path (Switch: Eden, Ryujinx):** the save directory is one RomM save,
+argosy-launcher compatible: entries under a `<TITLE_ID>/` root, file name
+`<rom stem>.zip`, slot `autosave`, `emulator` = the real emulator id. The unit's
+remote is the newest zip from *any* emulator in `save_family`, so saves move
+between Eden and Ryujinx (their raw contents are identical). A zip whose root
+folder is not the title ID is refused. Only the active user is synced.
 
 A game's save is either an **Account** save (per user) or a **Device** save
 (one per console, e.g. Animal Crossing). The type found on disk wins, Account
-first; with no local save, `switch::DEVICE_SAVE_TITLES` decides. Both types use
-the same RomM zip, so they convert freely between emulators.
+first; with no local save, `switch::DEVICE_SAVE_TITLES` decides.
 
 - **Eden:** `<nand>/user/save/0000000000000000/<USER_ID>/<TITLE_ID>/`. `<nand>`
   from `[Data%20Storage] nand_directory` in qt-config.ini (default
@@ -74,14 +94,12 @@ the same RomM zip, so they convert freely between emulators.
   Ryujinx has booted the game once (it must be in `imkvdb`), so a fresh install
   cannot receive a save until then; post-exit re-resolves the slot.
 
-**Flat-file path (everyone else):** syncs files in `saves_dir` / `states_dir`
-filtered by `save_filter` prefix.
-
-**Pre-launch upload rule:** only upload files not yet in RomM (bootstrap).
-Files already in RomM are downloaded if RomM is newer, otherwise left alone.
-The post-exit sync handles uploading files actually modified during the session.
-This prevents a ping-pong where downloading a file advances its local mtime,
-triggering a re-upload next launch, and so on.
+**Flat-file path (everyone else):** files in `saves_dir` / `states_dir` whose
+name starts with the `save_filter` prefix; a kind with an empty prefix is
+skipped. RomM stores names with an upload timestamp
+(`anguna [2026-05-05 13-07-23-697].srm`); `local_file_name` strips it so RomM
+entries map back to the emulator's file name, and duplicates resolve to the
+newest entry.
 
 ## Switch title ID extraction (`src/switch.rs`)
 

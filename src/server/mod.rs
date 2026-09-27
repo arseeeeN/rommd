@@ -27,6 +27,7 @@ use crate::profile::ProfileBlob;
         handlers::stop,
         handlers::snapshot,
         handlers::list_controllers,
+        handlers::save_conflicts,
     ),
     components(schemas(
         HealthResponse,
@@ -42,6 +43,7 @@ use crate::profile::ProfileBlob;
         ProfileBlob,
         ControllerInfo,
         ControllerType,
+        crate::sync::ConflictRecord,
     ))
 )]
 struct ApiDoc;
@@ -55,6 +57,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/stop", post(handlers::stop))
         .route("/snapshot", post(handlers::snapshot))
         .route("/controllers", get(handlers::list_controllers))
+        .route("/saves/conflicts", get(handlers::save_conflicts))
         .route("/openapi.json", get(|| async { Json(ApiDoc::openapi()) }))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

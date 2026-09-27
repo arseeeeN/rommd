@@ -23,6 +23,7 @@ chrono = "0.4"
 zip = "2"
 
 aes = "0.8"
+md-5 = "0.10"
 utoipa = { version = "5", features = ["indexmap"] }
 
 [target.'cfg(unix)'.dependencies]

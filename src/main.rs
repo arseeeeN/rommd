@@ -8,6 +8,7 @@ mod romm;
 mod save_archive;
 mod server;
 mod switch;
+mod sync;
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -55,6 +56,7 @@ async fn main() -> Result<()> {
         processes: ProcessManager::new(),
         romm,
         emulators,
+        sync_store: Arc::new(sync::SyncStore::load(sync::SyncStore::default_path())),
     });
 
     let port = state.config.server.port;

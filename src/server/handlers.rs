@@ -12,7 +12,8 @@ use super::state::AppState;
 use super::types::*;
 use crate::config::ControllerConfig;
 use crate::error::AppError;
-use crate::process::{self, GameProcess, monitor};
+use crate::process::{GameProcess, monitor};
+use crate::sync::{self, ConflictRecord, SyncCtx};
 
 #[utoipa::path(
     get,
@@ -97,23 +98,21 @@ pub async fn launch(
     let saves_dir = emulator.saves_dir(emu_config).await;
     let states_dir = emulator.states_dir(emu_config).await;
 
-    let folder_save = match &game_id {
+    let dir_save = match &game_id {
         Some(id) => emulator.game_saves_dir(emu_config, id).await,
         None => None,
     };
 
-    // Upload any existing local saves to RomM before the session starts.
-    // This bootstraps saves that predate rommd; the on-exit sync is still
-    // mtime-filtered so it only uploads what changed during this session.
     if let Some(romm) = &state.romm {
-        if let Some(ref save) = folder_save {
-            let name = process::folder_save_upload_name(&rom_path);
-            process::sync_folder_save_pre_launch(romm, req.rom_id, emulator.as_ref(), save, &name).await;
-        } else {
-            process::sync_saves_pre_launch(romm, req.rom_id, &req.emulator, &saves_dir, &save_filter).await;
-            if let Some(ref sd) = states_dir {
-                process::sync_states_pre_launch(romm, req.rom_id, &req.emulator, sd, &save_filter).await;
-            }
+        let ctx = SyncCtx {
+            romm,
+            store: &state.sync_store,
+            rom_id: req.rom_id,
+            emulator: emulator.as_ref(),
+        };
+        match &dir_save {
+            Some(save) => sync::sync_dir_save(&ctx, save, &rom_path).await,
+            None => sync::sync_flat(&ctx, &saves_dir, states_dir.as_deref(), &save_filter).await,
         }
     }
 
@@ -137,7 +136,7 @@ pub async fn launch(
                 rom_path,
                 started_at,
                 launch_ctx,
-                folder_save,
+                dir_save,
             },
         )
         .await;
@@ -150,7 +149,8 @@ pub async fn launch(
         emulator.clone(),
         emu_config.clone(),
         saves_dir,
-        states_dir,  // Option<PathBuf>
+        states_dir,
+        state.sync_store.clone(),
     );
 
     Ok((StatusCode::CREATED, Json(LaunchResponse { pid })))
@@ -279,4 +279,16 @@ pub async fn snapshot(
 
     let profile = emulator.snapshot(emu_config, &game_id).await?;
     Ok(Json(SnapshotResponse { game_id, profile }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/saves/conflicts",
+    responses(
+        (status = 200, description = "Recent save conflicts rommd resolved automatically, newest first. \
+            The newer version was kept; the other is at `loser_backup`.", body = Vec<ConflictRecord>)
+    )
+)]
+pub async fn save_conflicts(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(state.sync_store.conflicts().await)
 }

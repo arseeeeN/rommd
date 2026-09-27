@@ -48,10 +48,6 @@ impl SaveFilter {
         let s = prefix.into();
         Self { saves: s.clone(), states: s }
     }
-
-    pub fn is_unscoped(&self) -> bool {
-        self.saves.is_empty() && self.states.is_empty()
-    }
 }
 
 #[async_trait]

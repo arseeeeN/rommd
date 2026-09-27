@@ -38,6 +38,10 @@ pub struct SaveSchema {
     pub slot: Option<String>,
     pub download_path: String,
     pub updated_at: String,
+    /// MD5 of the file, or for zips of the sorted `path:md5` entry lines
+    /// (see `save_archive::content_hash`). Absent on older RomM versions.
+    #[serde(default)]
+    pub content_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
