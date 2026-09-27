@@ -17,6 +17,7 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 - **`src/romm/`** — RomM HTTP client (ROM download, save/state upload/download)
 - **`src/config.rs`** — config file parsing, controller registry
 - **`src/switch.rs`** — Switch NSP title ID extraction (ticket + NCA header decryption)
+- **`src/n3ds.rs`** — 3DS title ID extraction (NCSD / NCCH headers, CIA TMD; no keys)
 - **`src/sync/`** — save/state sync engine, three-way decision, persistent sync state
 - **`src/save_archive.rs`** — zip/restore and RomM-compatible hashing of directory saves
 - **`src/profile.rs`** — portable settings overlay (ProfileBlob)
@@ -29,7 +30,8 @@ Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
 - `save_layout` — async; where this game's saves and states live
   (`src/emulator/layout.rs`). `saves` is a `SaveSet`: `Dir` (a directory tree,
   one zip: Switch, Wii), `Bundle` (a set of files, one flat zip: GameCube
-  `.gci`) or `Files` (one RomM entry per file). `states` is a `FileSet`. `None`
+  `.gci`) or `Files` (one RomM entry per file). A `Dir` save may span several
+  directories, each under its own zip root (`extra_roots`, used by 3DS). `states` is a `FileSet`. `None`
   means that kind is not synced. Called before launch and again after exit, so
   it may return more once the session created things (Ryujinx's slot,
   DuckStation's cache); after exit the fresh layout is merged over the launch one
@@ -91,8 +93,9 @@ write atomically (flat files via temp + rename).
 argosy-launcher compatible: file name `<rom stem>.zip`, slot `autosave`,
 `emulator` = the real emulator id. The unit's remote is the slot's newest zip
 from *any* emulator in `save_family`, so Switch saves move between Eden and Ryujinx (their raw
-contents are identical). A `Dir` zip's entries sit under `archive_root/` and a
-zip with another root is refused; a `Bundle` zip is flat and every file must
+contents are identical). A `Dir` zip's entries sit under `archive_root/` (and
+any `extra_roots`); a zip with any other root is refused, a root it lacks
+leaves its directory untouched; a `Bundle` zip is flat and every file must
 pass the matcher (GCI header), so another game's save is never restored.
 
 **Switch (Eden, Ryujinx):** only the active user is synced.
@@ -134,6 +137,19 @@ raw battery save as `<rom stem> [<time>].srm` tagged `mgba`, so the `FileSet`
 maps `.srm` to `.sav` (`remote_extensions`) and saves move between browser and
 desktop. Other libretro cores need a per-emulator check before such a mapping:
 N64's `.srm`, for one, combines several save types in one file.
+
+**Azahar (3DS):** `config_dir` is the user dir (`~/.local/share/azahar-emu`);
+qt-config.ini is in `config_dir/config/` (portable, macOS) or
+`~/.config/azahar-emu/` (Linux). The SD card is `config_dir/sdmc` unless
+`[Data%20Storage] use_custom_storage=true` points `sdmc_directory` elsewhere.
+A save is two trees under `sdmc/Nintendo 3DS/<ID0>/<ID1>/` (all-zero IDs on
+Azahar): `title/<high>/<low>/data/` (the save archive plus its
+`00000001.metadata`) and `extdata/00000000/<low >> 8>/` — some games keep
+progress only in extdata. One zip with roots `data/` and `extdata/`, as
+argosy does; those roots don't name the title, so only RomM's ROM link guards
+against a wrong zip. Title IDs come from the ROM header; update and DLC IDs
+map to the base title. States are `states/<TITLE ID>.<NN>.cst` (00 is the
+quicksave). Save family: Citra forks (citra, citra_mmj, lime3ds, borked3ds).
 
 **DuckStation:** states are `<serial>_N.sav`. A game's memory cards (`_1`,
 `_2`) are one `Bundle`, so they stay consistent and keep a history. Cards in the default

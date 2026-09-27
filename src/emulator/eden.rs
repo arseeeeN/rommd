@@ -93,7 +93,7 @@ fn game_save_dir(config: &EmulatorConfig, game_id: &str) -> Option<GameSaveDir> 
         Some(a) => a,
         None => return None,
     };
-    Some(GameSaveDir { dir, archive_root: title, mirrors: Vec::new(), required_subdir: None })
+    Some(GameSaveDir { dir, archive_root: title, extra_roots: Vec::new(), mirrors: Vec::new(), required_subdir: None })
 }
 
 fn active_user_dir(nand: &Path, settings: Option<&IniFile>) -> Option<String> {

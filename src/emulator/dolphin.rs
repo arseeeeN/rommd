@@ -210,6 +210,7 @@ fn wii_save_dir(config: &EmulatorConfig, ini: Option<&IniFile>, game_id: &str) -
     GameSaveDir {
         dir: nand.join("title").join("00010000").join(&code),
         archive_root: code,
+        extra_roots: Vec::new(),
         mirrors: Vec::new(),
         required_subdir: Some("data"),
     }

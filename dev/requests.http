@@ -120,6 +120,18 @@ Content-Type: application/json
 
 ###
 
+### Launch Pokémon Super Mystery Dungeon (Azahar, 3DS)
+# Title data and extdata sync as one zip (roots data/ and extdata/); states as .cst files.
+POST {{base}}/launch
+Content-Type: application/json
+
+{
+  "rom_id": 71,
+  "emulator": "azahar"
+}
+
+###
+
 ### Launch Super Mario Odyssey (Ryujinx)
 # Title ID comes from the NSP ticket, or the NCA header via prod.keys.
 # The save dir is synced as one zip shared with Eden (and argosy-launcher).

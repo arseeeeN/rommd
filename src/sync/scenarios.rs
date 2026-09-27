@@ -64,6 +64,7 @@ impl Device {
             saves: Some(SaveSet::Dir(GameSaveDir {
                 dir: self.path("save"),
                 archive_root: TITLE.into(),
+                extra_roots: vec![],
                 mirrors: vec![],
                 required_subdir: None,
             })),
@@ -189,6 +190,7 @@ async fn a_folder_without_its_required_data_is_not_a_save() {
         saves: Some(SaveSet::Dir(GameSaveDir {
             dir: d.path("title"),
             archive_root: "524d3845".into(),
+            extra_roots: vec![],
             mirrors: vec![],
             required_subdir: Some("data"),
         })),
@@ -368,4 +370,30 @@ async fn states_update_in_place() {
     assert_eq!(states.len(), 1);
     assert_eq!(states[0].data, b"state 2");
     assert!(fake.writes()[1].starts_with("PUT state "));
+}
+
+#[tokio::test]
+async fn a_3ds_save_carries_title_data_and_extdata_separately() {
+    let fake = FakeRomm::start().await;
+    let (a, b) = (Device::new("3ds-a"), Device::new("3ds-b"));
+    let layout = |d: &Device| SaveLayout {
+        saves: Some(SaveSet::Dir(GameSaveDir {
+            dir: d.path("title/data"),
+            archive_root: "data".into(),
+            extra_roots: vec![("extdata".into(), d.path("extdata/00001744"))],
+            mirrors: vec![],
+            required_subdir: None,
+        })),
+        states: None,
+    };
+    // Progress kept only in extdata still counts as a save.
+    write(&a.path("extdata/00001744/user/progress.bin"), b"ext progress");
+    a.sync(&fake, &EDEN, &layout(&a), None).await;
+    assert_eq!(zip_names(&fake.saves(ROM)[0].data), ["extdata/user/progress.bin"]);
+
+    write(&b.path("title/data/00000001/local.bin"), b"b's own title data");
+    age(&b.path("title/data/00000001/local.bin"), Duration::from_secs(4 * 3600));
+    b.sync(&fake, &EDEN, &layout(&b), None).await;
+    assert_eq!(read(b.path("extdata/00001744/user/progress.bin")), b"ext progress");
+    assert_eq!(read(b.path("title/data/00000001/local.bin")), b"b's own title data", "a root the zip lacks stays");
 }

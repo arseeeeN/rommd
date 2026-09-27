@@ -1,3 +1,4 @@
+pub mod azahar;
 pub mod dolphin;
 pub mod duckstation;
 pub mod eden;

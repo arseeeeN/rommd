@@ -263,12 +263,18 @@ impl Local {
         match self {
             Local::File(_) => unreachable!("single files are not archived"),
             Local::Dir(s) => {
-                if let Some(sub) = s.required_subdir {
-                    if save_archive::newest_mtime(&s.dir.join(sub)).is_none() {
-                        return Ok(Vec::new());
-                    }
+                let primary_present = s
+                    .required_subdir
+                    .is_none_or(|sub| save_archive::newest_mtime(&s.dir.join(sub)).is_some());
+                let mut entries = if primary_present {
+                    save_archive::dir_entries(&s.dir, &s.archive_root)?
+                } else {
+                    Vec::new()
+                };
+                for (root, dir) in &s.extra_roots {
+                    entries.extend(save_archive::dir_entries(dir, root)?);
                 }
-                save_archive::dir_entries(&s.dir, &s.archive_root)
+                Ok(entries)
             }
             Local::Bundle(set) => Ok(set
                 .files()
@@ -438,9 +444,11 @@ fn apply_download(local: &Local, downloaded: &Path, backup: &Path, expected_hash
             std::fs::rename(&staged, dest)?;
         }
         Local::Dir(save) => {
-            let mut targets = vec![save.dir.clone()];
-            targets.extend(save.mirrors.iter().cloned());
-            save_archive::restore_zip(downloaded, &save.archive_root, &targets, &backup.join(&save.archive_root))?;
+            let mut primary = vec![save.dir.clone()];
+            primary.extend(save.mirrors.iter().cloned());
+            let mut roots = vec![(save.archive_root.clone(), primary)];
+            roots.extend(save.extra_roots.iter().map(|(root, dir)| (root.clone(), vec![dir.clone()])));
+            save_archive::restore_roots(downloaded, &roots, backup)?;
         }
         Local::Bundle(set) => {
             let accept = |p: &Path| {

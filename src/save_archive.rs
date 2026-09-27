@@ -171,30 +171,33 @@ pub fn restore_bundle(
     result
 }
 
-/// Replace the contents of `targets` with the save in `zip_path`.
+/// Restore a directory-save zip. `roots` maps each root folder the zip may
+/// contain (compared case-insensitively) to the directories that receive it:
+/// the first is the real save, the rest mirrors (Ryujinx's working copy).
 ///
-/// The archive must contain a single root folder whose name equals
-/// `expected_root` (case-insensitive) — this guards against restoring another
-/// game's save if RomM has a file attached to the wrong ROM. The current local
-/// save of the first target is copied to `backup_dir` before anything is touched.
-pub fn restore_zip(
-    zip_path: &Path,
-    expected_root: &str,
-    targets: &[PathBuf],
-    backup_dir: &Path,
-) -> Result<()> {
+/// An entry under any other root fails the restore before anything is touched
+/// — it guards against restoring another game's save if RomM has a file
+/// attached to the wrong ROM. Each root the zip contains replaces its
+/// directories, after the first is copied to `backup_dir/<root>`; a root the
+/// zip lacks leaves its directories alone.
+pub fn restore_roots(zip_path: &Path, roots: &[(String, Vec<PathBuf>)], backup_dir: &Path) -> Result<()> {
     let staging = tempdir_near(backup_dir)?;
     let result = (|| {
-        extract_rooted(zip_path, expected_root, &staging)?;
-        if let Some(primary) = targets.first() {
-            if newest_mtime(primary).is_some() {
-                copy_dir(primary, backup_dir)
-                    .with_context(|| format!("backing up {}", primary.display()))?;
+        let expected: Vec<&str> = roots.iter().map(|(r, _)| r.as_str()).collect();
+        let present = extract_rooted(zip_path, &expected, &staging)?;
+        for (root, targets) in roots {
+            let Some(staged) = present.iter().find(|p| p.eq_ignore_ascii_case(root)) else { continue };
+            let staged = staging.join(staged);
+            if let Some(primary) = targets.first() {
+                if newest_mtime(primary).is_some() {
+                    copy_dir(primary, &backup_dir.join(root))
+                        .with_context(|| format!("backing up {}", primary.display()))?;
+                }
             }
-        }
-        for target in targets {
-            replace_dir_contents(&staging, target)
-                .with_context(|| format!("restoring into {}", target.display()))?;
+            for target in targets {
+                replace_dir_contents(&staged, target)
+                    .with_context(|| format!("restoring into {}", target.display()))?;
+            }
         }
         Ok(())
     })();
@@ -202,9 +205,12 @@ pub fn restore_zip(
     result
 }
 
-fn extract_rooted(zip_path: &Path, expected_root: &str, dest: &Path) -> Result<()> {
+/// Extract `zip_path` into `dest/<root>/…`; every entry must sit under one of
+/// `expected` roots. Returns the roots the zip contains.
+fn extract_rooted(zip_path: &Path, expected: &[&str], dest: &Path) -> Result<Vec<String>> {
     let file = std::fs::File::open(zip_path)?;
     let mut archive = zip::ZipArchive::new(file).context("reading save zip")?;
+    let mut present: Vec<String> = Vec::new();
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         let Some(name) = entry.enclosed_name() else {
@@ -216,16 +222,19 @@ fn extract_rooted(zip_path: &Path, expected_root: &str, dest: &Path) -> Result<(
             _ => anyhow::bail!("unexpected entry in save zip: {}", entry.name()),
         };
         anyhow::ensure!(
-            root.eq_ignore_ascii_case(expected_root),
-            "save zip is for {} but this game is {}",
+            expected.iter().any(|e| e.eq_ignore_ascii_case(&root)),
+            "save zip holds {} but this game's save is {}",
             root,
-            expected_root
+            expected.join(" + ")
         );
+        if !present.contains(&root) {
+            present.push(root.clone());
+        }
         let rel: PathBuf = comps.collect();
         if rel.as_os_str().is_empty() {
             continue;
         }
-        let out = dest.join(&rel);
+        let out = dest.join(&root).join(&rel);
         if entry.is_dir() {
             std::fs::create_dir_all(&out)?;
             continue;
@@ -237,7 +246,7 @@ fn extract_rooted(zip_path: &Path, expected_root: &str, dest: &Path) -> Result<(
         std::io::copy(&mut entry, &mut f)?;
     }
     anyhow::ensure!(newest_mtime(dest).is_some(), "save zip contains no files");
-    Ok(())
+    Ok(present)
 }
 
 fn replace_dir_contents(src: &Path, dest: &Path) -> Result<()> {
@@ -323,14 +332,14 @@ mod tests {
         std::fs::write(dest.join("stale.bin"), b"old").unwrap();
 
         let backup = base.join("backups/1");
-        restore_zip(&zip, "0100000000010000", &[dest.clone(), mirror.clone()], &backup).unwrap();
+        restore_roots(&zip, &[("0100000000010000".into(), vec![dest.clone(), mirror.clone()])], &backup).unwrap();
 
         for d in [&dest, &mirror] {
             assert_eq!(std::fs::read(d.join("Common.bin")).unwrap(), b"common");
             assert_eq!(std::fs::read(d.join("slot_00/progress.sav")).unwrap(), b"progress");
             assert!(!d.join("stale.bin").exists());
         }
-        assert_eq!(std::fs::read(backup.join("stale.bin")).unwrap(), b"old");
+        assert_eq!(std::fs::read(backup.join("0100000000010000/stale.bin")).unwrap(), b"old");
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -370,7 +379,7 @@ mod tests {
         let dest = base.join("dest");
         std::fs::create_dir_all(&dest).unwrap();
         std::fs::write(dest.join("keep.bin"), b"keep").unwrap();
-        assert!(restore_zip(&zip, "0100000000010000", &[dest.clone()], &base.join("bk")).is_err());
+        assert!(restore_roots(&zip, &[("0100000000010000".into(), vec![dest.clone()])], &base.join("bk")).is_err());
         assert_eq!(std::fs::read(dest.join("keep.bin")).unwrap(), b"keep");
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -401,6 +410,28 @@ mod tests {
         let reject = |_: &Path| false;
         assert!(restore_bundle(&zip, &card, &[], reject, &base.join("bk/2")).is_err());
         assert_eq!(std::fs::read(card.join("01-GALE-a.gci")).unwrap(), b"GALE01 new");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn multi_root_restore_replaces_only_the_roots_it_carries() {
+        let base = scratch("roots");
+        let src = base.join("src");
+        std::fs::create_dir_all(src.join("extdata")).unwrap();
+        std::fs::write(src.join("extdata/ext.bin"), b"new ext").unwrap();
+        let zip = base.join("s.zip");
+        zip_entries(&dir_entries(&src.join("extdata"), "extdata").unwrap(), &zip).unwrap();
+
+        let (data, ext) = (base.join("data"), base.join("ext"));
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("save.bin"), b"keep").unwrap();
+        let roots = [("data".to_owned(), vec![data.clone()]), ("extdata".to_owned(), vec![ext.clone()])];
+        restore_roots(&zip, &roots, &base.join("bk")).unwrap();
+        assert_eq!(std::fs::read(data.join("save.bin")).unwrap(), b"keep", "a root the zip lacks stays");
+        assert_eq!(std::fs::read(ext.join("ext.bin")).unwrap(), b"new ext");
+
+        let only_data = [("data".to_owned(), vec![data.clone()])];
+        assert!(restore_roots(&zip, &only_data, &base.join("bk2")).is_err(), "unexpected root");
         let _ = std::fs::remove_dir_all(&base);
     }
 }

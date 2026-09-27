@@ -28,8 +28,8 @@ impl SaveLayout {
 /// How a game's saves are stored, and so how they map onto RomM entries.
 #[derive(Debug, Clone)]
 pub enum SaveSet {
-    /// A directory whose whole tree is the save, synced as one zip rooted at
-    /// `archive_root` (Switch, Wii).
+    /// Directory trees synced as one zip, each under its own root folder
+    /// (Switch, Wii; 3DS with its title data and extdata).
     Dir(GameSaveDir),
     /// Individual files, each synced as its own RomM entry (memory cards,
     /// battery saves).
@@ -38,17 +38,23 @@ pub enum SaveSet {
     Bundle(FileSet),
 }
 
-/// A game's save stored as a whole directory.
+/// A game's save stored as whole directories.
 #[derive(Debug, Clone)]
 pub struct GameSaveDir {
     /// Directory whose contents are the game's save.
     pub dir: PathBuf,
-    /// Root folder name inside the uploaded zip; a restored zip must use it.
+    /// Root folder name inside the uploaded zip for `dir`.
     pub archive_root: String,
+    /// Further directories archived alongside `dir`, each under its own root
+    /// folder: (root, directory). A restored zip may only contain these roots
+    /// and `archive_root`; each root it contains replaces its directory, and a
+    /// root it lacks leaves that directory untouched.
+    pub extra_roots: Vec<(String, PathBuf)>,
     /// Directories that must receive the same contents when a save is restored
     /// (Ryujinx's working copy `1/` alongside the committed `0/`).
     pub mirrors: Vec<PathBuf>,
-    /// Subdirectory that must hold files for the save to count as existing.
+    /// Subdirectory of `dir` that must hold files for `dir` to count as part
+    /// of the save.
     /// A Wii title folder gets `content/title.tmd` on first boot, before the
     /// game has saved anything to `data/`.
     pub required_subdir: Option<&'static str>,

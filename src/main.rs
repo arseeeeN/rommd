@@ -2,6 +2,7 @@ mod config;
 mod emulator;
 mod error;
 mod ini;
+mod n3ds;
 mod process;
 mod profile;
 mod romm;
@@ -19,7 +20,8 @@ use tracing::info;
 
 use config::Config;
 use emulator::{
-    dolphin::Dolphin, duckstation::DuckStation, eden::Eden, mgba::MGba, ryujinx::Ryujinx, Emulator,
+    azahar::Azahar, dolphin::Dolphin, duckstation::DuckStation, eden::Eden, mgba::MGba, ryujinx::Ryujinx,
+    Emulator,
 };
 use process::ProcessManager;
 use romm::RommClient;
@@ -52,6 +54,8 @@ async fn main() -> Result<()> {
     emulators.insert(ryujinx.id().to_owned(), Arc::new(ryujinx));
     let eden = Eden;
     emulators.insert(eden.id().to_owned(), Arc::new(eden));
+    let azahar = Azahar;
+    emulators.insert(azahar.id().to_owned(), Arc::new(azahar));
 
     let state = Arc::new(AppState {
         config,

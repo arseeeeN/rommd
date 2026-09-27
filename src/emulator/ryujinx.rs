@@ -82,6 +82,7 @@ async fn game_save_dir(config: &EmulatorConfig, game_id: &str) -> Option<GameSav
     Some(GameSaveDir {
         dir: slot.join("0"),
         archive_root: game_id.to_uppercase(),
+        extra_roots: Vec::new(),
         mirrors: vec![slot.join("1")],
         required_subdir: None,
     })

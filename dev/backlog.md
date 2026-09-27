@@ -69,3 +69,20 @@ keep, say, a speedrun or a 100% run apart from their main playthrough.
 - In RomM's UI, an editable dropdown on the game page to choose which history
   to play and to create new ones would pass the chosen slot to the launcher.
   That is a RomM feature and would need upstreaming there.
+
+## Title IDs from RomM's ROM metadata
+
+Newer RomM releases extract Switch and 3DS title IDs on the server, so they
+will appear in the ROM metadata. rommd reads them from the ROM file today
+(`switch.rs`, `n3ds.rs`), which needs the file present locally and, for some
+Switch NSPs, prod.keys. Once the field is in the API: prefer RomM's value,
+keep local extraction as the fallback for older servers and local-path
+launches, and warn when both exist but differ — the file is then not the game
+RomM thinks it is, and syncing its saves would attach them to the wrong ROM.
+
+## Azahar per-game settings
+
+Azahar keeps per-game settings in `~/.config/azahar-emu/custom/<TITLE ID>.ini`
+(Linux; `config_dir/config/custom/` elsewhere). That is where profile support
+(`launch` overlay, `snapshot`) would hook in, as Dolphin's GameSettings do.
+
