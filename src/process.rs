@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::config::EmulatorConfig;
-use crate::emulator::{Emulator, GameSaveDir, LaunchContext, SaveFilter};
+use crate::emulator::{Emulator, LaunchContext, SaveLayout};
 use crate::romm::RommClient;
 use crate::sync::{self, SyncCtx, SyncStore};
 
@@ -19,14 +19,14 @@ pub struct GameProcess {
     /// Emulator-specific game identifier used for profile snapshots and status display.
     /// For DuckStation this is the disc serial; other emulators may leave it None.
     pub game_id: Option<String>,
-    /// Filename prefixes used to scope save/savestate sync to this game.
-    pub save_filter: SaveFilter,
     pub rom_path: PathBuf,
     pub started_at: SystemTime,
     pub launch_ctx: LaunchContext,
-    /// For emulators with directory saves (Switch): the resolved save dir. When
-    /// set, whole-directory zip sync is used instead of flat-file sync.
-    pub dir_save: Option<GameSaveDir>,
+    /// Where the game's saves were found at launch.
+    pub save_layout: SaveLayout,
+    /// Sync-state keys of the saves that existed locally at launch; anything
+    /// else found after exit was created during the session.
+    pub present_at_launch: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -97,8 +97,6 @@ pub fn monitor(
     romm: Option<Arc<RommClient>>,
     emulator: Arc<dyn Emulator>,
     emu_config: EmulatorConfig,
-    saves_dir: PathBuf,
-    states_dir: Option<PathBuf>,
     store: Arc<SyncStore>,
 ) {
     tokio::spawn(async move {
@@ -127,30 +125,14 @@ pub fn monitor(
                     rom_id: game.rom_id,
                     emulator: emulator.as_ref(),
                 };
-                // Ryujinx only creates a game's save slot on first boot, so a
-                // first session starts without one; look again now.
-                let (dir_save, created_this_session) = match (&game.dir_save, &game.game_id) {
-                    (Some(s), _) => (Some(s.clone()), false),
-                    (None, Some(id)) => (emulator.game_saves_dir(&emu_config, id).await, true),
-                    (None, None) => (None, false),
-                };
-                if let Some(ref save) = dir_save {
-                    sync::sync_dir_save(&ctx, save, &game.rom_path, created_this_session).await;
-                } else {
-                    // Re-derive the save filter now that the emulator has exited.
-                    // DuckStation (and others) write their gamelist cache on shutdown,
-                    // so a first-session game that had no title entry at launch time
-                    // will have one now — giving us the proper memcard filename prefix.
-                    let save_filter = {
-                        let fresh = emulator.save_filter(
-                            &emu_config,
-                            &game.rom_path,
-                            game.game_id.as_deref(),
-                        );
-                        if !fresh.saves.is_empty() { fresh } else { game.save_filter.clone() }
-                    };
-                    sync::sync_flat(&ctx, &saves_dir, states_dir.as_deref(), &save_filter).await;
-                }
+                // Resolve the layout again: the session may have created what
+                // was missing at launch (Ryujinx's save slot, DuckStation's
+                // title cache entry that names memory cards).
+                let layout = emulator
+                    .save_layout(&emu_config, &game.rom_path, game.game_id.as_deref())
+                    .await
+                    .or(game.save_layout.clone());
+                sync::sync_layout(&ctx, &layout, &game.rom_path, Some(&game.present_at_launch)).await;
             }
         }
     });

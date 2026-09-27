@@ -26,17 +26,22 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 
 Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
 
-- `saves_dir` / `states_dir` — async; `states_dir` returns `Option<PathBuf>` where
-  `None` means the emulator has no save states (Ryujinx, Eden)
-- `game_saves_dir` — async; returns `Some(GameSaveDir)` for emulators whose
-  per-game save is a directory (Switch), `None` to use flat-file sync of `saves_dir`
+- `save_layout` — async; where this game's saves and states live
+  (`src/emulator/layout.rs`). `saves` is a `SaveSet`: `Dir` (a directory tree,
+  one zip: Switch, Wii), `Bundle` (a set of files, one flat zip: GameCube
+  `.gci`) or `Files` (one RomM entry per file). `states` is a `FileSet`. `None`
+  means that kind is not synced. Called before launch and again after exit, so
+  it may return more once the session created things (Ryujinx's slot,
+  DuckStation's cache); after exit the fresh layout is merged over the launch one
+- `FileSet` / `FileMatcher` — the files in one directory that belong to a
+  game. `Stem` matches `<stem>` followed by `.`/`_` or nothing (never `Game
+  Plus.sav` for "Game"); build it with `FileSet::stem`, which refuses an empty
+  stem. `Gci` matches `.gci` files by the game ID in their header
 - `save_family` — emulator IDs whose RomM saves this emulator can restore
   (Switch emulators share `switch::SAVE_COMPATIBLE_EMULATORS`)
 - `game_id_for_rom` — sync; returns the emulator's stable game identifier.
   Used for save scoping. Must not use the ROM filename as a source — filenames
   can be wrong and would silently sync saves for the wrong game
-- `save_filter` — filename prefix used to scope flat-file save sync. Ryujinx
-  returns an empty `SaveFilter` because it uses `game_saves_dir` instead
 - `snapshot` / `launch` — profile overlay and process spawn
 
 Adding a new emulator: create `src/emulator/<name>.rs`, implement the trait,
@@ -44,10 +49,9 @@ add `pub mod <name>` to `mod.rs`, register in `main.rs`.
 
 ## Save sync (`src/sync/`)
 
-Every save is a **unit**: one local file (flat-file emulators) or one directory
-(Switch), paired with at most one RomM entry. The same `sync_unit` runs before
-launch and after exit; the path is chosen by whether `game_saves_dir` returns
-`Some`.
+Every save is a **unit** paired with at most one RomM entry: a single file, a
+directory, or a bundle of files. `sync_layout` turns a `SaveLayout` into units
+and runs the same `sync_unit` before launch and after exit.
 
 **Three-way decision (`sync/decide.rs`):** compares the local content hash, the
 RomM entry, and the `SyncBase` recorded at the last sync (`SyncStore`, persisted
@@ -55,13 +59,16 @@ to `~/.local/share/rommd/sync-state.json`). Equal hashes → in sync. Only local
 changed → upload. Only RomM changed → download. Both changed, or they differ with
 no history → conflict: the newer side wins (local mtime vs RomM `updated_at`),
 the losing version is always kept in the backup dir, and the conflict is listed
-at `GET /saves/conflicts`. A side that is missing is recreated from the other.
+at `GET /saves/conflicts`. A unit that did not exist locally at launch (first
+boot, or a restore that failed offline) is a fresh start: it never wins a
+conflict. Pre-launch sync returns the keys of the units present, and the
+post-exit pass gets them back. A side that is missing is recreated from the other.
 This replaces the old mtime rules and cannot ping-pong: a download records the
 new hash as the base.
 
 **Hashes** use RomM's `content_hash` scheme (verified against a live server):
-MD5 of the file, or for zips / directory saves MD5 over the sorted
-`"<root>/<rel>:<md5>"` lines joined by `\n` — the same as argosy-launcher, so
+MD5 of the file, or for zips MD5 over the sorted `"<entry name>:<md5>"` lines
+joined by `\n` — the same as argosy-launcher, so
 content uploaded by either side is recognised without history. States have no
 `content_hash` in RomM; they fall back to comparing `updated_at` with the base.
 
@@ -70,12 +77,15 @@ Other emulators' entries are never overwritten. **Downloads** back up the local
 version to `save-backups/<emu>/<rom_id>/<time>/` (last 5 kept per game) and
 write atomically (flat files via temp + rename).
 
-**Directory path (Switch: Eden, Ryujinx):** the save directory is one RomM save,
-argosy-launcher compatible: entries under a `<TITLE_ID>/` root, file name
-`<rom stem>.zip`, slot `autosave`, `emulator` = the real emulator id. The unit's
-remote is the newest zip from *any* emulator in `save_family`, so saves move
-between Eden and Ryujinx (their raw contents are identical). A zip whose root
-folder is not the title ID is refused. Only the active user is synced.
+**Archive saves (`Dir`, `Bundle`)** are one RomM save each, argosy-launcher
+compatible: file name `<rom stem>.zip`, slot `autosave`, `emulator` = the real
+emulator id. The unit's remote is the newest zip from *any* emulator in
+`save_family`, so Switch saves move between Eden and Ryujinx (their raw
+contents are identical). A `Dir` zip's entries sit under `archive_root/` and a
+zip with another root is refused; a `Bundle` zip is flat and every file must
+pass the matcher (GCI header), so another game's save is never restored.
+
+**Switch (Eden, Ryujinx):** only the active user is synced.
 
 A game's save is either an **Account** save (per user) or a **Device** save
 (one per console, e.g. Animal Crossing). The type found on disk wins, Account
@@ -96,9 +106,25 @@ first; with no local save, `switch::DEVICE_SAVE_TITLES` decides.
   created that session is a fresh start and never wins a conflict, so an
   existing RomM save is restored into the new slot (the fresh one is backed up).
 
-**Flat-file path (everyone else):** files in `saves_dir` / `states_dir` whose
-name starts with the `save_filter` prefix; a kind with an empty prefix is
-skipped. RomM stores names with an upload timestamp
+**Dolphin:** `config_dir` is the user dir (`~/.local/share/dolphin-emu` on
+Linux). `Dolphin.ini` is read from `config_dir/Config/` (macOS, Windows,
+portable) or `~/.config/dolphin-emu/` (Linux XDG split). The disc header magic
+tells GameCube from Wii.
+- **GameCube:** `Bundle` of the game's `.gci` files in `GC/<region>/Card A/`
+  (region from the ID's 4th char: E→USA, J→JAP, else EUR; a card already
+  holding the game's saves wins), or `GCIFolderAPath[Override]` when set. Slot
+  A must be a GCI folder (`SlotA` = 8 or unset); a raw card (1) holds all
+  games in one image and is not synced.
+- **Wii:** `Dir` of `<NAND root>/title/00010000/<hex game code>/`, rooted at
+  that folder name like argosy. It only counts as a save once `data/` has files
+  (`required_subdir`), since Dolphin writes `content/title.tmd` on first boot.
+
+**DuckStation:** states are `<serial>_N.sav`. Memory cards in the default
+per-game-title mode are named by the *save title* from DuckStation's game
+database (`cache/gamedb.cache`: length-prefixed serial, title, sort title,
+localized title, save title), falling back to the gamelist cache title.
+
+**Single files:** RomM stores names with an upload timestamp
 (`anguna [2026-05-05 13-07-23-697].srm`); `local_file_name` strips it so RomM
 entries map back to the emulator's file name, and duplicates resolve to the
 newest entry.
@@ -149,8 +175,7 @@ file is the only option.
 - `cargo test` before committing
 - No comments unless the why is non-obvious
 - No filename-based game ID inference (see game_id_for_rom note above)
-- `states_dir` returning `None` is the correct signal for "no states", not
-  aliasing `saves_dir`
+- `SaveLayout.states` being `None` is the correct signal for "no states"
 - The daemon is intentionally RomM-only for now. A `LibraryService` trait
   abstraction is the right future path but should not be introduced until there
   is a second concrete implementation to validate the boundary against

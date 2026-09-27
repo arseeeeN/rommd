@@ -93,28 +93,20 @@ pub async fn launch(
 
     let game_id = emulator.game_id_for_rom(emu_config, &rom_path);
 
-    let save_filter = emulator.save_filter(emu_config, &rom_path, game_id.as_deref());
+    let save_layout = emulator.save_layout(emu_config, &rom_path, game_id.as_deref()).await;
 
-    let saves_dir = emulator.saves_dir(emu_config).await;
-    let states_dir = emulator.states_dir(emu_config).await;
-
-    let dir_save = match &game_id {
-        Some(id) => emulator.game_saves_dir(emu_config, id).await,
-        None => None,
-    };
-
-    if let Some(romm) = &state.romm {
-        let ctx = SyncCtx {
-            romm,
-            store: &state.sync_store,
-            rom_id: req.rom_id,
-            emulator: emulator.as_ref(),
-        };
-        match &dir_save {
-            Some(save) => sync::sync_dir_save(&ctx, save, &rom_path, false).await,
-            None => sync::sync_flat(&ctx, &saves_dir, states_dir.as_deref(), &save_filter).await,
+    let present_at_launch = match &state.romm {
+        Some(romm) => {
+            let ctx = SyncCtx {
+                romm,
+                store: &state.sync_store,
+                rom_id: req.rom_id,
+                emulator: emulator.as_ref(),
+            };
+            sync::sync_layout(&ctx, &save_layout, &rom_path, None).await
         }
-    }
+        None => Default::default(),
+    };
 
     let (child, launch_ctx) = emulator
         .launch(emu_config, &rom_path, game_id.as_deref(), req.profile.as_ref())
@@ -132,11 +124,11 @@ pub async fn launch(
                 rom_id: req.rom_id,
                 emulator: req.emulator.clone(),
                 game_id,
-                save_filter,
                 rom_path,
                 started_at,
                 launch_ctx,
-                dir_save,
+                save_layout,
+                present_at_launch,
             },
         )
         .await;
@@ -148,8 +140,6 @@ pub async fn launch(
         state.romm.clone(),
         emulator.clone(),
         emu_config.clone(),
-        saves_dir,
-        states_dir,
         state.sync_store.clone(),
     );
 

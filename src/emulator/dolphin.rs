@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tokio::process::Child;
 use tracing::{debug, warn};
 
-use super::{Emulator, LaunchContext, SaveFilter};
+use super::{Emulator, FileMatcher, FileSet, GameSaveDir, LaunchContext, SaveLayout, SaveSet};
 use crate::config::EmulatorConfig;
 use crate::ini::IniFile;
 use crate::profile::ProfileBlob;
@@ -24,31 +24,31 @@ impl Emulator for Dolphin {
     }
 
     fn game_id_for_rom(&self, _config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
-        read_game_id(rom_path)
+        read_disc(rom_path).map(|(id, _)| id)
     }
 
-    fn save_filter(
+    /// GameCube saves are the game's `.gci` files in `GC/<region>/Card A/`,
+    /// synced as one bundle; Wii saves are the title's NAND directory. Save
+    /// states are `StateSaves/<game id>.sNN` for both.
+    async fn save_layout(
         &self,
         config: &EmulatorConfig,
-        _rom_path: &Path,
+        rom_path: &Path,
         game_id: Option<&str>,
-    ) -> SaveFilter {
-        let states = game_id.unwrap_or("").to_owned();
-        // GCI folder mode (Dolphin's default) scopes saves to the game ID prefix.
-        // A shared raw memory card can't be scoped to one game — warn and sync everything.
-        let saves = if is_shared_memcard(config) {
-            if !states.is_empty() {
-                warn!(
-                    "Dolphin slot A is a shared memory card — \
-                     GC saves cannot be scoped to {}; all card files will be synced",
-                    states
-                );
-            }
-            String::new()
-        } else {
-            states.clone()
+    ) -> SaveLayout {
+        let Some(id) = game_id else {
+            return SaveLayout::default();
         };
-        SaveFilter { saves, states }
+        let ini = read_dolphin_ini(config);
+        let saves = match read_disc(rom_path).map(|(_, kind)| kind) {
+            Some(DiscKind::GameCube) => gc_saves(config, ini.as_ref(), id),
+            Some(DiscKind::Wii) => Some(SaveSet::Dir(wii_save_dir(config, ini.as_ref(), id))),
+            None => None,
+        };
+        SaveLayout {
+            saves,
+            states: FileSet::stem(config.config_dir.join("StateSaves"), id),
+        }
     }
 
     async fn launch(
@@ -87,17 +87,6 @@ impl Emulator for Dolphin {
             IndexMap::new()
         };
         Ok(ProfileBlob::new(overlay))
-    }
-
-    // GC memory card saves live under GC/<REGION>/Card A/*.gci (GCI folder mode).
-    // Wii saves are in the Wii/ NAND tree which is too complex to scope by game ID —
-    // left for a future pass.
-    async fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf {
-        config.config_dir.join("GC")
-    }
-
-    async fn states_dir(&self, config: &EmulatorConfig) -> Option<PathBuf> {
-        Some(config.config_dir.join("StateSaves"))
     }
 }
 
@@ -139,17 +128,128 @@ async fn apply_game_settings(
     Ok(())
 }
 
-/// Returns true only if slot A is explicitly configured as a shared raw memory card.
-/// Dolphin's default (no SlotA key) is GCI folder mode, so we treat absent = GCI.
-fn is_shared_memcard(config: &EmulatorConfig) -> bool {
-    let path = config.config_dir.join("Config").join("Dolphin.ini");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(_) => return false,
+/// Dolphin.ini lives in `<user dir>/Config/` on macOS, Windows and portable
+/// installs; on Linux, Dolphin splits the user dir along XDG lines and keeps the
+/// config files in `~/.config/dolphin-emu/` while `config_dir` (the data dir,
+/// `~/.local/share/dolphin-emu`) holds saves and game settings.
+fn read_dolphin_ini(config: &EmulatorConfig) -> Option<IniFile> {
+    let bundled = config.config_dir.join("Config").join("Dolphin.ini");
+    let path = if bundled.is_file() {
+        bundled
+    } else {
+        dirs::config_dir()?.join("dolphin-emu").join("Dolphin.ini")
     };
-    let ini = IniFile::parse(&text);
-    ini.get("Core", "SlotA")
-        .map_or(false, |v| v.contains("Memory Card"))
+    std::fs::read_to_string(path).ok().map(|t| IniFile::parse(&t))
+}
+
+fn ini_value<'a>(ini: Option<&'a IniFile>, section: &str, key: &str) -> Option<&'a str> {
+    ini?.get(section, key).filter(|v| !v.is_empty())
+}
+
+/// Slot A device values in Dolphin.ini (`EXIDeviceType`).
+const EXI_MEMORY_CARD: &str = "1";
+const EXI_MEMORY_CARD_FOLDER: &str = "8";
+const GC_REGIONS: &[&str] = &["USA", "EUR", "JAP"];
+
+/// The game's `.gci` files, when slot A is a GCI folder (Dolphin's default).
+/// A raw memory card holds every game's saves in one image and cannot be
+/// synced per game.
+fn gc_saves(config: &EmulatorConfig, ini: Option<&IniFile>, game_id: &str) -> Option<SaveSet> {
+    match ini_value(ini, "Core", "SlotA") {
+        None | Some(EXI_MEMORY_CARD_FOLDER) => {}
+        Some(EXI_MEMORY_CARD) => {
+            warn!(
+                "Dolphin slot A is a raw memory card shared by all games; \
+                 GameCube saves for {} cannot be synced — switch slot A to a GCI folder",
+                game_id
+            );
+            return None;
+        }
+        Some(other) => {
+            debug!("Dolphin slot A holds device {} rather than a memory card", other);
+            return None;
+        }
+    }
+    let matcher = FileMatcher::Gci(game_id.to_owned());
+    // Newer Dolphin versions call the override GCIFolderAPath.
+    let dir = match ini_value(ini, "Core", "GCIFolderAPath")
+        .or_else(|| ini_value(ini, "Core", "GCIFolderAPathOverride"))
+    {
+        Some(path) => PathBuf::from(path),
+        None => {
+            // A card that already holds this game's saves wins over the region
+            // guess, e.g. a PAL game the user runs with a USA-region card.
+            let gc = config.config_dir.join("GC");
+            GC_REGIONS
+                .iter()
+                .map(|region| gc.join(region).join("Card A"))
+                .find(|dir| !FileSet { dir: dir.clone(), matcher: matcher.clone() }.files().is_empty())
+                .unwrap_or_else(|| gc.join(gc_region_dir(game_id)).join("Card A"))
+        }
+    };
+    Some(SaveSet::Bundle(FileSet { dir, matcher }))
+}
+
+/// Region folder Dolphin uses for a game, from the region code in the 4th
+/// character of its ID. GameCube has no Korean region.
+fn gc_region_dir(game_id: &str) -> &'static str {
+    match game_id.as_bytes().get(3) {
+        Some(b'E') => "USA",
+        Some(b'J') => "JAP",
+        _ => "EUR",
+    }
+}
+
+/// `<NAND root>/title/00010000/<game code as hex>/` — the whole title folder,
+/// the same unit argosy-launcher archives, rooted at its folder name.
+fn wii_save_dir(config: &EmulatorConfig, ini: Option<&IniFile>, game_id: &str) -> GameSaveDir {
+    let nand = ini_value(ini, "General", "NANDRootPath")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| config.config_dir.join("Wii"));
+    let code: String = game_id.bytes().take(4).map(|b| format!("{:02x}", b)).collect();
+    GameSaveDir {
+        dir: nand.join("title").join("00010000").join(&code),
+        archive_root: code,
+        mirrors: Vec::new(),
+        required_subdir: Some("data"),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiscKind {
+    GameCube,
+    Wii,
+}
+
+const WII_MAGIC: u32 = 0x5D1C_9EA3;
+const GC_MAGIC: u32 = 0xC233_9F3D;
+
+/// Game ID and platform of a disc image. The disc header carries a magic word
+/// for each platform (Wii at 0x18, GameCube at 0x1C); WBFS images are Wii-only.
+fn read_disc(rom_path: &Path) -> Option<(String, DiscKind)> {
+    let id = read_game_id(rom_path)?;
+    let ext = rom_path.extension()?.to_str()?.to_lowercase();
+    let header = match ext.as_str() {
+        "iso" | "gcm" => 0,
+        "rvz" => 0x58,
+        "wbfs" => return Some((id, DiscKind::Wii)),
+        _ => return None,
+    };
+    let magic_at = |offset: u64| -> Option<u32> {
+        let mut f = std::fs::File::open(rom_path).ok()?;
+        let mut buf = [0u8; 4];
+        f.seek(SeekFrom::Start(header + offset)).ok()?;
+        f.read_exact(&mut buf).ok()?;
+        Some(u32::from_be_bytes(buf))
+    };
+    if magic_at(0x18) == Some(WII_MAGIC) {
+        Some((id, DiscKind::Wii))
+    } else if magic_at(0x1C) == Some(GC_MAGIC) {
+        Some((id, DiscKind::GameCube))
+    } else {
+        warn!("{} has neither a GameCube nor a Wii disc header", rom_path.display());
+        None
+    }
 }
 
 /// Read the 6-character game ID from a disc image.
@@ -245,5 +345,36 @@ mod tests {
         assert!(parse_game_id(b"GAL501").is_none());        // '5' at position 3 is not a region code
         assert!(parse_game_id(b"gale01").is_none());        // lowercase
         assert!(parse_game_id(b"GAL 01").is_none());        // space
+    }
+
+    #[test]
+    fn gc_region_from_game_id() {
+        assert_eq!(gc_region_dir("GALE01"), "USA");
+        assert_eq!(gc_region_dir("GALJ01"), "JAP");
+        assert_eq!(gc_region_dir("GALP01"), "EUR");
+        assert_eq!(gc_region_dir("GALD01"), "EUR");
+    }
+
+    #[test]
+    fn wii_title_dir_is_hex_game_code() {
+        let config = EmulatorConfig { binary: "dolphin".into(), config_dir: "/d".into() };
+        let dir = wii_save_dir(&config, None, "RMGE01");
+        assert_eq!(dir.dir, PathBuf::from("/d/Wii/title/00010000/524d4745"));
+        assert_eq!(dir.archive_root, "524d4745");
+    }
+
+    #[test]
+    fn slot_a_modes() {
+        let config = EmulatorConfig { binary: "dolphin".into(), config_dir: "/d".into() };
+        let ini = |v: &str| IniFile::parse(&format!("[Core]\nSlotA = {}\n", v));
+        assert!(matches!(gc_saves(&config, None, "GALE01"), Some(SaveSet::Bundle(_))));
+        assert!(matches!(gc_saves(&config, Some(&ini("8")), "GALE01"), Some(SaveSet::Bundle(_))));
+        assert!(gc_saves(&config, Some(&ini("1")), "GALE01").is_none());
+        assert!(gc_saves(&config, Some(&ini("255")), "GALE01").is_none());
+        let with_override = IniFile::parse("[Core]\nGCIFolderAPath = /cards/a\n");
+        match gc_saves(&config, Some(&with_override), "GALE01") {
+            Some(SaveSet::Bundle(set)) => assert_eq!(set.dir, PathBuf::from("/cards/a")),
+            other => panic!("unexpected {:?}", other),
+        }
     }
 }

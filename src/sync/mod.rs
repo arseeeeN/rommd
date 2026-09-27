@@ -1,7 +1,8 @@
 //! Save and state sync with RomM.
 //!
-//! Every save is a *unit*: one local file (flat-file emulators) or one
-//! directory (Switch), paired with at most one RomM entry. Each unit is synced
+//! Every save is a *unit* paired with at most one RomM entry: a single file, a
+//! directory (Switch, Wii) or a bundle of files (GameCube), the latter two as
+//! one argosy-compatible zip. Each unit is synced
 //! by a three-way comparison of its local content hash, the RomM entry, and
 //! the state both were in at the last sync (`SyncStore`). The same logic runs
 //! before launch and after exit.
@@ -15,12 +16,12 @@ pub mod decide;
 pub mod state;
 
 use anyhow::Result;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tracing::{debug, info, warn};
 
-use crate::emulator::{Emulator, GameSaveDir, SaveFilter};
+use crate::emulator::{Emulator, FileSet, GameSaveDir, SaveLayout, SaveSet};
 use crate::romm::RommClient;
 use crate::romm::types::{SaveSchema, StateSchema};
 use crate::save_archive;
@@ -48,74 +49,120 @@ pub struct SyncCtx<'a> {
     pub emulator: &'a dyn Emulator,
 }
 
-/// Sync a directory save (Switch) as one argosy-compatible zip.
+/// Sync every save and state in `layout`. Returns the sync-state keys of the
+/// units that exist locally afterwards.
 ///
-/// `created_this_session` marks a save the emulator created during a session
-/// that started without one (Ryujinx's first boot of a game). Such a save is a
-/// fresh start, so on conflict the existing RomM save wins however new the
-/// local one is.
-pub async fn sync_dir_save(
+/// Pass the set returned before launch as `present_at_launch` when syncing
+/// after exit: a unit missing from it had no local save when the game started
+/// (a first boot, or a restore that failed while offline), so whatever the game
+/// wrote is a fresh start. On conflict such a save never wins over an existing
+/// RomM save, however new it is.
+pub async fn sync_layout(
     ctx: &SyncCtx<'_>,
-    save: &GameSaveDir,
+    layout: &SaveLayout,
     rom_path: &Path,
-    created_this_session: bool,
-) {
+    present_at_launch: Option<&HashSet<String>>,
+) -> HashSet<String> {
+    let mut units = Vec::new();
+    let mut listing_failed = false;
+    if let Some(saves) = &layout.saves {
+        match units_for_saves(ctx, saves, rom_path).await {
+            Ok(u) => units.extend(u),
+            Err(u) => {
+                units.extend(u);
+                listing_failed = true;
+            }
+        }
+    }
+    if let Some(states) = &layout.states {
+        match flat_units(ctx, Kind::State, states).await {
+            Ok(u) => units.extend(u),
+            Err(u) => {
+                units.extend(u);
+                listing_failed = true;
+            }
+        }
+    }
+
+    let mut present = HashSet::new();
+    for mut unit in units {
+        let key = unit_key(ctx, &unit);
+        unit.local_is_fresh = present_at_launch.is_some_and(|p| !p.contains(&key));
+        // Without the RomM listing nothing can be decided, but local presence
+        // still matters for the post-exit pass.
+        let exists = if listing_failed && unit.remote.is_none() {
+            local_hash(&unit.local).await.ok().flatten().is_some()
+        } else {
+            sync_unit(ctx, &unit, &key).await
+        };
+        if exists {
+            present.insert(key);
+        }
+    }
+    present
+}
+
+/// Units for the game's saves. On a RomM listing error, returns (as `Err`) the
+/// local units without remotes so presence can still be recorded.
+async fn units_for_saves(ctx: &SyncCtx<'_>, saves: &SaveSet, rom_path: &Path) -> Result<Vec<Unit>, Vec<Unit>> {
+    let local = match saves {
+        SaveSet::Files(set) => return flat_units(ctx, Kind::Save, set).await,
+        SaveSet::Dir(dir) => Local::Dir(dir.clone()),
+        SaveSet::Bundle(set) => Local::Bundle(set.clone()),
+    };
+    let mut unit = Unit {
+        kind: Kind::Save,
+        local,
+        remote: None,
+        own_remote: None,
+        slot: Some(AUTOSAVE_SLOT.to_owned()),
+        upload_name: archive_upload_name(rom_path),
+        local_is_fresh: false,
+    };
     let remotes = match Kind::Save.list(ctx).await {
         Ok(r) => r,
         Err(e) => {
             warn!("could not fetch RomM saves for rom {}: {:#}", ctx.rom_id, e);
-            return;
+            return Err(vec![unit]);
         }
     };
+    // One archive per game: the newest zip from any compatible emulator is the
+    // current save; uploads update this emulator's own entry.
     let zips: Vec<&Remote> = remotes
         .iter()
-        .filter(|r| is_dir_save(r) && ctx.emulator.accepts_saves_from(r.emulator.as_deref()))
+        .filter(|r| is_archive_save(r) && ctx.emulator.accepts_saves_from(r.emulator.as_deref()))
         .collect();
-    let own = newest(zips.iter().copied().filter(|r| r.emulator.as_deref() == Some(ctx.emulator.id())));
-    sync_unit(
-        ctx,
+    unit.remote = newest(zips.iter().copied()).cloned();
+    unit.own_remote = newest(zips.iter().copied().filter(|r| r.emulator.as_deref() == Some(ctx.emulator.id())))
+        .map(|r| r.id);
+    Ok(vec![unit])
+}
+
+/// One unit per file: the local files in `set`, plus RomM entries for this game
+/// that have no local file yet.
+async fn flat_units(ctx: &SyncCtx<'_>, kind: Kind, set: &FileSet) -> Result<Vec<Unit>, Vec<Unit>> {
+    let local_files = {
+        let set = set.clone();
+        tokio::task::spawn_blocking(move || set.files()).await.unwrap_or_default()
+    };
+    let unit = |path: PathBuf, group: &[Remote]| {
+        let own = newest(group.iter().filter(|r| r.emulator.as_deref() == Some(ctx.emulator.id())));
         Unit {
-            kind: Kind::Save,
-            local: Local::Dir(save.clone()),
-            remote: newest(zips.iter().copied()).cloned(),
+            kind,
+            upload_name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+            local: Local::File(path),
+            remote: newest(group.iter()).cloned(),
             own_remote: own.map(|r| r.id),
-            slot: Some(AUTOSAVE_SLOT.to_owned()),
-            upload_name: dir_save_upload_name(rom_path),
-            local_is_fresh: created_this_session,
-        },
-    )
-    .await;
-}
-
-/// Sync flat save and state files, scoped by the filename prefixes in `filter`.
-/// A kind with an empty prefix is skipped: without a prefix every file in the
-/// directory would be attributed to this game.
-pub async fn sync_flat(
-    ctx: &SyncCtx<'_>,
-    saves_dir: &Path,
-    states_dir: Option<&Path>,
-    filter: &SaveFilter,
-) {
-    if filter.saves.is_empty() {
-        warn!("skipping save sync: no file prefix for rom_id={}", ctx.rom_id);
-    } else {
-        sync_flat_kind(ctx, Kind::Save, saves_dir, &filter.saves).await;
-    }
-    if let Some(dir) = states_dir {
-        if filter.states.is_empty() {
-            warn!("skipping state sync: no file prefix for rom_id={}", ctx.rom_id);
-        } else {
-            sync_flat_kind(ctx, Kind::State, dir, &filter.states).await;
+            slot: None,
+            local_is_fresh: false,
         }
-    }
-}
+    };
 
-async fn sync_flat_kind(ctx: &SyncCtx<'_>, kind: Kind, dir: &Path, prefix: &str) {
     let remotes = match kind.list(ctx).await {
         Ok(r) => r,
         Err(e) => {
             warn!("could not fetch RomM {}s for rom {}: {:#}", kind.label(), ctx.rom_id, e);
-            return;
+            return Err(local_files.into_iter().map(|p| unit(p, &[])).collect());
         }
     };
     // RomM tags stored names with an upload timestamp; group entries by the
@@ -133,39 +180,21 @@ async fn sync_flat_kind(ctx: &SyncCtx<'_>, kind: Kind, dir: &Path, prefix: &str)
     }
 
     let mut units = Vec::new();
-    for path in collect_files(dir, prefix).await {
+    for path in local_files {
         let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
         let group = groups.remove(&name).unwrap_or_default();
-        units.push(flat_unit(ctx, kind, path, name, &group));
+        units.push(unit(path, &group));
     }
     for (name, group) in groups {
-        if name.starts_with(prefix) {
-            units.push(flat_unit(ctx, kind, dir.join(&name), name, &group));
+        if set.matcher.matches_name(&name) {
+            units.push(unit(set.dir.join(&name), &group));
         }
     }
-    for unit in units {
-        sync_unit(ctx, unit).await;
-    }
+    Ok(units)
 }
 
-fn flat_unit(ctx: &SyncCtx<'_>, kind: Kind, path: PathBuf, name: String, group: &[Remote]) -> Unit {
-    let own = newest(group.iter().filter(|r| r.emulator.as_deref() == Some(ctx.emulator.id())));
-    Unit {
-        kind,
-        local: Local::File(path),
-        remote: newest(group.iter()).cloned(),
-        own_remote: own.map(|r| r.id),
-        slot: match kind {
-            Kind::Save => extract_slot(&name),
-            Kind::State => None,
-        },
-        upload_name: name,
-        local_is_fresh: false,
-    }
-}
-
-/// RomM file name for a directory save: `<rom file stem>.zip`, as argosy does.
-pub fn dir_save_upload_name(rom_path: &Path) -> String {
+/// RomM file name for an archive save: `<rom file stem>.zip`, as argosy does.
+fn archive_upload_name(rom_path: &Path) -> String {
     let stem = rom_path.file_stem().unwrap_or_default().to_string_lossy();
     format!("{}.zip", stem)
 }
@@ -190,6 +219,7 @@ struct Unit {
 enum Local {
     File(PathBuf),
     Dir(GameSaveDir),
+    Bundle(FileSet),
 }
 
 impl Local {
@@ -197,6 +227,30 @@ impl Local {
         match self {
             Local::File(p) => p,
             Local::Dir(s) => &s.dir,
+            Local::Bundle(set) => &set.dir,
+        }
+    }
+
+    /// Archive entries (local file, name in the zip) for archive saves.
+    fn entries(&self) -> Result<Vec<(PathBuf, String)>> {
+        match self {
+            Local::File(_) => unreachable!("single files are not archived"),
+            Local::Dir(s) => {
+                if let Some(sub) = s.required_subdir {
+                    if save_archive::newest_mtime(&s.dir.join(sub)).is_none() {
+                        return Ok(Vec::new());
+                    }
+                }
+                save_archive::dir_entries(&s.dir, &s.archive_root)
+            }
+            Local::Bundle(set) => Ok(set
+                .files()
+                .into_iter()
+                .map(|p| {
+                    let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                    (p, name)
+                })
+                .collect()),
         }
     }
 
@@ -204,14 +258,14 @@ impl Local {
         match self {
             Local::File(p) if p.is_file() => Ok(Some(save_archive::file_md5(p)?)),
             Local::File(_) => Ok(None),
-            Local::Dir(s) => save_archive::dir_content_hash(&s.dir, &s.archive_root),
+            _ => save_archive::entries_hash(&self.entries()?),
         }
     }
 
     fn mtime(&self) -> Option<SystemTime> {
         match self {
             Local::File(p) => std::fs::metadata(p).and_then(|m| m.modified()).ok(),
-            Local::Dir(s) => save_archive::newest_mtime(&s.dir),
+            _ => save_archive::entries_mtime(&self.entries().ok()?),
         }
     }
 }
@@ -222,49 +276,52 @@ async fn local_hash(local: &Local) -> Result<Option<String>> {
 }
 
 fn unit_key(ctx: &SyncCtx<'_>, unit: &Unit) -> String {
-    format!(
-        "{}:{}:{}:{}",
-        ctx.emulator.id(),
-        ctx.rom_id,
-        unit.kind.label(),
-        unit.local.path().display()
-    )
+    let local = match &unit.local {
+        Local::Bundle(set) => format!("{}#{}", set.dir.display(), set.matcher.label()),
+        other => other.path().display().to_string(),
+    };
+    format!("{}:{}:{}:{}", ctx.emulator.id(), ctx.rom_id, unit.kind.label(), local)
 }
 
-async fn sync_unit(ctx: &SyncCtx<'_>, unit: Unit) {
-    let key = unit_key(ctx, &unit);
+/// Sync one unit. Returns whether it exists locally afterwards.
+async fn sync_unit(ctx: &SyncCtx<'_>, unit: &Unit, key: &str) -> bool {
     let path = unit.local.path().display().to_string();
     let hash = match local_hash(&unit.local).await {
         Ok(h) => h,
         Err(e) => {
             warn!("could not read local {} {}: {:#}", unit.kind.label(), path, e);
-            return;
+            return true;
         }
     };
-    let base = ctx.store.base(&key).await;
+    let base = ctx.store.base(key).await;
     let view = unit.remote.as_ref().map(|r| RemoteView {
         id: r.id,
         hash: r.content_hash.as_deref(),
         updated_at: &r.updated_at,
     });
 
+    let had_local = hash.is_some();
     let result = match decide(hash.as_deref(), view, base.as_ref()) {
         Action::Nothing => {
             debug!("{} unchanged", path);
-            Ok(())
+            Ok(had_local)
         }
         Action::InSync => {
             let (Some(h), Some(r)) = (hash, &unit.remote) else { unreachable!() };
-            ctx.store.set_base(&key, r.base_for(h)).await;
+            ctx.store.set_base(key, r.base_for(h)).await;
             debug!("{} already in sync with RomM id={}", path, r.id);
-            Ok(())
+            Ok(true)
         }
-        Action::Upload => upload(ctx, &unit, &key, hash.unwrap()).await,
-        Action::Download => download(ctx, &unit, &key, unit.remote.as_ref().unwrap()).await.map(|_| ()),
-        Action::Conflict => resolve_conflict(ctx, &unit, &key, hash.unwrap()).await,
+        Action::Upload => upload(ctx, unit, key, hash.unwrap()).await.map(|_| true),
+        Action::Download => download(ctx, unit, key, unit.remote.as_ref().unwrap()).await.map(|_| true),
+        Action::Conflict => resolve_conflict(ctx, unit, key, hash.unwrap()).await.map(|_| true),
     };
-    if let Err(e) = result {
-        warn!("{} sync failed for {}: {:#}", unit.kind.label(), path, e);
+    match result {
+        Ok(exists) => exists,
+        Err(e) => {
+            warn!("{} sync failed for {}: {:#}", unit.kind.label(), path, e);
+            had_local
+        }
     }
 }
 
@@ -273,10 +330,10 @@ async fn upload(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: String) -> Resu
     let result = async {
         let file = match &unit.local {
             Local::File(p) => p.clone(),
-            Local::Dir(save) => {
+            archive => {
                 let zip = work.join(&unit.upload_name);
-                let (dir, root, dest) = (save.dir.clone(), save.archive_root.clone(), zip.clone());
-                tokio::task::spawn_blocking(move || save_archive::zip_dir(&dir, &root, &dest)).await??;
+                let (local, dest) = (archive.clone(), zip.clone());
+                tokio::task::spawn_blocking(move || save_archive::zip_entries(&local.entries()?, &dest)).await??;
                 zip
             }
         };
@@ -325,11 +382,11 @@ async fn download(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, remote: &Remote) ->
     result
 }
 
-/// Blocking part of a download: verify, back up, and put the file in place.
+/// Blocking part of a download: verify, back up, and put the files in place.
 fn apply_download(local: &Local, downloaded: &Path, backup: &Path, expected_hash: Option<&str>) -> Result<bool> {
     let actual = match local {
         Local::File(_) => save_archive::file_md5(downloaded)?,
-        Local::Dir(_) => save_archive::zip_content_hash(downloaded)?,
+        _ => save_archive::zip_content_hash(downloaded)?,
     };
     if expected_hash.is_some_and(|h| h != actual) {
         warn!("downloaded content hash {} differs from RomM's {:?}", actual, expected_hash);
@@ -356,6 +413,10 @@ fn apply_download(local: &Local, downloaded: &Path, backup: &Path, expected_hash
             let mut targets = vec![save.dir.clone()];
             targets.extend(save.mirrors.iter().cloned());
             save_archive::restore_zip(downloaded, &save.archive_root, &targets, &backup.join(&save.archive_root))?;
+        }
+        Local::Bundle(set) => {
+            let accept = |p: &Path| set.matcher.matches_file(p);
+            save_archive::restore_bundle(downloaded, &set.dir, &set.files(), accept, backup)?;
         }
     }
     if let Some(parent) = backup.parent() {
@@ -389,10 +450,11 @@ async fn resolve_conflict(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: Strin
     };
 
     warn!(
-        "save conflict for {}: kept {} version (local modified {:?}, RomM id={} updated {}); other version kept at {:?}",
+        "save conflict for {}: kept {} version (local modified {:?}{}, RomM id={} updated {}); other version kept at {:?}",
         unit.local.path().display(),
         if keep_local { "local" } else { "RomM" },
         local_time.map(rfc3339),
+        if unit.local_is_fresh { ", created this session" } else { "" },
         remote.id,
         remote.updated_at,
         loser_backup
@@ -508,7 +570,7 @@ impl Kind {
     }
 }
 
-fn is_dir_save(r: &Remote) -> bool {
+fn is_archive_save(r: &Remote) -> bool {
     r.file_name.to_lowercase().ends_with(".zip")
         && r.slot.as_deref().is_none_or(|slot| slot == AUTOSAVE_SLOT)
 }
@@ -562,12 +624,6 @@ fn is_romm_timestamp(s: &str) -> bool {
     base && (b.len() == 19 || (b[19] == b'-' && b.len() > 20 && digits(20..b.len())))
 }
 
-/// Try to extract a slot from a filename: "SLUS-00255_1.mcd" → Some("1").
-fn extract_slot(name: &str) -> Option<String> {
-    let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
-    stem.rsplit_once('_').map(|(_, slot)| slot.to_owned())
-}
-
 pub fn parse_romm_time(s: &str) -> Option<SystemTime> {
     use chrono::{DateTime, NaiveDateTime};
     if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
@@ -587,22 +643,6 @@ fn rfc3339(t: SystemTime) -> String {
 }
 
 // ── Local files ───────────────────────────────────────────────────────────────
-
-async fn collect_files(dir: &Path, prefix: &str) -> Vec<PathBuf> {
-    let mut result = Vec::new();
-    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
-        return result;
-    };
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if path.is_file() && !name.starts_with('.') && name.starts_with(prefix) {
-            result.push(path);
-        }
-    }
-    result.sort();
-    result
-}
 
 /// `save-backups/<emulator>/<rom_id>/<time>/`; one dir per sync event.
 fn backup_dir(ctx: &SyncCtx<'_>) -> PathBuf {

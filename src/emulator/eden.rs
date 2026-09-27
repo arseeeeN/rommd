@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use tokio::process::Child;
 use tracing::warn;
 
-use super::{Emulator, GameSaveDir, LaunchContext};
+use super::{Emulator, GameSaveDir, LaunchContext, SaveLayout, SaveSet};
 use crate::config::EmulatorConfig;
 use crate::ini::IniFile;
 use crate::profile::ProfileBlob;
@@ -38,39 +38,16 @@ impl Emulator for Eden {
         crate::switch::SAVE_COMPATIBLE_EMULATORS
     }
 
-    async fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf {
-        let settings = read_qt_config(config);
-        nand_dir(config, settings.as_ref()).join("user").join("save")
-    }
-
-    async fn states_dir(&self, _config: &EmulatorConfig) -> Option<PathBuf> {
-        None
-    }
-
-    /// Resolve the save dir for the active user (`[System] current_user`, an
-    /// index into profiles.dat). Games with a per-console "device" save keep it
-    /// under the all-zero user ID instead; the save found on disk decides, and
-    /// `DEVICE_SAVE_TITLES` breaks the tie when neither exists yet.
-    async fn game_saves_dir(&self, config: &EmulatorConfig, game_id: &str) -> Option<GameSaveDir> {
-        let settings = read_qt_config(config);
-        if let Some(custom) = setting(settings.as_ref(), "Data%20Storage", "save_directory") {
-            warn!("Eden save_directory override ({}) is not supported; skipping save sync", custom);
-            return None;
+    async fn save_layout(
+        &self,
+        config: &EmulatorConfig,
+        _rom_path: &Path,
+        game_id: Option<&str>,
+    ) -> SaveLayout {
+        SaveLayout {
+            saves: game_id.and_then(|id| game_save_dir(config, id)).map(SaveSet::Dir),
+            states: None,
         }
-        let nand = nand_dir(config, settings.as_ref());
-        let title = game_id.to_uppercase();
-        let users = nand.join("user/save/0000000000000000");
-        let device = users.join(DEVICE_USER_DIR).join(&title);
-        let account = active_user_dir(&nand, settings.as_ref()).map(|u| users.join(u).join(&title));
-
-        let dir = match account {
-            Some(a) if a.is_dir() => a,
-            _ if device.is_dir() => device,
-            _ if crate::switch::DEVICE_SAVE_TITLES.contains(&title.as_str()) => device,
-            Some(a) => a,
-            None => return None,
-        };
-        Some(GameSaveDir { dir, archive_root: title, mirrors: Vec::new() })
     }
 
     async fn launch(
@@ -91,6 +68,32 @@ impl Emulator for Eden {
     async fn snapshot(&self, _config: &EmulatorConfig, _game_id: &str) -> Result<ProfileBlob> {
         anyhow::bail!("Eden does not support per-game profiles")
     }
+}
+
+/// Resolve the save dir for the active user (`[System] current_user`, an
+/// index into profiles.dat). Games with a per-console "device" save keep it
+/// under the all-zero user ID instead; the save found on disk decides, and
+/// `DEVICE_SAVE_TITLES` breaks the tie when neither exists yet.
+fn game_save_dir(config: &EmulatorConfig, game_id: &str) -> Option<GameSaveDir> {
+    let settings = read_qt_config(config);
+    if let Some(custom) = setting(settings.as_ref(), "Data%20Storage", "save_directory") {
+        warn!("Eden save_directory override ({}) is not supported; skipping save sync", custom);
+        return None;
+    }
+    let nand = nand_dir(config, settings.as_ref());
+    let title = game_id.to_uppercase();
+    let users = nand.join("user/save/0000000000000000");
+    let device = users.join(DEVICE_USER_DIR).join(&title);
+    let account = active_user_dir(&nand, settings.as_ref()).map(|u| users.join(u).join(&title));
+
+    let dir = match account {
+        Some(a) if a.is_dir() => a,
+        _ if device.is_dir() => device,
+        _ if crate::switch::DEVICE_SAVE_TITLES.contains(&title.as_str()) => device,
+        Some(a) => a,
+        None => return None,
+    };
+    Some(GameSaveDir { dir, archive_root: title, mirrors: Vec::new(), required_subdir: None })
 }
 
 fn active_user_dir(nand: &Path, settings: Option<&IniFile>) -> Option<String> {
@@ -196,7 +199,7 @@ mod tests {
         let dir = |id: &str| {
             let config = config.clone();
             let id = id.to_owned();
-            async move { Eden.game_saves_dir(&config, &id).await.unwrap().dir }
+            async move { game_save_dir(&config, &id).unwrap().dir }
         };
         assert_eq!(dir("0100000000010000").await, users.join(&user).join("0100000000010000"));
         assert_eq!(dir("01006f8002326000").await, users.join(DEVICE_USER_DIR).join("01006F8002326000"));

@@ -1,7 +1,11 @@
-//! Whole-directory save archives, used for emulators whose per-game save is a
-//! folder rather than a single file (Switch). The zip layout matches argosy-launcher:
-//! every entry lives under a single root folder named after the title ID, e.g.
-//! `0100000000010000/File1.bin`, so saves round-trip between rommd and argosy.
+//! Zip archives for saves made of several files, in argosy-launcher's layouts so
+//! saves round-trip between rommd and argosy:
+//!
+//! - **Directory saves** (Switch, Wii): every entry under one root folder named
+//!   after the title, e.g. `0100000000010000/File1.bin`.
+//! - **File bundles** (GameCube `.gci` files): flat entries, no root folder.
+//!
+//! An archive is described by its entries: (local file, name inside the zip).
 
 use anyhow::{Context, Result};
 use std::io::{Read, Write};
@@ -22,26 +26,45 @@ pub fn newest_mtime(dir: &Path) -> Option<SystemTime> {
     newest
 }
 
-/// RomM's `content_hash` for a directory save, as if zipped under `root/`:
-/// MD5 over the sorted `"<root>/<rel>:<md5 hex>"` lines joined by `\n`. This is
-/// the scheme RomM and argosy-launcher use for zips, so a local directory can
-/// be compared with a remote zip without downloading it.
-pub fn dir_content_hash(dir: &Path, root: &str) -> Result<Option<String>> {
+/// Entries of a directory save: every file under `dir`, named `<root>/<rel>`.
+/// Empty when the directory is missing.
+pub fn dir_entries(dir: &Path, root: &str) -> Result<Vec<(PathBuf, String)>> {
     if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    Ok(walk_files(dir)?
+        .into_iter()
+        .map(|(path, rel)| {
+            let name = format!("{}/{}", root, rel.to_string_lossy().replace('\\', "/"));
+            (path, name)
+        })
+        .collect())
+}
+
+/// RomM's `content_hash` for an archive with these entries: MD5 over the sorted
+/// `"<entry name>:<md5 hex>"` lines joined by `\n`. This is the scheme RomM and
+/// argosy-launcher use for zips, so local files can be compared with a remote
+/// zip without downloading it. `None` when there are no entries.
+pub fn entries_hash(entries: &[(PathBuf, String)]) -> Result<Option<String>> {
+    if entries.is_empty() {
         return Ok(None);
     }
-    let mut lines = Vec::new();
-    for (path, rel) in walk_files(dir)? {
-        let name = format!("{}/{}", root, rel.to_string_lossy().replace('\\', "/"));
-        lines.push((name, file_md5(&path)?));
-    }
-    if lines.is_empty() {
-        return Ok(None);
+    let mut lines = Vec::with_capacity(entries.len());
+    for (path, name) in entries {
+        lines.push((name.clone(), file_md5(path)?));
     }
     Ok(Some(finalize_hash(lines)))
 }
 
-/// RomM's `content_hash` for a zip file (see `dir_content_hash`).
+/// Newest mtime among the entries' files.
+pub fn entries_mtime(entries: &[(PathBuf, String)]) -> Option<SystemTime> {
+    entries
+        .iter()
+        .filter_map(|(p, _)| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+        .max()
+}
+
+/// RomM's `content_hash` for a zip file (see `entries_hash`).
 pub fn zip_content_hash(zip_path: &Path) -> Result<String> {
     let mut archive = zip::ZipArchive::new(std::fs::File::open(zip_path)?)?;
     let mut lines = Vec::new();
@@ -77,24 +100,75 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-/// Zip the contents of `dir` into `dest`, placing every entry under `root/`.
-pub fn zip_dir(dir: &Path, root: &str, dest: &Path) -> Result<()> {
-    let files = walk_files(dir)?;
-    anyhow::ensure!(!files.is_empty(), "no files to archive in {}", dir.display());
-
+/// Write a zip with these entries to `dest`.
+pub fn zip_entries(entries: &[(PathBuf, String)], dest: &Path) -> Result<()> {
+    anyhow::ensure!(!entries.is_empty(), "no files to archive");
     let out = std::fs::File::create(dest).with_context(|| format!("creating {}", dest.display()))?;
     let mut zip = zip::ZipWriter::new(out);
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
-    for (path, rel) in files {
-        let name = format!("{}/{}", root, rel.to_string_lossy().replace('\\', "/"));
-        zip.start_file(name, opts)?;
+    for (path, name) in entries {
+        zip.start_file(name.as_str(), opts)?;
         let mut buf = Vec::new();
-        std::fs::File::open(&path)?.read_to_end(&mut buf)?;
+        std::fs::File::open(path)?.read_to_end(&mut buf)?;
         zip.write_all(&buf)?;
     }
     zip.finish()?;
     Ok(())
+}
+
+/// Replace a file bundle in `dest_dir` with the flat zip at `zip_path`.
+///
+/// Every entry must be a plain file name that `accept` approves once
+/// extracted (e.g. a GCI whose header names this game), so another game's save
+/// is never restored. `existing` (the bundle's current files) is copied to
+/// `backup_dir` and removed before the new files are put in place.
+pub fn restore_bundle(
+    zip_path: &Path,
+    dest_dir: &Path,
+    existing: &[PathBuf],
+    accept: impl Fn(&Path) -> bool,
+    backup_dir: &Path,
+) -> Result<()> {
+    let staging = tempdir_near(backup_dir)?;
+    let result = (|| {
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(zip_path)?).context("reading save zip")?;
+        let mut names = Vec::new();
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i)?;
+            if entry.is_dir() {
+                continue;
+            }
+            let name = entry
+                .enclosed_name()
+                .filter(|n| n.components().count() == 1)
+                .and_then(|n| n.to_str().map(str::to_owned))
+                .ok_or_else(|| anyhow::anyhow!("unexpected entry in save bundle: {}", entry.name()))?;
+            let staged = staging.join(&name);
+            std::io::copy(&mut entry, &mut std::fs::File::create(&staged)?)?;
+            anyhow::ensure!(accept(&staged), "{} in the save bundle does not belong to this game", name);
+            names.push(name);
+        }
+        anyhow::ensure!(!names.is_empty(), "save bundle contains no files");
+
+        if !existing.is_empty() {
+            std::fs::create_dir_all(backup_dir)?;
+            for path in existing {
+                std::fs::copy(path, backup_dir.join(path.file_name().unwrap_or_default()))
+                    .with_context(|| format!("backing up {}", path.display()))?;
+            }
+        }
+        for path in existing {
+            std::fs::remove_file(path)?;
+        }
+        std::fs::create_dir_all(dest_dir)?;
+        for name in names {
+            std::fs::copy(staging.join(&name), dest_dir.join(&name))?;
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&staging);
+    result
 }
 
 /// Replace the contents of `targets` with the save in `zip_path`.
@@ -241,7 +315,7 @@ mod tests {
         std::fs::write(src.join("slot_00/progress.sav"), b"progress").unwrap();
 
         let zip = base.join("save.zip");
-        zip_dir(&src, "0100000000010000", &zip).unwrap();
+        zip_entries(&dir_entries(&src, "0100000000010000").unwrap(), &zip).unwrap();
 
         let dest = base.join("dest");
         let mirror = base.join("mirror");
@@ -276,9 +350,10 @@ mod tests {
             );
             hex(&md5::Md5::digest(lines.as_bytes()))
         };
-        assert_eq!(dir_content_hash(&src, "ROOT").unwrap().as_deref(), Some(expected.as_str()));
+        let entries = dir_entries(&src, "ROOT").unwrap();
+        assert_eq!(entries_hash(&entries).unwrap().as_deref(), Some(expected.as_str()));
         let zip = base.join("s.zip");
-        zip_dir(&src, "ROOT", &zip).unwrap();
+        zip_entries(&entries, &zip).unwrap();
         assert_eq!(zip_content_hash(&zip).unwrap(), expected);
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -290,13 +365,42 @@ mod tests {
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("a.bin"), b"a").unwrap();
         let zip = base.join("save.zip");
-        zip_dir(&src, "0100AAAA00000000", &zip).unwrap();
+        zip_entries(&dir_entries(&src, "0100AAAA00000000").unwrap(), &zip).unwrap();
 
         let dest = base.join("dest");
         std::fs::create_dir_all(&dest).unwrap();
         std::fs::write(dest.join("keep.bin"), b"keep").unwrap();
         assert!(restore_zip(&zip, "0100000000010000", &[dest.clone()], &base.join("bk")).is_err());
         assert_eq!(std::fs::read(dest.join("keep.bin")).unwrap(), b"keep");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn bundle_restore_replaces_only_accepted_files() {
+        let base = scratch("bundle");
+        let src = base.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("01-GALE-a.gci"), b"GALE01 new").unwrap();
+        let entries = vec![(src.join("01-GALE-a.gci"), "01-GALE-a.gci".to_owned())];
+        let zip = base.join("b.zip");
+        zip_entries(&entries, &zip).unwrap();
+
+        let card = base.join("Card A");
+        std::fs::create_dir_all(&card).unwrap();
+        std::fs::write(card.join("01-GALE-old.gci"), b"GALE01 old").unwrap();
+        std::fs::write(card.join("01-GMSE-other.gci"), b"GMSE01 keep").unwrap();
+        let is_melee = |p: &Path| std::fs::read(p).unwrap().starts_with(b"GALE01");
+
+        let backup = base.join("bk/1");
+        restore_bundle(&zip, &card, &[card.join("01-GALE-old.gci")], is_melee, &backup).unwrap();
+        assert!(!card.join("01-GALE-old.gci").exists());
+        assert_eq!(std::fs::read(card.join("01-GALE-a.gci")).unwrap(), b"GALE01 new");
+        assert_eq!(std::fs::read(card.join("01-GMSE-other.gci")).unwrap(), b"GMSE01 keep");
+        assert_eq!(std::fs::read(backup.join("01-GALE-old.gci")).unwrap(), b"GALE01 old");
+
+        let reject = |_: &Path| false;
+        assert!(restore_bundle(&zip, &card, &[], reject, &base.join("bk/2")).is_err());
+        assert_eq!(std::fs::read(card.join("01-GALE-a.gci")).unwrap(), b"GALE01 new");
         let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use tokio::process::Child;
 use tracing::debug;
 
-use super::{ps1, Emulator, LaunchContext, SaveFilter};
+use super::{ps1, Emulator, FileSet, LaunchContext, SaveLayout, SaveSet};
 use crate::config::EmulatorConfig;
 use crate::ini::IniFile;
 use crate::profile::{ProfileBlob, SnapshotCleaner};
@@ -76,38 +76,91 @@ impl Emulator for DuckStation {
         serial
     }
 
-    fn save_filter(&self, config: &EmulatorConfig, rom_path: &Path, game_id: Option<&str>) -> SaveFilter {
-        let states = game_id.unwrap_or("").to_owned();
-
-        // The memory card naming mode is set per-card in settings.ini.
-        // We look at Card1Type since that is what almost all games use.
-        let card_type = read_setting(config, "MemoryCards", "Card1Type");
-
-        let saves = match card_type.as_deref().unwrap_or("PerGameTitle") {
-            "PerGame" => states.clone(),
-            "PerGameFileTitle" => rom_path
+    /// Save states are named after the disc serial (`SLUS-00255_1.sav`). Memory
+    /// cards follow the card naming mode in settings.ini (`Card1Type`, which
+    /// almost all games use): by serial, by ROM file name, or by default by the
+    /// game title from DuckStation's gamelist cache (`<Title>_1.mcd`).
+    async fn save_layout(
+        &self,
+        config: &EmulatorConfig,
+        rom_path: &Path,
+        game_id: Option<&str>,
+    ) -> SaveLayout {
+        let serial = game_id.unwrap_or("").to_owned();
+        let card_name = match read_setting(config, "MemoryCards", "Card1Type").as_deref() {
+            Some("PerGame") => serial.clone(),
+            Some("PerGameFileTitle") => rom_path
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
-            _ => {
-                // PerGameTitle (default): named after the game title from the cache
-                let cache = config.config_dir.join("cache").join("gamelist.cache");
-                lookup_in_gamelist_cache(&cache, rom_path)
-                    .map(|e| e.title)
-                    .unwrap_or_else(|| states.clone())
-            }
+            _ => per_game_title_card(config, rom_path, &serial).unwrap_or_default(),
         };
-
-        SaveFilter { saves, states }
+        let cards = read_folder(config, "MemoryCards", "Directory", "memcards");
+        let states = read_folder(config, "Folders", "SaveStates", "savestates");
+        SaveLayout {
+            saves: FileSet::stem(cards, card_name).map(SaveSet::Files),
+            states: FileSet::stem(states, serial),
+        }
     }
+}
 
-    async fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf {
-        read_folder(config, "MemoryCards", "Directory", "memcards")
-    }
+/// Memory card name in DuckStation's default "per game title" mode: the
+/// game's save title from DuckStation's game database (which keeps card names
+/// stable, e.g. "King's Field (Japan)"), falling back to the title in the
+/// gamelist cache, sanitised like DuckStation does for file names.
+fn per_game_title_card(config: &EmulatorConfig, rom_path: &Path, serial: &str) -> Option<String> {
+    let cache = config.config_dir.join("cache");
+    let title = (!serial.is_empty())
+        .then(|| lookup_save_title(&cache.join("gamedb.cache"), serial))
+        .flatten()
+        .or_else(|| lookup_in_gamelist_cache(&cache.join("gamelist.cache"), rom_path).map(|e| e.title))?;
+    Some(sanitize_file_name(&title))
+}
 
-    async fn states_dir(&self, config: &EmulatorConfig) -> Option<PathBuf> {
-        Some(read_folder(config, "Folders", "SaveStates", "savestates"))
+/// Find a serial's entry in DuckStation's compiled game database
+/// (`cache/gamedb.cache`, magic `HLCE`). An entry starts with length-prefixed
+/// (u32 LE) strings: serial, title, sort title, localized title, save title.
+/// Returns the save title, or the title when no save title is set.
+fn lookup_save_title(cache_path: &Path, serial: &str) -> Option<String> {
+    let data = std::fs::read(cache_path).ok()?;
+    if data.len() < 4 || &data[..4] != b"HLCE" {
+        return None;
     }
+    let mut needle = (serial.len() as u32).to_le_bytes().to_vec();
+    needle.extend_from_slice(serial.as_bytes());
+
+    let read_str = |at: usize| -> Option<(String, usize)> {
+        let len = u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?) as usize;
+        if len > 512 {
+            return None;
+        }
+        let s = std::str::from_utf8(data.get(at + 4..at + 4 + len)?).ok()?;
+        Some((s.to_owned(), at + 4 + len))
+    };
+    // The serial also appears inside other entries (e.g. disc set lists), so
+    // take the first occurrence that parses as an entry with a title.
+    let mut from = 0;
+    while let Some(pos) = data[from..].windows(needle.len()).position(|w| w == needle.as_slice()) {
+        let start = from + pos + needle.len();
+        from = start;
+        let Some((title, next)) = read_str(start) else { continue };
+        let Some((_sort, next)) = read_str(next) else { continue };
+        let Some((_localized, next)) = read_str(next) else { continue };
+        let Some((save_title, _)) = read_str(next) else { continue };
+        if title.is_empty() {
+            continue;
+        }
+        return Some(if save_title.is_empty() { title } else { save_title });
+    }
+    None
+}
+
+/// DuckStation's `Path::SanitizeFileName`: characters not allowed in file
+/// names become `_`.
+fn sanitize_file_name(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') { '_' } else { c })
+        .collect()
 }
 
 struct CacheEntry {
@@ -225,5 +278,30 @@ impl DuckStation {
 
         debug!("applied profile to {}", path.display());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_title_from_gamedb_cache() {
+        let mut data = b"HLCE!\x00\x00\x00".to_vec();
+        for s in ["SLUS-00158", "King's Field", "King's Field 2", "", "King's Field (USA)", "rest"] {
+            data.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            data.extend_from_slice(s.as_bytes());
+        }
+        for s in ["SCUS-94900", "Crash Bandicoot", "Crash Bandicoot 1", "", ""] {
+            data.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            data.extend_from_slice(s.as_bytes());
+        }
+        let path = std::env::temp_dir().join(format!("rommd-gamedb-{}.cache", std::process::id()));
+        std::fs::write(&path, &data).unwrap();
+        assert_eq!(lookup_save_title(&path, "SLUS-00158").as_deref(), Some("King's Field (USA)"));
+        assert_eq!(lookup_save_title(&path, "SCUS-94900").as_deref(), Some("Crash Bandicoot"));
+        assert_eq!(lookup_save_title(&path, "SLUS-99999"), None);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(sanitize_file_name("Game: Part 1/2?"), "Game_ Part 1_2_");
     }
 }

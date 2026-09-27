@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use tokio::process::Child;
 use tracing::debug;
 
-use super::{Emulator, LaunchContext, SaveFilter};
+use super::{Emulator, FileSet, LaunchContext, SaveLayout, SaveSet};
 use crate::config::EmulatorConfig;
 use crate::ini::IniFile;
 use crate::profile::ProfileBlob;
@@ -27,13 +27,26 @@ impl Emulator for MGba {
         rom_path.file_stem().map(|s| s.to_string_lossy().into_owned())
     }
 
-    fn save_filter(&self, _config: &EmulatorConfig, rom_path: &Path, _game_id: Option<&str>) -> SaveFilter {
-        // mGBA names save files after the ROM filename stem.
-        SaveFilter::both(
-            rom_path.file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-        )
+    /// mGBA names saves and states after the ROM file stem (`Game.sav`,
+    /// `Game.ss1`).
+    async fn save_layout(
+        &self,
+        config: &EmulatorConfig,
+        rom_path: &Path,
+        _game_id: Option<&str>,
+    ) -> SaveLayout {
+        let stem = rom_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let saves_dir = read_path_key(config, "savegamePath")
+            .unwrap_or_else(|| config.config_dir.join("saves"));
+        let states_dir = read_path_key(config, "savestatePath")
+            .unwrap_or_else(|| config.config_dir.join("states"));
+        SaveLayout {
+            saves: FileSet::stem(saves_dir, stem.clone()).map(SaveSet::Files),
+            states: FileSet::stem(states_dir, stem),
+        }
     }
 
     async fn launch(
@@ -86,18 +99,6 @@ impl Emulator for MGba {
             IndexMap::new()
         };
         Ok(ProfileBlob::new(overlay))
-    }
-
-    async fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf {
-        read_path_key(config, "savegamePath")
-            .unwrap_or_else(|| config.config_dir.join("saves"))
-    }
-
-    async fn states_dir(&self, config: &EmulatorConfig) -> Option<PathBuf> {
-        Some(
-            read_path_key(config, "savestatePath")
-                .unwrap_or_else(|| config.config_dir.join("states")),
-        )
     }
 }
 

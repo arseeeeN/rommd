@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use tokio::process::Child;
 use tracing::{debug, info};
 
-use super::{Emulator, GameSaveDir, LaunchContext, SaveFilter};
+use super::{Emulator, GameSaveDir, LaunchContext, SaveLayout, SaveSet};
 use crate::config::EmulatorConfig;
 use crate::profile::ProfileBlob;
 
@@ -28,46 +28,17 @@ impl Emulator for Ryujinx {
         crate::switch::SAVE_COMPATIBLE_EMULATORS
     }
 
-    fn save_filter(
+    async fn save_layout(
         &self,
-        _config: &EmulatorConfig,
+        config: &EmulatorConfig,
         _rom_path: &Path,
-        _game_id: Option<&str>,
-    ) -> SaveFilter {
-        SaveFilter::default()
-    }
-
-    async fn saves_dir(&self, config: &EmulatorConfig) -> PathBuf {
-        config.config_dir.join("bis").join("user").join("save")
-    }
-
-    async fn states_dir(&self, _config: &EmulatorConfig) -> Option<PathBuf> {
-        None
-    }
-
-    /// Scan `bis/user/save/*/ExtraData0` for the slot whose title ID matches
-    /// `game_id`, preferring the Account save and falling back to the Device
-    /// save for games that keep one save per console. Returns None if the slot
-    /// hasn't been created yet — only Ryujinx can create one, since it must also
-    /// be registered in its `imkvdb` save index.
-    ///
-    /// Inside a slot, `0/` is the committed save and `1/` the working copy of the
-    /// save filesystem's two-phase commit; they are not user profiles. `0/` is the
-    /// source of truth, and restores write both so neither holds a stale copy.
-    async fn game_saves_dir(&self, config: &EmulatorConfig, game_id: &str) -> Option<GameSaveDir> {
-        let title_id = u64::from_str_radix(game_id, 16).ok()?;
-        let Some(slot) = find_save_slot(&self.saves_dir(config).await, title_id).await else {
-            info!(
-                "no Ryujinx save slot for {} yet; saves sync once Ryujinx has booted the game and created it",
-                game_id
-            );
-            return None;
+        game_id: Option<&str>,
+    ) -> SaveLayout {
+        let saves = match game_id {
+            Some(id) => game_save_dir(config, id).await.map(SaveSet::Dir),
+            None => None,
         };
-        Some(GameSaveDir {
-            dir: slot.join("0"),
-            archive_root: game_id.to_uppercase(),
-            mirrors: vec![slot.join("1")],
-        })
+        SaveLayout { saves, states: None }
     }
 
     async fn launch(
@@ -87,6 +58,33 @@ impl Emulator for Ryujinx {
     async fn snapshot(&self, _config: &EmulatorConfig, _game_id: &str) -> Result<ProfileBlob> {
         anyhow::bail!("Ryujinx does not support per-game profiles")
     }
+}
+
+/// Scan `bis/user/save/*/ExtraData0` for the slot whose title ID matches
+/// `game_id`, preferring the Account save and falling back to the Device
+/// save for games that keep one save per console. Returns None if the slot
+/// hasn't been created yet — only Ryujinx can create one, since it must also
+/// be registered in its `imkvdb` save index.
+///
+/// Inside a slot, `0/` is the committed save and `1/` the working copy of the
+/// save filesystem's two-phase commit; they are not user profiles. `0/` is the
+/// source of truth, and restores write both so neither holds a stale copy.
+async fn game_save_dir(config: &EmulatorConfig, game_id: &str) -> Option<GameSaveDir> {
+    let title_id = u64::from_str_radix(game_id, 16).ok()?;
+    let saves_root = config.config_dir.join("bis").join("user").join("save");
+    let Some(slot) = find_save_slot(&saves_root, title_id).await else {
+        info!(
+            "no Ryujinx save slot for {} yet; saves sync once Ryujinx has booted the game and created it",
+            game_id
+        );
+        return None;
+    };
+    Some(GameSaveDir {
+        dir: slot.join("0"),
+        archive_root: game_id.to_uppercase(),
+        mirrors: vec![slot.join("1")],
+        required_subdir: None,
+    })
 }
 
 const SAVE_TYPE_ACCOUNT: u8 = 1;
