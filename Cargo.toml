@@ -26,5 +26,8 @@ aes = "0.8"
 md-5 = "0.10"
 utoipa = { version = "5", features = ["indexmap"] }
 
+[dev-dependencies]
+axum = { version = "0.8", features = ["multipart"] }
+
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal"] }

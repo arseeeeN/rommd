@@ -13,6 +13,8 @@
 //! the losing version is always kept in the backup dir.
 
 pub mod decide;
+#[cfg(test)]
+mod scenarios;
 pub mod state;
 
 use anyhow::Result;
@@ -40,10 +42,6 @@ pub fn data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("rommd")
-}
-
-fn backups_root() -> PathBuf {
-    data_dir().join("save-backups")
 }
 
 pub struct SyncCtx<'a> {
@@ -679,7 +677,8 @@ fn rfc3339(t: SystemTime) -> String {
 
 /// `save-backups/<emulator>/<rom_id>/<time>/`; one dir per sync event.
 fn backup_dir(ctx: &SyncCtx<'_>) -> PathBuf {
-    backups_root()
+    ctx.store
+        .backups_dir()
         .join(ctx.emulator.id())
         .join(ctx.rom_id.to_string())
         .join(chrono::Local::now().format("%Y-%m-%d_%H-%M-%S%.3f").to_string())

@@ -84,7 +84,7 @@ own entry, else POST without a slot) so one file's versions can never delete
 another's only copy. Games with several save files should be a `Bundle`. Uploads always send
 `overwrite=true`, or RomM answers content already in the slot with that older
 entry, and a revert would be undone by the next sync. **Downloads** back up the local
-version to `save-backups/<emu>/<rom_id>/<time>/` (last 5 kept per game) and
+version to `save-backups/<emu>/<rom_id>/<time>/` next to the sync state (last 5 kept per game) and
 write atomically (flat files via temp + rename).
 
 **Archive saves (`Dir`, `Bundle`)** are one save history per game,
@@ -186,6 +186,26 @@ Endpoints used: `GET /api/roms/{id}`, `GET /api/roms/{id}/content/{name}`,
 
 RomM does not store Switch title IDs in the ROM response — extraction from the
 file is the only option.
+
+## Tests
+
+`cargo test` runs everything offline; nothing touches a real RomM or the user's
+data dir.
+
+- **`src/testing/fake_romm.rs`** — in-process fake of RomM 5.2.0's save and
+  state API (slotted uploads tagged and versioned, `overwrite`, `autocleanup`
+  per ROM and slot, PUT in place, `content_hash` scheme). Its behaviour is
+  taken from RomM's `endpoints/saves.py` / `states.py`; re-check them when
+  targeting a newer RomM. A virtual clock starts an hour in the past and ticks
+  per upload.
+- **`src/sync/scenarios.rs`** — end-to-end sync scenarios: simulated devices
+  (a temp save dir + `SyncStore` each) sharing one fake RomM. Backups go next
+  to the store (`SyncStore::backups_dir`), so tests stay in temp dirs.
+- **`src/testing/mod.rs`** — `TestEmulator` (identity and save family only),
+  `TempDir`, file helpers.
+- Emulator layouts are tested against fixture dirs in each emulator's module.
+
+A new sync rule gets a scenario; a new emulator gets a layout test.
 
 ## Conventions
 

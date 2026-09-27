@@ -377,4 +377,38 @@ mod tests {
             other => panic!("unexpected {:?}", other),
         }
     }
+
+    fn disc(dir: &Path, name: &str, id: &[u8; 6], magic_offset: usize, magic: u32) -> PathBuf {
+        let mut header = vec![0u8; 0x40];
+        header[..6].copy_from_slice(id);
+        header[magic_offset..magic_offset + 4].copy_from_slice(&magic.to_be_bytes());
+        let path = dir.join(name);
+        crate::testing::write(&path, &header);
+        path
+    }
+
+    #[test]
+    fn disc_header_tells_gamecube_from_wii() {
+        let dir = crate::testing::TempDir::new("discs");
+        let gc = disc(dir.path(), "melee.iso", b"GALE01", 0x1C, GC_MAGIC);
+        let wii = disc(dir.path(), "galaxy.iso", b"RMGE01", 0x18, WII_MAGIC);
+        let neither = disc(dir.path(), "junk.iso", b"GALE01", 0x1C, 0);
+        assert_eq!(read_disc(&gc), Some(("GALE01".into(), DiscKind::GameCube)));
+        assert_eq!(read_disc(&wii), Some(("RMGE01".into(), DiscKind::Wii)));
+        assert_eq!(read_disc(&neither), None);
+    }
+
+    #[test]
+    fn a_card_holding_the_games_saves_wins_over_the_region_guess() {
+        let root = crate::testing::TempDir::new("gc-card");
+        let config = EmulatorConfig { binary: "dolphin".into(), config_dir: root.path().to_owned() };
+        let dir_for = |config: &EmulatorConfig| match gc_saves(config, None, "GALP01") {
+            Some(SaveSet::Bundle(set)) => set.dir,
+            other => panic!("unexpected {:?}", other),
+        };
+        assert_eq!(dir_for(&config), root.path().join("GC/EUR/Card A"));
+        crate::testing::write(&root.path().join("GC/USA/Card A/01-GALE-save.gci"), b"GALP01 pal save on a usa card");
+        assert_eq!(dir_for(&config), root.path().join("GC/USA/Card A"));
+    }
 }
+

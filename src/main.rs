@@ -9,6 +9,8 @@ mod save_archive;
 mod server;
 mod switch;
 mod sync;
+#[cfg(test)]
+mod testing;
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;

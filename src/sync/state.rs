@@ -76,6 +76,14 @@ impl SyncStore {
         Self { path, data: Mutex::new(data) }
     }
 
+    /// Where local versions are backed up before being replaced:
+    /// `save-backups/` next to the state file.
+    pub fn backups_dir(&self) -> PathBuf {
+        self.path
+            .parent()
+            .map_or_else(|| PathBuf::from("save-backups"), |p| p.join("save-backups"))
+    }
+
     pub async fn base(&self, key: &str) -> Option<SyncBase> {
         self.data.lock().await.bases.get(key).cloned()
     }

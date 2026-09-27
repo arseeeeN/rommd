@@ -197,3 +197,24 @@ async fn ensure_paths_configured(config: &EmulatorConfig) -> Result<()> {
     debug!("configured mGBA save paths in {}", config_path.display());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{TempDir, write};
+
+    #[tokio::test]
+    async fn layout_follows_configured_paths_and_maps_srm() {
+        let root = TempDir::new("mgba");
+        let config = EmulatorConfig { binary: "mgba".into(), config_dir: root.path().to_owned() };
+        write(&root.path().join("config.ini"), b"[ports.qt]\nsavegamePath=/games/saves\n");
+        let layout = MGba.save_layout(&config, Path::new("/roms/Golden Sun (USA).gba"), None).await;
+        let Some(SaveSet::Files(saves)) = layout.saves else { panic!("expected single-file saves") };
+        assert_eq!(saves.dir, PathBuf::from("/games/saves"));
+        assert!(saves.matcher.matches_name("Golden Sun (USA).sav"));
+        assert!(!saves.matcher.matches_name("Golden Sun - The Lost Age (USA).sav"));
+        assert_eq!(saves.local_name("Golden Sun (USA).srm"), "Golden Sun (USA).sav");
+        assert_eq!(layout.states.unwrap().dir, root.path().join("states"));
+    }
+}
+
