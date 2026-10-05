@@ -8,15 +8,19 @@ mod profile;
 mod romm;
 mod save_archive;
 mod server;
+mod service;
 mod switch;
 mod sync;
 #[cfg(test)]
 mod testing;
+mod update;
 
 use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::info;
+use std::time::Duration;
+use tracing::{info, warn};
 
 use config::Config;
 use emulator::{
@@ -27,8 +31,41 @@ use process::ProcessManager;
 use romm::RommClient;
 use server::state::AppState;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Local daemon bridging RomM with emulators. Without a command it runs the
+/// daemon.
+#[derive(Parser)]
+#[command(version, about)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Start rommd automatically when you log in.
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServiceAction {
+    /// Register this binary to start at login, and start it now.
+    Install,
+    /// Stop it and remove the registration.
+    Uninstall,
+}
+
+fn main() -> Result<()> {
+    match Cli::parse().command {
+        Some(Command::Service { action: ServiceAction::Install }) => service::install(),
+        Some(Command::Service { action: ServiceAction::Uninstall }) => service::uninstall(),
+        None => tokio::runtime::Runtime::new()?.block_on(run_daemon()),
+    }
+}
+
+async fn run_daemon() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -37,6 +74,7 @@ async fn main() -> Result<()> {
         .init();
 
     let config = Config::load_or_create().context("loading config")?;
+    info!("rommd {} ({})", env!("CARGO_PKG_VERSION"), env!("ROMMD_TARGET"));
     info!("config loaded from {}", Config::path().display());
     info!("roms_dir: {}", config.roms_dir().display());
 
@@ -57,7 +95,9 @@ async fn main() -> Result<()> {
     let azahar = Azahar;
     emulators.insert(azahar.id().to_owned(), Arc::new(azahar));
 
+    let updater = Arc::new(update::Updater::new(&config.updates));
     let state = Arc::new(AppState {
+        updater: updater.clone(),
         config,
         processes: ProcessManager::new(),
         romm,
@@ -67,13 +107,29 @@ async fn main() -> Result<()> {
 
     let port = state.config.server.port;
     let addr = format!("127.0.0.1:{}", port);
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .with_context(|| format!("binding to {}", addr))?;
-
+    let listener = bind(&addr).await?;
     info!("rommd listening on http://{}", addr);
+    update::spawn_background(updater, state.processes.clone());
 
     axum::serve(listener, server::router(state))
         .await
         .context("server error")
+}
+
+/// Bind the API port, retrying briefly: after an update the new version starts
+/// while the old one is still shutting down.
+async fn bind(addr: &str) -> Result<tokio::net::TcpListener> {
+    for attempt in 1..=20 {
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => return Ok(listener),
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && attempt < 20 => {
+                if attempt == 1 {
+                    warn!("{} is in use; waiting for it to be released", addr);
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            Err(e) => return Err(e).with_context(|| format!("binding to {}", addr)),
+        }
+    }
+    unreachable!()
 }

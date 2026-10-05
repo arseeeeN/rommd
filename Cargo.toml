@@ -2,6 +2,8 @@
 name = "rommd"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
+repository = "https://github.com/arseeeeN/rommd"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -25,9 +27,14 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 aes = "0.8"
 md-5 = "0.10"
 utoipa = { version = "5", features = ["indexmap"] }
+clap = { version = "4", features = ["derive"] }
+semver = "1"
+minisign-verify = "0.2"
+self-replace = "1"
 
 [dev-dependencies]
 axum = { version = "0.8", features = ["multipart"] }
+minisign = "0.7"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", features = ["signal"] }
+nix = { version = "0.29", features = ["signal", "user"] }

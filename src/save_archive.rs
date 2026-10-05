@@ -118,6 +118,7 @@ pub fn dir_empty_dirs(dir: &Path, root: &str) -> Result<Vec<String>> {
 }
 
 /// Write a zip with these entries to `dest`.
+#[cfg(test)]
 pub fn zip_entries(entries: &[(PathBuf, String)], dest: &Path) -> Result<()> {
     zip_entries_with_dirs(entries, &[], dest)
 }

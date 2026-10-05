@@ -29,6 +29,8 @@ use crate::profile::ProfileBlob;
         handlers::snapshot,
         handlers::list_controllers,
         handlers::save_conflicts,
+        handlers::update_status,
+        handlers::update_install,
     ),
     components(schemas(
         HealthResponse,
@@ -45,6 +47,9 @@ use crate::profile::ProfileBlob;
         ControllerInfo,
         ControllerType,
         crate::sync::ConflictRecord,
+        crate::update::UpdateStatus,
+        crate::update::UpdateMode,
+        UpdateInstalled,
     ))
 )]
 struct ApiDoc;
@@ -62,6 +67,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/snapshot", post(handlers::snapshot))
         .route("/controllers", get(handlers::list_controllers))
         .route("/saves/conflicts", get(handlers::save_conflicts))
+        .route("/update", get(handlers::update_status).post(handlers::update_install))
         .route("/openapi.json", get(|| async { Json(ApiDoc::openapi()) }))
         .layer(axum::middleware::from_fn_with_state(guard, security::check_request))
         .layer(cors)

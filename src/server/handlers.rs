@@ -1,7 +1,7 @@
 use axum::{
     extract::{Json, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use crate::config::ControllerConfig;
 use crate::error::AppError;
 use crate::process::{GameProcess, monitor};
 use crate::sync::{self, ConflictRecord, SyncCtx};
+use crate::update::UpdateStatus;
 
 #[utoipa::path(
     get,
@@ -281,4 +282,66 @@ pub async fn snapshot(
 )]
 pub async fn save_conflicts(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(state.sync_store.conflicts().await)
+}
+
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+pub struct UpdateQuery {
+    /// Check GitHub now instead of returning the last result.
+    #[serde(default)]
+    pub check: bool,
+}
+
+#[utoipa::path(
+    get,
+    path = "/update",
+    params(UpdateQuery),
+    responses(
+        (status = 200, description = "Installed version, the newest release, and whether this build can update itself", body = UpdateStatus)
+    )
+)]
+pub async fn update_status(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<UpdateQuery>,
+) -> impl IntoResponse {
+    let status = state.updater.status().await;
+    if query.check || status.last_checked.is_none() {
+        return Json(state.updater.check().await);
+    }
+    Json(status)
+}
+
+#[utoipa::path(
+    post,
+    path = "/update",
+    responses(
+        (status = 200, description = "Update installed; rommd restarts into it", body = UpdateInstalled),
+        (status = 400, description = "No newer release, or this build cannot install updates"),
+        (status = 409, description = "A game is running; stop it first"),
+        (status = 500, description = "Download, verification or install failed")
+    )
+)]
+pub async fn update_install(State(state): State<Arc<AppState>>) -> Response {
+    if !state.processes.list().await.is_empty() {
+        return (StatusCode::CONFLICT, Json(serde_json::json!({ "error": "a game is running; stop it before updating" })))
+            .into_response();
+    }
+    let status = state.updater.check().await;
+    if let Some(blocker) = status.install_blocker.filter(|_| status.update_available) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": blocker }))).into_response();
+    }
+    if !status.update_available {
+        let error = status.last_error.unwrap_or_else(|| format!("rommd {} is the latest release", status.current_version));
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": error }))).into_response();
+    }
+    match state.updater.install().await {
+        Ok(version) => {
+            // Let the response reach the client before the process goes away.
+            tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                crate::update::restart();
+            });
+            Json(UpdateInstalled { installed_version: version.to_string(), restarting: true }).into_response()
+        }
+        Err(e) => AppError::from(e).into_response(),
+    }
 }

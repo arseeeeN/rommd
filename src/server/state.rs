@@ -6,6 +6,7 @@ use crate::emulator::Emulator;
 use crate::process::ProcessManager;
 use crate::romm::RommClient;
 use crate::sync::SyncStore;
+use crate::update::Updater;
 
 pub struct AppState {
     pub config: Config,
@@ -13,4 +14,5 @@ pub struct AppState {
     pub romm: Option<Arc<RommClient>>,
     pub emulators: HashMap<String, Arc<dyn Emulator>>,
     pub sync_store: Arc<SyncStore>,
+    pub updater: Arc<Updater>,
 }

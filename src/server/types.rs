@@ -119,3 +119,10 @@ pub enum ControllerType {
     DolphinWiimote,
     Dsu,
 }
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct UpdateInstalled {
+    pub installed_version: String,
+    /// rommd restarts into the new version right after this response.
+    pub restarting: bool,
+}

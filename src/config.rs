@@ -16,6 +16,8 @@ pub struct Config {
     pub emulators: HashMap<String, EmulatorConfig>,
     #[serde(default)]
     pub controllers: HashMap<String, ControllerConfig>,
+    #[serde(default)]
+    pub updates: crate::update::UpdateConfig,
 }
 
 /// Physical controller registered on this machine.
@@ -159,6 +161,7 @@ impl Default for Config {
             roms_dir: None,
             emulators: HashMap::new(),
             controllers: HashMap::new(),
+            updates: Default::default(),
         }
     }
 }
@@ -227,6 +230,13 @@ port = 7497
 # Browsers may only call rommd from the RomM server's own page (its base_url
 # below). Add other web origins here if a different frontend needs access:
 # allowed_origins = ["https://my-frontend.example.com"]
+
+# Updates come from GitHub Releases and are verified before installing.
+#   auto   — check daily, install while no game is running, restart (default)
+#   notify — check daily and report new versions (log, GET /update)
+#   off    — no background checks; POST /update still installs on request
+[updates]
+mode = "auto"
 
 # RomM server connection. Required for remote launch and save sync.
 # [romm]
