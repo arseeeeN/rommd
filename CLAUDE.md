@@ -10,7 +10,7 @@ and bidirectional save/state sync with RomM.
 RomM (remote) ←→ rommd daemon ←→ local emulators
 ```
 
-- **`src/main.rs`** — startup, emulator registry, config loading
+- **`src/main.rs`** — CLI (`rommd`, `rommd service install|uninstall`), startup, emulator registry
 - **`src/server/`** — axum HTTP handlers, OpenAPI spec (utoipa), request/response types
 - **`src/process.rs`** — process tracking, post-exit sync trigger
 - **`src/emulator/`** — one file per emulator, all implement the `Emulator` trait
@@ -22,6 +22,9 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 - **`src/save_archive.rs`** — zip/restore and RomM-compatible hashing of directory saves
 - **`src/profile.rs`** — portable settings overlay (ProfileBlob)
 - **`src/ini.rs`** — INI file read/write used by DuckStation and Dolphin
+- **`src/update.rs`** — signed self-update from GitHub Releases, `GET/POST /update`
+- **`src/service.rs`** — start at login: systemd user unit, launchd agent, Windows logon task
+- **`install/`, `.github/workflows/`** — install scripts, CI, release pipeline (`dev/releasing.md`)
 
 ## API access
 
@@ -30,6 +33,22 @@ it, so `server/security.rs` rejects requests whose `Origin` is not the RomM
 server's (from `romm.base_url`) or listed in `server.allowed_origins`, limits
 CORS to those origins, and requires a localhost `Host` header (DNS
 rebinding). Clients without a browser send no `Origin` and pass.
+
+## Updates and releases
+
+Releases (tag `vX.Y.Z`, `release.yml`) publish one raw binary per target,
+`rommd-<target>[.exe]`, each with a minisign signature whose trusted comment is
+`rommd <version> <asset>`. The updater installs only binaries that verify
+against the key `build.rs` embeds from `minisign.pub` *and* carry exactly that
+comment (no relabelled old versions, no other platform's build); builds without
+the key never install. `[updates] mode` = auto (default; daily check, install
+while no game runs, then restart) / notify / off. Restart: with
+`ROMMD_SUPERVISED` set (by the service definitions) rommd exits and the service
+manager restarts it; otherwise it spawns the new binary first. The systemd unit
+uses `KillMode=process` and the launchd agent `AbandonProcessGroup` so running
+emulators survive a rommd restart. Linux release builds are static musl;
+reqwest uses rustls and zip only deflate, so there are no C dependencies
+beyond `ring`.
 
 ## Emulator trait
 

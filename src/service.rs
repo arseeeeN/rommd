@@ -70,7 +70,9 @@ mod platform {
         let path = unit_path()?;
         write(&path, &unit(exe))?;
         run(Command::new("systemctl").args(["--user", "daemon-reload"]))?;
-        run(Command::new("systemctl").args(["--user", "enable", "--now", UNIT]))?;
+        run(Command::new("systemctl").args(["--user", "enable", UNIT]))?;
+        // restart rather than start, so a reinstall runs the new binary.
+        run(Command::new("systemctl").args(["--user", "restart", UNIT]))?;
         println!(
             "rommd now starts with your desktop session ({}).",
             path.display()
@@ -181,6 +183,7 @@ mod platform {
         run(Command::new("schtasks").args([
             "/Create", "/F", "/SC", "ONLOGON", "/RL", "LIMITED", "/TN", TASK, "/TR", &action,
         ]))?;
+        let _ = run(Command::new("schtasks").args(["/End", "/TN", TASK]));
         run(Command::new("schtasks").args(["/Run", "/TN", TASK]))?;
         println!("rommd now starts when you log in (scheduled task \"{TASK}\").");
         Ok(())

@@ -1,0 +1,102 @@
+name: Release
+
+# Push a tag `vX.Y.Z` matching Cargo.toml's version. Needs minisign.pub
+# committed and the MINISIGN_SECRET_KEY secret (see dev/releasing.md).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        name: Tag matches Cargo.toml
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          crate="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          if [ "$tag" != "$crate" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $crate"; exit 1
+          fi
+          test -f minisign.pub || { echo "::error::minisign.pub is missing; releases must be verifiable"; exit 1; }
+          echo "version=$crate" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Stage asset
+        shell: bash
+        run: |
+          mkdir dist
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            cp "target/${{ matrix.target }}/release/rommd.exe" "dist/rommd-${{ matrix.target }}.exe"
+          else
+            cp "target/${{ matrix.target }}/release/rommd" "dist/rommd-${{ matrix.target }}"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rommd-${{ matrix.target }}
+          path: dist/*
+
+  publish:
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Install minisign
+        run: sudo apt-get update && sudo apt-get install -y minisign
+      - name: Sign
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          test -n "$MINISIGN_SECRET_KEY" || { echo "::error::MINISIGN_SECRET_KEY secret is not set"; exit 1; }
+          key="$(mktemp)"; trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
+          cd dist
+          for f in rommd-*; do
+            # The updater checks this trusted comment: it binds each signature
+            # to one version and one asset.
+            minisign -S -s "$key" -m "$f" -t "rommd $VERSION $f"
+            minisign -V -p ../minisign.pub -m "$f"
+          done
+          sha256sum rommd-* > SHA256SUMS
+      - name: Add install scripts and public key
+        run: cp install/install.sh install/install.ps1 minisign.pub dist/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
