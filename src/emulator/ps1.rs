@@ -75,7 +75,11 @@ fn is_raw_bin(path: &Path) -> Option<bool> {
     let mut hdr = [0u8; 12];
     f.read_exact(&mut hdr).ok()?;
     // Raw BIN starts with the CD-ROM sync pattern.
-    Some(hdr == [0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00])
+    Some(
+        hdr == [
+            0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00,
+        ],
+    )
 }
 
 // ── ISO 9660 reader ───────────────────────────────────────────────────────────
@@ -139,15 +143,17 @@ fn find_in_dir(dir: &[u8], target: &str) -> Option<u64> {
         }
         let rec = &dir[pos..pos + len];
         let name_len = rec[32] as usize;
-        if name_len > 0 && pos + 33 + name_len <= dir.len()
-            && let Ok(name) = std::str::from_utf8(&rec[33..33 + name_len]) {
-                // Strip ISO 9660 version suffix (";1").
-                let name = name.split(';').next().unwrap_or(name);
-                if name.eq_ignore_ascii_case(target) {
-                    let lba = u32::from_le_bytes(rec[2..6].try_into().ok()?) as u64;
-                    return Some(lba);
-                }
+        if name_len > 0
+            && pos + 33 + name_len <= dir.len()
+            && let Ok(name) = std::str::from_utf8(&rec[33..33 + name_len])
+        {
+            // Strip ISO 9660 version suffix (";1").
+            let name = name.split(';').next().unwrap_or(name);
+            if name.eq_ignore_ascii_case(target) {
+                let lba = u32::from_le_bytes(rec[2..6].try_into().ok()?) as u64;
+                return Some(lba);
             }
+        }
         pos += len;
     }
     None
@@ -177,7 +183,11 @@ fn parse_serial(cnf: &str) -> Option<String> {
 /// `"SLPS_000.17"` → `"SLPS-00017"`
 fn normalize_serial(raw: &str) -> Option<String> {
     let (prefix, rest) = raw.split_once('_')?;
-    Some(format!("{}-{}", prefix.trim(), rest.replace('.', "").trim()))
+    Some(format!(
+        "{}-{}",
+        prefix.trim(),
+        rest.replace('.', "").trim()
+    ))
 }
 
 #[cfg(test)]
@@ -201,4 +211,3 @@ mod tests {
         assert_eq!(parse_serial(cnf2), Some("SLUS-21356".into()));
     }
 }
-

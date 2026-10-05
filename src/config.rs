@@ -82,7 +82,10 @@ fn default_port() -> u16 {
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        Self { port: default_port(), allowed_origins: Vec::new() }
+        Self {
+            port: default_port(),
+            allowed_origins: Vec::new(),
+        }
     }
 }
 
@@ -112,8 +115,7 @@ impl Config {
         if path.exists() {
             let content = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading config from {}", path.display()))?;
-            let config: Self =
-                toml::from_str(&content).context("parsing config TOML")?;
+            let config: Self = toml::from_str(&content).context("parsing config TOML")?;
             return Ok(config.expand_paths());
         }
 
@@ -153,7 +155,6 @@ impl Config {
     }
 }
 
-
 pub fn default_roms_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -171,9 +172,10 @@ fn expand_path(path: PathBuf) -> PathBuf {
         return dirs::home_dir().unwrap_or(path);
     }
     if let Some(rest) = s.strip_prefix("~/").or_else(|| s.strip_prefix("~\\"))
-        && let Some(home) = dirs::home_dir() {
-            return PathBuf::from(expand_percent_vars(&home.join(rest).to_string_lossy()));
-        }
+        && let Some(home) = dirs::home_dir()
+    {
+        return PathBuf::from(expand_percent_vars(&home.join(rest).to_string_lossy()));
+    }
     PathBuf::from(expand_percent_vars(s))
 }
 

@@ -23,7 +23,10 @@ impl IniFile {
                 let key = trimmed[..eq_pos].trim().to_owned();
                 let val = trimmed[eq_pos + 1..].trim().to_owned();
                 if !key.is_empty() {
-                    ini.sections.entry(current.clone()).or_default().insert(key, val);
+                    ini.sections
+                        .entry(current.clone())
+                        .or_default()
+                        .insert(key, val);
                 }
             }
         }
@@ -86,7 +89,8 @@ mod tests {
 
     #[test]
     fn parse_and_roundtrip() {
-        let text = "[GPU]\nResolutionScale = 4\nTextureFilter = xBR-4x\n\n[CPU]\nOverclockEnable = true\n";
+        let text =
+            "[GPU]\nResolutionScale = 4\nTextureFilter = xBR-4x\n\n[CPU]\nOverclockEnable = true\n";
         let ini = IniFile::parse(text);
         assert_eq!(ini.get("GPU", "ResolutionScale"), Some("4"));
         assert_eq!(ini.get("CPU", "OverclockEnable"), Some("true"));
@@ -106,7 +110,10 @@ mod tests {
         let text = "[GPU]\nResolutionScale = 4\n";
         let ini = IniFile::parse(text);
         let flat = ini.to_flat_map();
-        assert_eq!(flat.get("GPU.ResolutionScale").map(String::as_str), Some("4"));
+        assert_eq!(
+            flat.get("GPU.ResolutionScale").map(String::as_str),
+            Some("4")
+        );
     }
 
     #[test]

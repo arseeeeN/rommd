@@ -8,9 +8,9 @@ use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 
+use crate::profile::ProfileBlob;
 use state::AppState;
 use types::*;
-use crate::profile::ProfileBlob;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -67,9 +67,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/snapshot", post(handlers::snapshot))
         .route("/controllers", get(handlers::list_controllers))
         .route("/saves/conflicts", get(handlers::save_conflicts))
-        .route("/update", get(handlers::update_status).post(handlers::update_install))
+        .route(
+            "/update",
+            get(handlers::update_status).post(handlers::update_install),
+        )
         .route("/openapi.json", get(|| async { Json(ApiDoc::openapi()) }))
-        .layer(axum::middleware::from_fn_with_state(guard, security::check_request))
+        .layer(axum::middleware::from_fn_with_state(
+            guard,
+            security::check_request,
+        ))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)

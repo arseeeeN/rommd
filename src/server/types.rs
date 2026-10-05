@@ -18,7 +18,8 @@ pub struct LaunchRequest {
     pub local_path: Option<String>,
     /// Physical controller bindings for each slot. Omit to launch without
     /// applying any controller configuration.
-    #[allow(dead_code)] // accepted ahead of wiring to emulator configs (dev/controller-design.md)
+    #[allow(dead_code)]
+    // accepted ahead of wiring to emulator configs (dev/controller-design.md)
     pub controller_slots: Option<Vec<ControllerSlot>>,
 }
 

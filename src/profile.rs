@@ -54,11 +54,13 @@ fn looks_like_path(value: &str) -> bool {
     // Windows absolute path (e.g. "C:\")
     if value.len() >= 3 {
         let mut chars = value.chars();
-        if let (Some(drive), Some(colon), Some(slash)) =
-            (chars.next(), chars.next(), chars.next())
-            && drive.is_ascii_alphabetic() && colon == ':' && (slash == '\\' || slash == '/') {
-                return true;
-            }
+        if let (Some(drive), Some(colon), Some(slash)) = (chars.next(), chars.next(), chars.next())
+            && drive.is_ascii_alphabetic()
+            && colon == ':'
+            && (slash == '\\' || slash == '/')
+        {
+            return true;
+        }
     }
     false
 }

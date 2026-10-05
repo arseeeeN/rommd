@@ -111,7 +111,11 @@ pub fn dir_empty_dirs(dir: &Path, root: &str) -> Result<Vec<String>> {
     let mut out = Vec::new();
     for rel in walk_dirs(dir)? {
         if std::fs::read_dir(dir.join(&rel))?.next().is_none() {
-            out.push(format!("{}/{}/", root, rel.to_string_lossy().replace('\\', "/")));
+            out.push(format!(
+                "{}/{}/",
+                root,
+                rel.to_string_lossy().replace('\\', "/")
+            ));
         }
     }
     Ok(out)
@@ -124,9 +128,14 @@ pub fn zip_entries(entries: &[(PathBuf, String)], dest: &Path) -> Result<()> {
 }
 
 /// Write a zip with these file entries and empty directory entries.
-pub fn zip_entries_with_dirs(entries: &[(PathBuf, String)], dirs: &[String], dest: &Path) -> Result<()> {
+pub fn zip_entries_with_dirs(
+    entries: &[(PathBuf, String)],
+    dirs: &[String],
+    dest: &Path,
+) -> Result<()> {
     anyhow::ensure!(!entries.is_empty(), "no files to archive");
-    let out = std::fs::File::create(dest).with_context(|| format!("creating {}", dest.display()))?;
+    let out =
+        std::fs::File::create(dest).with_context(|| format!("creating {}", dest.display()))?;
     let mut zip = zip::ZipWriter::new(out);
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -158,7 +167,8 @@ pub fn restore_bundle(
 ) -> Result<()> {
     let staging = tempdir_near(backup_dir)?;
     let result = (|| {
-        let mut archive = zip::ZipArchive::new(std::fs::File::open(zip_path)?).context("reading save zip")?;
+        let mut archive =
+            zip::ZipArchive::new(std::fs::File::open(zip_path)?).context("reading save zip")?;
         let mut names = Vec::new();
         for i in 0..archive.len() {
             let mut entry = archive.by_index(i)?;
@@ -169,10 +179,16 @@ pub fn restore_bundle(
                 .enclosed_name()
                 .filter(|n| n.components().count() == 1)
                 .and_then(|n| n.to_str().map(str::to_owned))
-                .ok_or_else(|| anyhow::anyhow!("unexpected entry in save bundle: {}", entry.name()))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!("unexpected entry in save bundle: {}", entry.name())
+                })?;
             let staged = staging.join(&name);
             std::io::copy(&mut entry, &mut std::fs::File::create(&staged)?)?;
-            anyhow::ensure!(accept(&staged), "{} in the save bundle does not belong to this game", name);
+            anyhow::ensure!(
+                accept(&staged),
+                "{} in the save bundle does not belong to this game",
+                name
+            );
             names.push(name);
         }
         anyhow::ensure!(!names.is_empty(), "save bundle contains no files");
@@ -206,19 +222,26 @@ pub fn restore_bundle(
 /// attached to the wrong ROM. Each root the zip contains replaces its
 /// directories, after the first is copied to `backup_dir/<root>`; a root the
 /// zip lacks leaves its directories alone.
-pub fn restore_roots(zip_path: &Path, roots: &[(String, Vec<PathBuf>)], backup_dir: &Path) -> Result<()> {
+pub fn restore_roots(
+    zip_path: &Path,
+    roots: &[(String, Vec<PathBuf>)],
+    backup_dir: &Path,
+) -> Result<()> {
     let staging = tempdir_near(backup_dir)?;
     let result = (|| {
         let expected: Vec<&str> = roots.iter().map(|(r, _)| r.as_str()).collect();
         let present = extract_rooted(zip_path, &expected, &staging)?;
         for (root, targets) in roots {
-            let Some(staged) = present.iter().find(|p| p.eq_ignore_ascii_case(root)) else { continue };
+            let Some(staged) = present.iter().find(|p| p.eq_ignore_ascii_case(root)) else {
+                continue;
+            };
             let staged = staging.join(staged);
             if let Some(primary) = targets.first()
-                && newest_mtime(primary).is_some() {
-                    copy_dir(primary, &backup_dir.join(root))
-                        .with_context(|| format!("backing up {}", primary.display()))?;
-                }
+                && newest_mtime(primary).is_some()
+            {
+                copy_dir(primary, &backup_dir.join(root))
+                    .with_context(|| format!("backing up {}", primary.display()))?;
+            }
             for target in targets {
                 replace_dir_contents(&staged, target)
                     .with_context(|| format!("restoring into {}", target.display()))?;
@@ -343,7 +366,9 @@ fn tempdir_near(path: &Path) -> Result<PathBuf> {
     let parent = path.parent().unwrap_or(path);
     let dir = parent.join(format!(
         ".staging-{}",
-        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_nanos()
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)?
+            .as_nanos()
     ));
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
@@ -377,14 +402,28 @@ mod tests {
         std::fs::write(dest.join("stale.bin"), b"old").unwrap();
 
         let backup = base.join("backups/1");
-        restore_roots(&zip, &[("0100000000010000".into(), vec![dest.clone(), mirror.clone()])], &backup).unwrap();
+        restore_roots(
+            &zip,
+            &[(
+                "0100000000010000".into(),
+                vec![dest.clone(), mirror.clone()],
+            )],
+            &backup,
+        )
+        .unwrap();
 
         for d in [&dest, &mirror] {
             assert_eq!(std::fs::read(d.join("Common.bin")).unwrap(), b"common");
-            assert_eq!(std::fs::read(d.join("slot_00/progress.sav")).unwrap(), b"progress");
+            assert_eq!(
+                std::fs::read(d.join("slot_00/progress.sav")).unwrap(),
+                b"progress"
+            );
             assert!(!d.join("stale.bin").exists());
         }
-        assert_eq!(std::fs::read(backup.join("0100000000010000/stale.bin")).unwrap(), b"old");
+        assert_eq!(
+            std::fs::read(backup.join("0100000000010000/stale.bin")).unwrap(),
+            b"old"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -405,7 +444,10 @@ mod tests {
             hex(&md5::Md5::digest(lines.as_bytes()))
         };
         let entries = dir_entries(&src, "ROOT").unwrap();
-        assert_eq!(entries_hash(&entries).unwrap().as_deref(), Some(expected.as_str()));
+        assert_eq!(
+            entries_hash(&entries).unwrap().as_deref(),
+            Some(expected.as_str())
+        );
         let zip = base.join("s.zip");
         zip_entries(&entries, &zip).unwrap();
         assert_eq!(zip_content_hash(&zip).unwrap(), expected);
@@ -424,7 +466,14 @@ mod tests {
         let dest = base.join("dest");
         std::fs::create_dir_all(&dest).unwrap();
         std::fs::write(dest.join("keep.bin"), b"keep").unwrap();
-        assert!(restore_roots(&zip, &[("0100000000010000".into(), vec![dest.clone()])], &base.join("bk")).is_err());
+        assert!(
+            restore_roots(
+                &zip,
+                &[("0100000000010000".into(), vec![dest.clone()])],
+                &base.join("bk")
+            )
+            .is_err()
+        );
         assert_eq!(std::fs::read(dest.join("keep.bin")).unwrap(), b"keep");
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -446,15 +495,34 @@ mod tests {
         let is_melee = |p: &Path| std::fs::read(p).unwrap().starts_with(b"GALE01");
 
         let backup = base.join("bk/1");
-        restore_bundle(&zip, &card, &[card.join("01-GALE-old.gci")], is_melee, &backup).unwrap();
+        restore_bundle(
+            &zip,
+            &card,
+            &[card.join("01-GALE-old.gci")],
+            is_melee,
+            &backup,
+        )
+        .unwrap();
         assert!(!card.join("01-GALE-old.gci").exists());
-        assert_eq!(std::fs::read(card.join("01-GALE-a.gci")).unwrap(), b"GALE01 new");
-        assert_eq!(std::fs::read(card.join("01-GMSE-other.gci")).unwrap(), b"GMSE01 keep");
-        assert_eq!(std::fs::read(backup.join("01-GALE-old.gci")).unwrap(), b"GALE01 old");
+        assert_eq!(
+            std::fs::read(card.join("01-GALE-a.gci")).unwrap(),
+            b"GALE01 new"
+        );
+        assert_eq!(
+            std::fs::read(card.join("01-GMSE-other.gci")).unwrap(),
+            b"GMSE01 keep"
+        );
+        assert_eq!(
+            std::fs::read(backup.join("01-GALE-old.gci")).unwrap(),
+            b"GALE01 old"
+        );
 
         let reject = |_: &Path| false;
         assert!(restore_bundle(&zip, &card, &[], reject, &base.join("bk/2")).is_err());
-        assert_eq!(std::fs::read(card.join("01-GALE-a.gci")).unwrap(), b"GALE01 new");
+        assert_eq!(
+            std::fs::read(card.join("01-GALE-a.gci")).unwrap(),
+            b"GALE01 new"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -470,13 +538,23 @@ mod tests {
         let (data, ext) = (base.join("data"), base.join("ext"));
         std::fs::create_dir_all(&data).unwrap();
         std::fs::write(data.join("save.bin"), b"keep").unwrap();
-        let roots = [("data".to_owned(), vec![data.clone()]), ("extdata".to_owned(), vec![ext.clone()])];
+        let roots = [
+            ("data".to_owned(), vec![data.clone()]),
+            ("extdata".to_owned(), vec![ext.clone()]),
+        ];
         restore_roots(&zip, &roots, &base.join("bk")).unwrap();
-        assert_eq!(std::fs::read(data.join("save.bin")).unwrap(), b"keep", "a root the zip lacks stays");
+        assert_eq!(
+            std::fs::read(data.join("save.bin")).unwrap(),
+            b"keep",
+            "a root the zip lacks stays"
+        );
         assert_eq!(std::fs::read(ext.join("ext.bin")).unwrap(), b"new ext");
 
         let only_data = [("data".to_owned(), vec![data.clone()])];
-        assert!(restore_roots(&zip, &only_data, &base.join("bk2")).is_err(), "unexpected root");
+        assert!(
+            restore_roots(&zip, &only_data, &base.join("bk2")).is_err(),
+            "unexpected root"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 }

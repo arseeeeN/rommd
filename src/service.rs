@@ -36,7 +36,10 @@ mod platform {
     const UNIT: &str = "rommd.service";
 
     fn unit_path() -> Result<PathBuf> {
-        Ok(dirs::config_dir().context("no config dir")?.join("systemd/user").join(UNIT))
+        Ok(dirs::config_dir()
+            .context("no config dir")?
+            .join("systemd/user")
+            .join(UNIT))
     }
 
     /// A user unit tied to the graphical session, so emulators it launches can
@@ -68,7 +71,10 @@ mod platform {
         write(&path, &unit(exe))?;
         run(Command::new("systemctl").args(["--user", "daemon-reload"]))?;
         run(Command::new("systemctl").args(["--user", "enable", "--now", UNIT]))?;
-        println!("rommd now starts with your desktop session ({}).", path.display());
+        println!(
+            "rommd now starts with your desktop session ({}).",
+            path.display()
+        );
         println!("Logs: journalctl --user -u rommd -f");
         Ok(())
     }
@@ -92,7 +98,10 @@ mod platform {
     const LABEL: &str = "io.github.rommd";
 
     fn plist_path() -> Result<PathBuf> {
-        Ok(dirs::home_dir().context("no home dir")?.join("Library/LaunchAgents").join(format!("{LABEL}.plist")))
+        Ok(dirs::home_dir()
+            .context("no home dir")?
+            .join("Library/LaunchAgents")
+            .join(format!("{LABEL}.plist")))
     }
 
     fn domain() -> String {
@@ -102,7 +111,9 @@ mod platform {
     /// A launch agent restarted whenever it exits. `AbandonProcessGroup` keeps
     /// running emulators alive when rommd restarts.
     pub fn plist(exe: &Path) -> Result<String> {
-        let log = dirs::home_dir().context("no home dir")?.join("Library/Logs/rommd.log");
+        let log = dirs::home_dir()
+            .context("no home dir")?
+            .join("Library/Logs/rommd.log");
         Ok(format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -126,21 +137,28 @@ mod platform {
     }
 
     fn xml_escape(s: &str) -> String {
-        s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
     }
 
     pub fn install(exe: &Path) -> Result<()> {
         let path = plist_path()?;
-        let _ = run(Command::new("launchctl").args(["bootout", &format!("{}/{}", domain(), LABEL)]));
+        let _ =
+            run(Command::new("launchctl").args(["bootout", &format!("{}/{}", domain(), LABEL)]));
         write(&path, &plist(exe)?)?;
-        run(Command::new("launchctl").arg("bootstrap").arg(domain()).arg(&path))?;
+        run(Command::new("launchctl")
+            .arg("bootstrap")
+            .arg(domain())
+            .arg(&path))?;
         println!("rommd now starts when you log in ({}).", path.display());
         println!("Logs: ~/Library/Logs/rommd.log");
         Ok(())
     }
 
     pub fn uninstall() -> Result<()> {
-        let _ = run(Command::new("launchctl").args(["bootout", &format!("{}/{}", domain(), LABEL)]));
+        let _ =
+            run(Command::new("launchctl").args(["bootout", &format!("{}/{}", domain(), LABEL)]));
         let path = plist_path()?;
         if path.exists() {
             std::fs::remove_file(&path)?;
@@ -160,7 +178,9 @@ mod platform {
     /// the new version itself (`ROMMD_SUPERVISED` is not set).
     pub fn install(exe: &Path) -> Result<()> {
         let action = format!("\"{}\"", exe.display());
-        run(Command::new("schtasks").args(["/Create", "/F", "/SC", "ONLOGON", "/RL", "LIMITED", "/TN", TASK, "/TR", &action]))?;
+        run(Command::new("schtasks").args([
+            "/Create", "/F", "/SC", "ONLOGON", "/RL", "LIMITED", "/TN", TASK, "/TR", &action,
+        ]))?;
         run(Command::new("schtasks").args(["/Run", "/TN", TASK]))?;
         println!("rommd now starts when you log in (scheduled task \"{TASK}\").");
         Ok(())

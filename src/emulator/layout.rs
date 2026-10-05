@@ -76,11 +76,19 @@ impl FileSet {
     /// stem would attribute every file in the directory to this game.
     pub fn stem(dir: PathBuf, stem: impl Into<String>) -> Option<Self> {
         let stem = stem.into();
-        (!stem.is_empty()).then_some(Self { dir, matcher: FileMatcher::Stem(stem), remote_extensions: &[] })
+        (!stem.is_empty()).then_some(Self {
+            dir,
+            matcher: FileMatcher::Stem(stem),
+            remote_extensions: &[],
+        })
     }
 
     pub fn gci(dir: PathBuf, game_id: impl Into<String>) -> Self {
-        Self { dir, matcher: FileMatcher::Gci(game_id.into()), remote_extensions: &[] }
+        Self {
+            dir,
+            matcher: FileMatcher::Gci(game_id.into()),
+            remote_extensions: &[],
+        }
     }
 
     pub fn with_remote_extensions(mut self, map: &'static [(&'static str, &'static str)]) -> Self {
@@ -110,7 +118,9 @@ impl FileSet {
             .filter(|p| p.is_file())
             .filter(|p| {
                 let name = p.file_name().unwrap_or_default().to_string_lossy();
-                !name.starts_with('.') && self.matcher.matches_name(&name) && self.matcher.matches_file(p)
+                !name.starts_with('.')
+                    && self.matcher.matches_name(&name)
+                    && self.matcher.matches_file(p)
             })
             .collect();
         files.sort();
@@ -179,7 +189,9 @@ mod tests {
 
     #[test]
     fn maps_remote_extensions() {
-        let set = FileSet::stem(PathBuf::from("/x"), "anguna").unwrap().with_remote_extensions(&[("srm", "sav")]);
+        let set = FileSet::stem(PathBuf::from("/x"), "anguna")
+            .unwrap()
+            .with_remote_extensions(&[("srm", "sav")]);
         assert_eq!(set.local_name("anguna.srm"), "anguna.sav");
         assert_eq!(set.local_name("anguna.SRM"), "anguna.sav");
         assert_eq!(set.local_name("anguna.ss1"), "anguna.ss1");

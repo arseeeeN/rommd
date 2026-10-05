@@ -32,7 +32,11 @@ pub fn title_id_for_rom(rom_path: &Path) -> Option<String> {
     match result {
         Ok(id) => Some(format!("{:016x}", base_title(id))),
         Err(e) => {
-            warn!("could not read the title ID of {}: {:#}", rom_path.display(), e);
+            warn!(
+                "could not read the title ID of {}: {:#}",
+                rom_path.display(),
+                e
+            );
             None
         }
     }
@@ -52,7 +56,11 @@ fn read_at(path: &Path, magic_at: u64, magic: &[u8; 4], id_at: u64) -> Result<u6
     let mut buf = [0u8; 4];
     f.seek(SeekFrom::Start(magic_at))?;
     f.read_exact(&mut buf)?;
-    anyhow::ensure!(&buf == magic, "no {} header (encrypted or compressed image?)", String::from_utf8_lossy(magic));
+    anyhow::ensure!(
+        &buf == magic,
+        "no {} header (encrypted or compressed image?)",
+        String::from_utf8_lossy(magic)
+    );
     let mut id = [0u8; 8];
     f.seek(SeekFrom::Start(id_at))?;
     f.read_exact(&mut id)?;
@@ -69,7 +77,11 @@ fn read_cia(path: &Path) -> Result<u64> {
     let le = |at: usize| u64::from(u32::from_le_bytes(header[at..at + 4].try_into().unwrap()));
     let align = |n: u64| n.div_ceil(64) * 64;
     let (header_size, cert, ticket) = (le(0x00), le(0x08), le(0x0C));
-    anyhow::ensure!(header_size == 0x2020, "not a CIA (header size {:#x})", header_size);
+    anyhow::ensure!(
+        header_size == 0x2020,
+        "not a CIA (header size {:#x})",
+        header_size
+    );
     let tmd = align(align(align(header_size) + cert) + ticket);
 
     let mut sig_type = [0u8; 4];
@@ -82,7 +94,8 @@ fn read_cia(path: &Path) -> Result<u64> {
         other => anyhow::bail!("unknown TMD signature type {:#x}", other),
     };
     let mut id = [0u8; 8];
-    f.seek(SeekFrom::Start(tmd + body + 0x4C)).context("seeking to the TMD title ID")?;
+    f.seek(SeekFrom::Start(tmd + body + 0x4C))
+        .context("seeking to the TMD title ID")?;
     f.read_exact(&mut id)?;
     Ok(u64::from_be_bytes(id))
 }
@@ -99,13 +112,19 @@ mod tests {
         cci[0x100..0x104].copy_from_slice(b"NCSD");
         cci[0x108..0x110].copy_from_slice(&0x0004_0000_0017_4400u64.to_le_bytes());
         write(&dir.path().join("psmd.cci"), &cci);
-        assert_eq!(title_id_for_rom(&dir.path().join("psmd.cci")).as_deref(), Some("0004000000174400"));
+        assert_eq!(
+            title_id_for_rom(&dir.path().join("psmd.cci")).as_deref(),
+            Some("0004000000174400")
+        );
 
         let mut cxi = vec![0u8; 0x200];
         cxi[0x100..0x104].copy_from_slice(b"NCCH");
         cxi[0x118..0x120].copy_from_slice(&0x0004_000E_000B_A900u64.to_le_bytes());
         write(&dir.path().join("update.cxi"), &cxi);
-        assert_eq!(title_id_for_rom(&dir.path().join("update.cxi")).as_deref(), Some("00040000000ba900"));
+        assert_eq!(
+            title_id_for_rom(&dir.path().join("update.cxi")).as_deref(),
+            Some("00040000000ba900")
+        );
 
         write(&dir.path().join("encrypted.3ds"), &vec![0u8; 0x200]);
         assert_eq!(title_id_for_rom(&dir.path().join("encrypted.3ds")), None);
@@ -126,6 +145,9 @@ mod tests {
         let id_at = tmd + 4 + 0x100 + 0x3C + 0x4C;
         cia[id_at..id_at + 8].copy_from_slice(&0x0004_0000_0005_5D00u64.to_be_bytes());
         write(&dir.path().join("x.cia"), &cia);
-        assert_eq!(title_id_for_rom(&dir.path().join("x.cia")).as_deref(), Some("0004000000055d00"));
+        assert_eq!(
+            title_id_for_rom(&dir.path().join("x.cia")).as_deref(),
+            Some("0004000000055d00")
+        );
     }
 }

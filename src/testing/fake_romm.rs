@@ -91,7 +91,10 @@ impl FakeRomm {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        Self { base_url: format!("http://{}", addr), store }
+        Self {
+            base_url: format!("http://{}", addr),
+            store,
+        }
     }
 
     pub fn client(&self) -> RommClient {
@@ -105,18 +108,40 @@ impl FakeRomm {
 
     /// Saves of a ROM, oldest first.
     pub fn saves(&self, rom_id: i64) -> Vec<Entry> {
-        let mut v: Vec<Entry> = self.store.lock().unwrap().saves.iter().filter(|e| e.rom_id == rom_id).cloned().collect();
+        let mut v: Vec<Entry> = self
+            .store
+            .lock()
+            .unwrap()
+            .saves
+            .iter()
+            .filter(|e| e.rom_id == rom_id)
+            .cloned()
+            .collect();
         v.sort_by_key(|e| (e.updated_at, e.id));
         v
     }
 
     pub fn states(&self, rom_id: i64) -> Vec<Entry> {
-        self.store.lock().unwrap().states.iter().filter(|e| e.rom_id == rom_id).cloned().collect()
+        self.store
+            .lock()
+            .unwrap()
+            .states
+            .iter()
+            .filter(|e| e.rom_id == rom_id)
+            .cloned()
+            .collect()
     }
 
     /// Store a save exactly as given, as another client (argosy, RomM's web
     /// player) would have left it.
-    pub fn seed_save(&self, rom_id: i64, file_name: &str, emulator: &str, slot: Option<&str>, data: &[u8]) -> i64 {
+    pub fn seed_save(
+        &self,
+        rom_id: i64,
+        file_name: &str,
+        emulator: &str,
+        slot: Option<&str>,
+        data: &[u8],
+    ) -> i64 {
         let mut s = self.store.lock().unwrap();
         let (id, at) = (s.new_id(), s.tick());
         s.saves.push(Entry {
@@ -146,25 +171,28 @@ impl FakeRomm {
 
 pub fn content_hash(data: &[u8]) -> String {
     if data.starts_with(b"PK\x03\x04")
-        && let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(data)) {
-            let mut lines = Vec::new();
-            for i in 0..zip.len() {
-                let mut f = zip.by_index(i).unwrap();
-                if f.is_dir() {
-                    continue;
-                }
-                let mut buf = Vec::new();
-                f.read_to_end(&mut buf).unwrap();
-                lines.push(format!("{}:{:x}", f.name(), Md5::digest(&buf)));
+        && let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(data))
+    {
+        let mut lines = Vec::new();
+        for i in 0..zip.len() {
+            let mut f = zip.by_index(i).unwrap();
+            if f.is_dir() {
+                continue;
             }
-            lines.sort();
-            return format!("{:x}", Md5::digest(lines.join("\n").as_bytes()));
+            let mut buf = Vec::new();
+            f.read_to_end(&mut buf).unwrap();
+            lines.push(format!("{}:{:x}", f.name(), Md5::digest(&buf)));
         }
+        lines.sort();
+        return format!("{:x}", Md5::digest(lines.join("\n").as_bytes()));
+    }
     format!("{:x}", Md5::digest(data))
 }
 
 fn tag_with_time(name: &str, at: i64) -> String {
-    let stamp = chrono::DateTime::from_timestamp(at, 0).unwrap().format("%Y-%m-%d_%H-%M-%S");
+    let stamp = chrono::DateTime::from_timestamp(at, 0)
+        .unwrap()
+        .format("%Y-%m-%d_%H-%M-%S");
     match name.rsplit_once('.') {
         Some((stem, ext)) => format!("{} [{}].{}", stem, stamp, ext),
         None => format!("{} [{}]", name, stamp),
@@ -212,7 +240,9 @@ async fn read_file(mut form: Multipart, field: &str) -> (String, Vec<u8>) {
 type Params = Query<HashMap<String, String>>;
 
 fn rom_id(q: &HashMap<String, String>) -> i64 {
-    q.get("rom_id").and_then(|v| v.parse().ok()).expect("rom_id")
+    q.get("rom_id")
+        .and_then(|v| v.parse().ok())
+        .expect("rom_id")
 }
 
 async fn list_saves(State(s): State<Shared>, Query(q): Params) -> Response {
@@ -221,10 +251,21 @@ async fn list_saves(State(s): State<Shared>, Query(q): Params) -> Response {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let rom = rom_id(&q);
-    Json(s.saves.iter().filter(|e| e.rom_id == rom).map(save_json).collect::<Vec<_>>()).into_response()
+    Json(
+        s.saves
+            .iter()
+            .filter(|e| e.rom_id == rom)
+            .map(save_json)
+            .collect::<Vec<_>>(),
+    )
+    .into_response()
 }
 
-async fn add_save(State(s): State<Shared>, Query(q): Params, form: Multipart) -> Json<serde_json::Value> {
+async fn add_save(
+    State(s): State<Shared>,
+    Query(q): Params,
+    form: Multipart,
+) -> Json<serde_json::Value> {
     let (name, data) = read_file(form, "saveFile").await;
     let mut s = s.lock().unwrap();
     let rom = rom_id(&q);
@@ -232,17 +273,33 @@ async fn add_save(State(s): State<Shared>, Query(q): Params, form: Multipart) ->
     let slot = q.get("slot").cloned();
     let overwrite = q.get("overwrite").is_some_and(|v| v == "true");
     let autocleanup = q.get("autocleanup").is_some_and(|v| v == "true");
-    let limit: usize = q.get("autocleanup_limit").and_then(|v| v.parse().ok()).unwrap_or(10).max(1);
+    let limit: usize = q
+        .get("autocleanup_limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10)
+        .max(1);
     let hash = content_hash(&data);
     s.writes.push(format!("POST save {} slot={:?}", name, slot));
 
     if let (Some(slot), false) = (&slot, overwrite)
-        && let Some(existing) = s.saves.iter().find(|e| e.rom_id == rom && e.slot.as_ref() == Some(slot) && e.content_hash == hash) {
-            return Json(save_json(existing));
-        }
+        && let Some(existing) = s
+            .saves
+            .iter()
+            .find(|e| e.rom_id == rom && e.slot.as_ref() == Some(slot) && e.content_hash == hash)
+    {
+        return Json(save_json(existing));
+    }
     let at = s.tick();
-    let file_name = if slot.is_some() { tag_with_time(&name, at) } else { name };
-    let result = match s.saves.iter_mut().find(|e| e.rom_id == rom && e.file_name == file_name && e.slot == slot) {
+    let file_name = if slot.is_some() {
+        tag_with_time(&name, at)
+    } else {
+        name
+    };
+    let result = match s
+        .saves
+        .iter_mut()
+        .find(|e| e.rom_id == rom && e.file_name == file_name && e.slot == slot)
+    {
         Some(e) => {
             e.data = data;
             e.content_hash = hash;
@@ -252,7 +309,16 @@ async fn add_save(State(s): State<Shared>, Query(q): Params, form: Multipart) ->
         }
         None => {
             let id = s.new_id();
-            let e = Entry { id, rom_id: rom, file_name, emulator, slot: slot.clone(), data, updated_at: at, content_hash: hash };
+            let e = Entry {
+                id,
+                rom_id: rom,
+                file_name,
+                emulator,
+                slot: slot.clone(),
+                data,
+                updated_at: at,
+                content_hash: hash,
+            };
             s.saves.push(e.clone());
             e
         }
@@ -300,10 +366,21 @@ async fn list_states(State(s): State<Shared>, Query(q): Params) -> Response {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let rom = rom_id(&q);
-    Json(s.states.iter().filter(|e| e.rom_id == rom).map(state_json).collect::<Vec<_>>()).into_response()
+    Json(
+        s.states
+            .iter()
+            .filter(|e| e.rom_id == rom)
+            .map(state_json)
+            .collect::<Vec<_>>(),
+    )
+    .into_response()
 }
 
-async fn add_state(State(s): State<Shared>, Query(q): Params, form: Multipart) -> Json<serde_json::Value> {
+async fn add_state(
+    State(s): State<Shared>,
+    Query(q): Params,
+    form: Multipart,
+) -> Json<serde_json::Value> {
     let (name, data) = read_file(form, "stateFile").await;
     let mut s = s.lock().unwrap();
     let rom = rom_id(&q);
@@ -311,7 +388,11 @@ async fn add_state(State(s): State<Shared>, Query(q): Params, form: Multipart) -
     let at = s.tick();
     s.writes.push(format!("POST state {}", name));
     let hash = content_hash(&data);
-    let result = match s.states.iter_mut().find(|e| e.rom_id == rom && e.file_name == name) {
+    let result = match s
+        .states
+        .iter_mut()
+        .find(|e| e.rom_id == rom && e.file_name == name)
+    {
         Some(e) => {
             e.data = data;
             e.content_hash = hash;
@@ -320,7 +401,16 @@ async fn add_state(State(s): State<Shared>, Query(q): Params, form: Multipart) -
         }
         None => {
             let id = s.new_id();
-            let e = Entry { id, rom_id: rom, file_name: name, emulator, slot: None, data, updated_at: at, content_hash: hash };
+            let e = Entry {
+                id,
+                rom_id: rom,
+                file_name: name,
+                emulator,
+                slot: None,
+                data,
+                updated_at: at,
+                content_hash: hash,
+            };
             s.states.push(e.clone());
             e
         }

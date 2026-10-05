@@ -67,13 +67,21 @@ impl SyncStore {
         let data = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
                 let aside = path.with_extension("json.corrupt");
-                warn!("sync state {} is unreadable ({}); moved to {}", path.display(), e, aside.display());
+                warn!(
+                    "sync state {} is unreadable ({}); moved to {}",
+                    path.display(),
+                    e,
+                    aside.display()
+                );
                 let _ = std::fs::rename(&path, &aside);
                 Data::default()
             }),
             Err(_) => Data::default(),
         };
-        Self { path, data: Mutex::new(data) }
+        Self {
+            path,
+            data: Mutex::new(data),
+        }
     }
 
     /// Where local versions are backed up before being replaced:
@@ -107,7 +115,14 @@ impl SyncStore {
 
     /// Recent conflicts, newest first.
     pub async fn conflicts(&self) -> Vec<ConflictRecord> {
-        self.data.lock().await.conflicts.iter().rev().cloned().collect()
+        self.data
+            .lock()
+            .await
+            .conflicts
+            .iter()
+            .rev()
+            .cloned()
+            .collect()
     }
 }
 
@@ -123,7 +138,11 @@ fn persist(path: &Path, data: &Data) {
         Ok(())
     })();
     if let Err(e) = result {
-        warn!("could not persist sync state to {}: {:#}", path.display(), e);
+        warn!(
+            "could not persist sync state to {}: {:#}",
+            path.display(),
+            e
+        );
     }
 }
 
@@ -142,7 +161,9 @@ mod tests {
             remote_hash: Some("abc".into()),
             remote_updated_at: "2026-01-01T00:00:00Z".into(),
         };
-        SyncStore::load(path.clone()).set_base("k", base.clone()).await;
+        SyncStore::load(path.clone())
+            .set_base("k", base.clone())
+            .await;
         assert_eq!(SyncStore::load(path.clone()).base("k").await, Some(base));
 
         std::fs::write(&path, b"{not json").unwrap();

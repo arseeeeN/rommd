@@ -106,7 +106,11 @@ pub async fn sync_layout(
 
 /// Units for the game's saves. On a RomM listing error, returns (as `Err`) the
 /// local units without remotes so presence can still be recorded.
-async fn units_for_saves(ctx: &SyncCtx<'_>, saves: &SaveSet, rom_path: &Path) -> Result<Vec<Unit>, Vec<Unit>> {
+async fn units_for_saves(
+    ctx: &SyncCtx<'_>,
+    saves: &SaveSet,
+    rom_path: &Path,
+) -> Result<Vec<Unit>, Vec<Unit>> {
     let local = match saves {
         SaveSet::Files(set) => return flat_units(ctx, Kind::Save, set).await,
         SaveSet::Dir(dir) => Local::Dir(dir.clone()),
@@ -131,12 +135,11 @@ async fn units_for_saves(ctx: &SyncCtx<'_>, saves: &SaveSet, rom_path: &Path) ->
     };
     // One archive per game: the slot's newest zip from any compatible emulator
     // is the current save. Uploads add a version to the slot.
-    unit.remote = newest(
-        remotes
-            .iter()
-            .filter(|r| is_archive_save(r) && ctx.emulator.accepts_saves_from(r.emulator.as_deref())),
-    )
-    .cloned();
+    unit.remote =
+        newest(remotes.iter().filter(|r| {
+            is_archive_save(r) && ctx.emulator.accepts_saves_from(r.emulator.as_deref())
+        }))
+        .cloned();
     Ok(vec![unit])
 }
 
@@ -145,13 +148,23 @@ async fn units_for_saves(ctx: &SyncCtx<'_>, saves: &SaveSet, rom_path: &Path) ->
 async fn flat_units(ctx: &SyncCtx<'_>, kind: Kind, set: &FileSet) -> Result<Vec<Unit>, Vec<Unit>> {
     let local_files = {
         let set = set.clone();
-        tokio::task::spawn_blocking(move || set.files()).await.unwrap_or_default()
+        tokio::task::spawn_blocking(move || set.files())
+            .await
+            .unwrap_or_default()
     };
     let unit = |path: PathBuf, group: &[Remote], history: bool| {
-        let own = newest(group.iter().filter(|r| r.emulator.as_deref() == Some(ctx.emulator.id())));
+        let own = newest(
+            group
+                .iter()
+                .filter(|r| r.emulator.as_deref() == Some(ctx.emulator.id())),
+        );
         Unit {
             kind,
-            upload_name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+            upload_name: path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
             local: Local::File(path),
             remote: newest(group.iter()).cloned(),
             own_remote: own.map(|r| r.id),
@@ -164,8 +177,16 @@ async fn flat_units(ctx: &SyncCtx<'_>, kind: Kind, set: &FileSet) -> Result<Vec<
     let remotes = match kind.list(ctx).await {
         Ok(r) => r,
         Err(e) => {
-            warn!("could not fetch RomM {}s for rom {}: {:#}", kind.label(), ctx.rom_id, e);
-            return Err(local_files.into_iter().map(|p| unit(p, &[], false)).collect());
+            warn!(
+                "could not fetch RomM {}s for rom {}: {:#}",
+                kind.label(),
+                ctx.rom_id,
+                e
+            );
+            return Err(local_files
+                .into_iter()
+                .map(|p| unit(p, &[], false))
+                .collect());
         }
     };
     let local_name = |r: &Remote| local_file_name(&r.file_name).map(|n| set.local_name(&n));
@@ -177,7 +198,8 @@ async fn flat_units(ctx: &SyncCtx<'_>, kind: Kind, set: &FileSet) -> Result<Vec<
         .filter_map(local_name)
         .collect();
     let local_count = local_files.len();
-    let history = |name: &str| kind == Kind::Save && single_file_history_ok(&slot_names, local_count, name);
+    let history =
+        |name: &str| kind == Kind::Save && single_file_history_ok(&slot_names, local_count, name);
     // RomM tags stored names with an upload timestamp; group entries by the
     // name the emulator actually uses. Older rommd versions created duplicates,
     // so a group can hold several entries — the newest one is used.
@@ -188,13 +210,21 @@ async fn flat_units(ctx: &SyncCtx<'_>, kind: Kind, set: &FileSet) -> Result<Vec<
         }
         match local_name(&r) {
             Some(name) => groups.entry(name).or_default().push(r),
-            None => warn!("ignoring RomM {} with unusable name {:?}", kind.label(), r.file_name),
+            None => warn!(
+                "ignoring RomM {} with unusable name {:?}",
+                kind.label(),
+                r.file_name
+            ),
         }
     }
 
     let mut units = Vec::new();
     for path in local_files {
-        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         let group = groups.remove(&name).unwrap_or_default();
         units.push(unit(path, &group, history(&name)));
     }
@@ -280,7 +310,11 @@ impl Local {
                 .files()
                 .into_iter()
                 .map(|p| {
-                    let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                    let name = p
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
                     (p, name)
                 })
                 .collect()),
@@ -289,7 +323,9 @@ impl Local {
 
     /// Empty directories to keep in a directory-save zip.
     fn empty_dirs(&self) -> Result<Vec<String>> {
-        let Local::Dir(s) = self else { return Ok(Vec::new()) };
+        let Local::Dir(s) = self else {
+            return Ok(Vec::new());
+        };
         let mut dirs = save_archive::dir_empty_dirs(&s.dir, &s.archive_root)?;
         for (root, dir) in &s.extra_roots {
             dirs.extend(save_archive::dir_empty_dirs(dir, root)?);
@@ -323,7 +359,13 @@ fn unit_key(ctx: &SyncCtx<'_>, unit: &Unit) -> String {
         Local::Bundle(set) => format!("{}#{}", set.dir.display(), set.matcher.label()),
         other => other.path().display().to_string(),
     };
-    format!("{}:{}:{}:{}", ctx.emulator.id(), ctx.rom_id, unit.kind.label(), local)
+    format!(
+        "{}:{}:{}:{}",
+        ctx.emulator.id(),
+        ctx.rom_id,
+        unit.kind.label(),
+        local
+    )
 }
 
 /// Sync one unit. Returns whether it exists locally afterwards.
@@ -332,7 +374,12 @@ async fn sync_unit(ctx: &SyncCtx<'_>, unit: &Unit, key: &str) -> bool {
     let hash = match local_hash(&unit.local).await {
         Ok(h) => h,
         Err(e) => {
-            warn!("could not read local {} {}: {:#}", unit.kind.label(), path, e);
+            warn!(
+                "could not read local {} {}: {:#}",
+                unit.kind.label(),
+                path,
+                e
+            );
             return true;
         }
     };
@@ -345,25 +392,34 @@ async fn sync_unit(ctx: &SyncCtx<'_>, unit: &Unit, key: &str) -> bool {
 
     let had_local = hash.is_some();
     let mut action = decide(hash.as_deref(), view, base.as_ref());
-    if action == Action::Conflict && base.is_none()
+    if action == Action::Conflict
+        && base.is_none()
         && let (Some(h), Some(r)) = (&hash, &unit.remote)
-            && r.content_hash.is_none() && remote_matches(ctx, unit, r, h).await {
-                action = Action::InSync;
-            }
+        && r.content_hash.is_none()
+        && remote_matches(ctx, unit, r, h).await
+    {
+        action = Action::InSync;
+    }
     let result = match action {
         Action::Nothing => {
             debug!("{} unchanged", path);
             Ok(had_local)
         }
         Action::InSync => {
-            let (Some(h), Some(r)) = (hash, &unit.remote) else { unreachable!("in sync needs both sides") };
+            let (Some(h), Some(r)) = (hash, &unit.remote) else {
+                unreachable!("in sync needs both sides")
+            };
             ctx.store.set_base(key, r.base_for(h)).await;
             debug!("{} already in sync with RomM id={}", path, r.id);
             Ok(true)
         }
         Action::Upload => upload(ctx, unit, key, hash.unwrap()).await.map(|_| true),
-        Action::Download => download(ctx, unit, key, unit.remote.as_ref().unwrap()).await.map(|_| true),
-        Action::Conflict => resolve_conflict(ctx, unit, key, hash.unwrap()).await.map(|_| true),
+        Action::Download => download(ctx, unit, key, unit.remote.as_ref().unwrap())
+            .await
+            .map(|_| true),
+        Action::Conflict => resolve_conflict(ctx, unit, key, hash.unwrap())
+            .await
+            .map(|_| true),
     };
     match result {
         Ok(exists) => exists,
@@ -378,7 +434,9 @@ async fn sync_unit(ctx: &SyncCtx<'_>, unit: &Unit, key: &str) -> bool {
 /// used when RomM gives no `content_hash` (save states) and there is no sync
 /// history: without it every state on a new device would be a conflict.
 async fn remote_matches(ctx: &SyncCtx<'_>, unit: &Unit, remote: &Remote, local_hash: &str) -> bool {
-    let Ok(work) = scratch_dir() else { return false };
+    let Ok(work) = scratch_dir() else {
+        return false;
+    };
     let file = work.join("probe");
     let matches = match unit.kind.download(ctx, remote.id, &file).await {
         Ok(()) => {
@@ -393,7 +451,12 @@ async fn remote_matches(ctx: &SyncCtx<'_>, unit: &Unit, remote: &Remote, local_h
             .is_some_and(|h| h == local_hash)
         }
         Err(e) => {
-            debug!("could not fetch RomM {} {} to compare: {:#}", unit.kind.label(), remote.id, e);
+            debug!(
+                "could not fetch RomM {} {} to compare: {:#}",
+                unit.kind.label(),
+                remote.id,
+                e
+            );
             false
         }
     };
@@ -410,7 +473,11 @@ async fn upload(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: String) -> Resu
                 let zip = work.join(&unit.upload_name);
                 let (local, dest) = (archive.clone(), zip.clone());
                 tokio::task::spawn_blocking(move || {
-                    save_archive::zip_entries_with_dirs(&local.entries()?, &local.empty_dirs()?, &dest)
+                    save_archive::zip_entries_with_dirs(
+                        &local.entries()?,
+                        &local.empty_dirs()?,
+                        &dest,
+                    )
                 })
                 .await??;
                 zip
@@ -419,12 +486,25 @@ async fn upload(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: String) -> Resu
         // A save with history adds a version; otherwise update in place.
         let remote = match (unit.keep_versions, unit.own_remote) {
             (None, Some(id)) => unit.kind.update(ctx, id, &file).await?,
-            _ => unit.kind.create(ctx, unit.slot.as_deref(), unit.keep_versions, &file).await?,
+            _ => {
+                unit.kind
+                    .create(ctx, unit.slot.as_deref(), unit.keep_versions, &file)
+                    .await?
+            }
         };
         if remote.content_hash.as_deref().is_some_and(|h| h != hash) {
-            debug!("RomM hashed {} as {:?}, local hash {}", file.display(), remote.content_hash, hash);
+            debug!(
+                "RomM hashed {} as {:?}, local hash {}",
+                file.display(),
+                remote.content_hash,
+                hash
+            );
         }
-        info!("uploaded {} to RomM id={}", unit.local.path().display(), remote.id);
+        info!(
+            "uploaded {} to RomM id={}",
+            unit.local.path().display(),
+            remote.id
+        );
         ctx.store.set_base(key, remote.base_for(hash)).await;
         Ok(())
     }
@@ -435,16 +515,27 @@ async fn upload(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: String) -> Resu
 
 /// Replace the local save with `remote`, backing up the current one first.
 /// Returns where the previous local version was backed up, if there was one.
-async fn download(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, remote: &Remote) -> Result<Option<PathBuf>> {
+async fn download(
+    ctx: &SyncCtx<'_>,
+    unit: &Unit,
+    key: &str,
+    remote: &Remote,
+) -> Result<Option<PathBuf>> {
     let work = scratch_dir()?;
     let result = async {
         let tmp = work.join("download");
         unit.kind.download(ctx, remote.id, &tmp).await?;
         let backup = backup_dir(ctx);
-        let (local, tmp2, backup2, expected) =
-            (unit.local.clone(), tmp.clone(), backup.clone(), remote.content_hash.clone());
-        let backed_up = tokio::task::spawn_blocking(move || apply_download(&local, &tmp2, &backup2, expected.as_deref()))
-            .await??;
+        let (local, tmp2, backup2, expected) = (
+            unit.local.clone(),
+            tmp.clone(),
+            backup.clone(),
+            remote.content_hash.clone(),
+        );
+        let backed_up = tokio::task::spawn_blocking(move || {
+            apply_download(&local, &tmp2, &backup2, expected.as_deref())
+        })
+        .await??;
         let hash = local_hash(&unit.local)
             .await?
             .ok_or_else(|| anyhow::anyhow!("restored save is empty"))?;
@@ -463,13 +554,21 @@ async fn download(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, remote: &Remote) ->
 }
 
 /// Blocking part of a download: verify, back up, and put the files in place.
-fn apply_download(local: &Local, downloaded: &Path, backup: &Path, expected_hash: Option<&str>) -> Result<bool> {
+fn apply_download(
+    local: &Local,
+    downloaded: &Path,
+    backup: &Path,
+    expected_hash: Option<&str>,
+) -> Result<bool> {
     let actual = match local {
         Local::File(_) => save_archive::file_md5(downloaded)?,
         _ => save_archive::zip_content_hash(downloaded)?,
     };
     if expected_hash.is_some_and(|h| h != actual) {
-        warn!("downloaded content hash {} differs from RomM's {:?}", actual, expected_hash);
+        warn!(
+            "downloaded content hash {} differs from RomM's {:?}",
+            actual, expected_hash
+        );
     }
     let had_local = local.mtime().is_some();
     match local {
@@ -493,7 +592,11 @@ fn apply_download(local: &Local, downloaded: &Path, backup: &Path, expected_hash
             let mut primary = vec![save.dir.clone()];
             primary.extend(save.mirrors.iter().cloned());
             let mut roots = vec![(save.archive_root.clone(), primary)];
-            roots.extend(save.extra_roots.iter().map(|(root, dir)| (root.clone(), vec![dir.clone()])));
+            roots.extend(
+                save.extra_roots
+                    .iter()
+                    .map(|(root, dir)| (root.clone(), vec![dir.clone()])),
+            );
             save_archive::restore_roots(downloaded, &roots, backup)?;
         }
         Local::Bundle(set) => {
@@ -527,7 +630,9 @@ async fn resolve_conflict(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: Strin
         unit.kind
             .download(ctx, remote.id, &dest)
             .await
-            .map_err(|e| e.context("could not preserve the RomM version; leaving both sides untouched"))?;
+            .map_err(|e| {
+                e.context("could not preserve the RomM version; leaving both sides untouched")
+            })?;
         upload(ctx, unit, key, hash).await?;
         Some(dest)
     } else {
@@ -539,7 +644,11 @@ async fn resolve_conflict(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: Strin
         unit.local.path().display(),
         if keep_local { "local" } else { "RomM" },
         local_time.map(rfc3339),
-        if unit.local_is_fresh { ", created this session" } else { "" },
+        if unit.local_is_fresh {
+            ", created this session"
+        } else {
+            ""
+        },
         remote.id,
         remote.updated_at,
         loser_backup
@@ -627,8 +736,20 @@ impl Kind {
 
     async fn list(self, ctx: &SyncCtx<'_>) -> Result<Vec<Remote>> {
         Ok(match self {
-            Kind::Save => ctx.romm.get_saves(ctx.rom_id).await?.into_iter().map(Into::into).collect(),
-            Kind::State => ctx.romm.get_states(ctx.rom_id).await?.into_iter().map(Into::into).collect(),
+            Kind::Save => ctx
+                .romm
+                .get_saves(ctx.rom_id)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            Kind::State => ctx
+                .romm
+                .get_states(ctx.rom_id)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect(),
         })
     }
 
@@ -639,11 +760,25 @@ impl Kind {
         }
     }
 
-    async fn create(self, ctx: &SyncCtx<'_>, slot: Option<&str>, keep: Option<u32>, file: &Path) -> Result<Remote> {
+    async fn create(
+        self,
+        ctx: &SyncCtx<'_>,
+        slot: Option<&str>,
+        keep: Option<u32>,
+        file: &Path,
+    ) -> Result<Remote> {
         let emulator = ctx.emulator.id();
         Ok(match self {
-            Kind::Save => ctx.romm.upload_save(ctx.rom_id, emulator, slot, keep, file).await?.into(),
-            Kind::State => ctx.romm.upload_state(ctx.rom_id, emulator, file).await?.into(),
+            Kind::Save => ctx
+                .romm
+                .upload_save(ctx.rom_id, emulator, slot, keep, file)
+                .await?
+                .into(),
+            Kind::State => ctx
+                .romm
+                .upload_state(ctx.rom_id, emulator, file)
+                .await?
+                .into(),
         })
     }
 
@@ -673,7 +808,9 @@ fn local_file_name(romm_name: &str) -> Option<String> {
         None => (romm_name, None),
     };
     let stem = match stem.rfind(" [") {
-        Some(pos) if stem.ends_with(']') && is_romm_timestamp(&stem[pos + 2..stem.len() - 1]) => &stem[..pos],
+        Some(pos) if stem.ends_with(']') && is_romm_timestamp(&stem[pos + 2..stem.len() - 1]) => {
+            &stem[..pos]
+        }
         _ => stem,
     };
     let name = match ext {
@@ -735,14 +872,27 @@ fn backup_dir(ctx: &SyncCtx<'_>) -> PathBuf {
         .backups_dir()
         .join(ctx.emulator.id())
         .join(ctx.rom_id.to_string())
-        .join(chrono::Local::now().format("%Y-%m-%d_%H-%M-%S%.3f").to_string())
+        .join(
+            chrono::Local::now()
+                .format("%Y-%m-%d_%H-%M-%S%.3f")
+                .to_string(),
+        )
 }
 
 fn prune_backups(dir: &Path) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut entries: Vec<PathBuf> = rd
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.is_dir() && !p.file_name().unwrap_or_default().to_string_lossy().starts_with('.'))
+        .filter(|p| {
+            p.is_dir()
+                && !p
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .starts_with('.')
+        })
         .collect();
     entries.sort();
     let excess = entries.len().saturating_sub(BACKUPS_KEPT);
@@ -755,7 +905,9 @@ fn scratch_dir() -> Result<PathBuf> {
     let dir = std::env::temp_dir().join(format!(
         "rommd-{}-{}",
         std::process::id(),
-        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_nanos()
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)?
+            .as_nanos()
     ));
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
@@ -767,9 +919,15 @@ mod tests {
 
     #[test]
     fn strips_romm_timestamp_tags() {
-        assert_eq!(local_file_name("anguna [2026-05-05 13-07-23-697].srm").as_deref(), Some("anguna.srm"));
         assert_eq!(
-            local_file_name("Super Mario Odyssey[0100000000010000][V0](axekin.fr) [2026-09-27_09-33-42].zip").as_deref(),
+            local_file_name("anguna [2026-05-05 13-07-23-697].srm").as_deref(),
+            Some("anguna.srm")
+        );
+        assert_eq!(
+            local_file_name(
+                "Super Mario Odyssey[0100000000010000][V0](axekin.fr) [2026-09-27_09-33-42].zip"
+            )
+            .as_deref(),
             Some("Super Mario Odyssey[0100000000010000][V0](axekin.fr).zip")
         );
         assert_eq!(
@@ -777,7 +935,10 @@ mod tests {
             Some("Mario vs. Donkey Kong (USA, Australia).sav")
         );
         // A bracket tag that is not a RomM timestamp is part of the real name.
-        assert_eq!(local_file_name("Game [v1].sav").as_deref(), Some("Game [v1].sav"));
+        assert_eq!(
+            local_file_name("Game [v1].sav").as_deref(),
+            Some("Game [v1].sav")
+        );
     }
 
     #[test]

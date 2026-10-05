@@ -21,7 +21,10 @@ impl Emulator for Ryujinx {
     }
 
     fn game_id_for_rom(&self, config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
-        crate::switch::title_id_for_rom(rom_path, &config.config_dir.join("system").join("prod.keys"))
+        crate::switch::title_id_for_rom(
+            rom_path,
+            &config.config_dir.join("system").join("prod.keys"),
+        )
     }
 
     fn save_family(&self) -> &'static [&'static str] {
@@ -38,7 +41,10 @@ impl Emulator for Ryujinx {
             Some(id) => game_save_dir(config, id).await.map(SaveSet::Dir),
             None => None,
         };
-        SaveLayout { saves, states: None }
+        SaveLayout {
+            saves,
+            states: None,
+        }
     }
 
     async fn launch(
@@ -144,20 +150,37 @@ mod tests {
     #[tokio::test]
     async fn finds_the_account_save_before_the_device_save() {
         let root = TempDir::new("ryujinx");
-        let config = EmulatorConfig { binary: "ryujinx".into(), config_dir: root.path().to_owned() };
+        let config = EmulatorConfig {
+            binary: "ryujinx".into(),
+            config_dir: root.path().to_owned(),
+        };
         let saves = root.path().join("bis/user/save");
-        write(&saves.join("0000000000000001/ExtraData0"), &extra_data(0x0100000000010000, 2)); // BCAT
-        write(&saves.join("0000000000000002/ExtraData0"), &extra_data(0x0100000000010000, 3)); // device
-        write(&saves.join("0000000000000003/ExtraData0"), &extra_data(0x0100000000020000, 1)); // other game
+        write(
+            &saves.join("0000000000000001/ExtraData0"),
+            &extra_data(0x0100000000010000, 2),
+        ); // BCAT
+        write(
+            &saves.join("0000000000000002/ExtraData0"),
+            &extra_data(0x0100000000010000, 3),
+        ); // device
+        write(
+            &saves.join("0000000000000003/ExtraData0"),
+            &extra_data(0x0100000000020000, 1),
+        ); // other game
         let device = game_save_dir(&config, "0100000000010000").await.unwrap();
         assert_eq!(device.dir, saves.join("0000000000000002/0"));
 
-        write(&saves.join("0000000000000004/ExtraData0"), &extra_data(0x0100000000010000, 1)); // account
+        write(
+            &saves.join("0000000000000004/ExtraData0"),
+            &extra_data(0x0100000000010000, 1),
+        ); // account
         let account = game_save_dir(&config, "0100000000010000").await.unwrap();
         assert_eq!(account.dir, saves.join("0000000000000004/0"));
         assert_eq!(account.mirrors, vec![saves.join("0000000000000004/1")]);
         assert_eq!(account.archive_root, "0100000000010000");
-        assert!(game_save_dir(&config, "0100000000030000").await.is_none(), "no slot until Ryujinx creates one");
+        assert!(
+            game_save_dir(&config, "0100000000030000").await.is_none(),
+            "no slot until Ryujinx creates one"
+        );
     }
 }
-

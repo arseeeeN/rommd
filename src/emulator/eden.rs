@@ -45,7 +45,9 @@ impl Emulator for Eden {
         game_id: Option<&str>,
     ) -> SaveLayout {
         SaveLayout {
-            saves: game_id.and_then(|id| game_save_dir(config, id)).map(SaveSet::Dir),
+            saves: game_id
+                .and_then(|id| game_save_dir(config, id))
+                .map(SaveSet::Dir),
             states: None,
         }
     }
@@ -77,7 +79,10 @@ impl Emulator for Eden {
 fn game_save_dir(config: &EmulatorConfig, game_id: &str) -> Option<GameSaveDir> {
     let settings = read_qt_config(config);
     if let Some(custom) = setting(settings.as_ref(), "Data%20Storage", "save_directory") {
-        warn!("Eden save_directory override ({}) is not supported; skipping save sync", custom);
+        warn!(
+            "Eden save_directory override ({}) is not supported; skipping save sync",
+            custom
+        );
         return None;
     }
     let nand = nand_dir(config, settings.as_ref());
@@ -93,7 +98,13 @@ fn game_save_dir(config: &EmulatorConfig, game_id: &str) -> Option<GameSaveDir> 
         Some(a) => a,
         None => return None,
     };
-    Some(GameSaveDir { dir, archive_root: title, extra_roots: Vec::new(), mirrors: Vec::new(), required_subdir: None })
+    Some(GameSaveDir {
+        dir,
+        archive_root: title,
+        extra_roots: Vec::new(),
+        mirrors: Vec::new(),
+        required_subdir: None,
+    })
 }
 
 fn active_user_dir(nand: &Path, settings: Option<&IniFile>) -> Option<String> {
@@ -110,7 +121,11 @@ fn active_user_dir(nand: &Path, settings: Option<&IniFile>) -> Option<String> {
     };
     let user = user_dir_name(&data, index);
     if user.is_none() {
-        warn!("Eden profile index {} not found in {}", index, profiles.display());
+        warn!(
+            "Eden profile index {} not found in {}",
+            index,
+            profiles.display()
+        );
     }
     user
 }
@@ -124,7 +139,9 @@ fn read_qt_config(config: &EmulatorConfig) -> Option<IniFile> {
     } else {
         dirs::config_dir()?.join("eden").join("qt-config.ini")
     };
-    std::fs::read_to_string(path).ok().map(|t| IniFile::parse(&t))
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|t| IniFile::parse(&t))
 }
 
 /// A Qt setting's value, only when the user changed it from the default.
@@ -177,8 +194,14 @@ mod tests {
             "[Data%20Storage]\nnand_directory\\default=false\nnand_directory=/x/nand\n\
              save_directory\\default=true\nsave_directory=\n",
         );
-        assert_eq!(setting(Some(&ini), "Data%20Storage", "nand_directory"), Some("/x/nand"));
-        assert_eq!(setting(Some(&ini), "Data%20Storage", "save_directory"), None);
+        assert_eq!(
+            setting(Some(&ini), "Data%20Storage", "nand_directory"),
+            Some("/x/nand")
+        );
+        assert_eq!(
+            setting(Some(&ini), "Data%20Storage", "save_directory"),
+            None
+        );
     }
 
     #[tokio::test]
@@ -191,8 +214,15 @@ mod tests {
         profiles[0x10] = 0xAB;
         std::fs::write(avatars.join("profiles.dat"), &profiles).unwrap();
         std::fs::create_dir_all(data.join("config")).unwrap();
-        std::fs::write(data.join("config/qt-config.ini"), "[System]\ncurrent_user=0\n").unwrap();
-        let config = EmulatorConfig { binary: "eden".into(), config_dir: data.clone() };
+        std::fs::write(
+            data.join("config/qt-config.ini"),
+            "[System]\ncurrent_user=0\n",
+        )
+        .unwrap();
+        let config = EmulatorConfig {
+            binary: "eden".into(),
+            config_dir: data.clone(),
+        };
         let users = data.join("nand/user/save/0000000000000000");
         let user = format!("{:0>32}", "AB");
 
@@ -201,11 +231,20 @@ mod tests {
             let id = id.to_owned();
             async move { game_save_dir(&config, &id).unwrap().dir }
         };
-        assert_eq!(dir("0100000000010000").await, users.join(&user).join("0100000000010000"));
-        assert_eq!(dir("01006f8002326000").await, users.join(DEVICE_USER_DIR).join("01006F8002326000"));
+        assert_eq!(
+            dir("0100000000010000").await,
+            users.join(&user).join("0100000000010000")
+        );
+        assert_eq!(
+            dir("01006f8002326000").await,
+            users.join(DEVICE_USER_DIR).join("01006F8002326000")
+        );
 
         std::fs::create_dir_all(users.join(DEVICE_USER_DIR).join("0100000000020000")).unwrap();
-        assert_eq!(dir("0100000000020000").await, users.join(DEVICE_USER_DIR).join("0100000000020000"));
+        assert_eq!(
+            dir("0100000000020000").await,
+            users.join(DEVICE_USER_DIR).join("0100000000020000")
+        );
         let _ = std::fs::remove_dir_all(&data);
     }
 }

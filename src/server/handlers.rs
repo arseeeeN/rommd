@@ -94,7 +94,9 @@ pub async fn launch(
 
     let game_id = emulator.game_id_for_rom(emu_config, &rom_path);
 
-    let save_layout = emulator.save_layout(emu_config, &rom_path, game_id.as_deref()).await;
+    let save_layout = emulator
+        .save_layout(emu_config, &rom_path, game_id.as_deref())
+        .await;
 
     let present_at_launch = match &state.romm {
         Some(romm) => {
@@ -110,12 +112,22 @@ pub async fn launch(
     };
 
     let (child, launch_ctx) = emulator
-        .launch(emu_config, &rom_path, game_id.as_deref(), req.profile.as_ref())
+        .launch(
+            emu_config,
+            &rom_path,
+            game_id.as_deref(),
+            req.profile.as_ref(),
+        )
         .await?;
 
-    let pid = child.id().ok_or_else(|| anyhow::anyhow!("process exited immediately"))?;
+    let pid = child
+        .id()
+        .ok_or_else(|| anyhow::anyhow!("process exited immediately"))?;
     let started_at = SystemTime::now();
-    info!("launched {} pid={} rom_id={}", req.emulator, pid, req.rom_id);
+    info!(
+        "launched {} pid={} rom_id={}",
+        req.emulator, pid, req.rom_id
+    );
 
     state
         .processes
@@ -322,16 +334,29 @@ pub async fn update_status(
 )]
 pub async fn update_install(State(state): State<Arc<AppState>>) -> Response {
     if !state.processes.list().await.is_empty() {
-        return (StatusCode::CONFLICT, Json(serde_json::json!({ "error": "a game is running; stop it before updating" })))
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "a game is running; stop it before updating" })),
+        )
             .into_response();
     }
     let status = state.updater.check().await;
     if let Some(blocker) = status.install_blocker.filter(|_| status.update_available) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": blocker }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": blocker })),
+        )
+            .into_response();
     }
     if !status.update_available {
-        let error = status.last_error.unwrap_or_else(|| format!("rommd {} is the latest release", status.current_version));
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": error }))).into_response();
+        let error = status
+            .last_error
+            .unwrap_or_else(|| format!("rommd {} is the latest release", status.current_version));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response();
     }
     match state.updater.install().await {
         Ok(version) => {
@@ -340,7 +365,11 @@ pub async fn update_install(State(state): State<Arc<AppState>>) -> Response {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 crate::update::restart();
             });
-            Json(UpdateInstalled { installed_version: version.to_string(), restarting: true }).into_response()
+            Json(UpdateInstalled {
+                installed_version: version.to_string(),
+                restarting: true,
+            })
+            .into_response()
         }
         Err(e) => AppError::from(e).into_response(),
     }

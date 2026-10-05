@@ -139,7 +139,9 @@ fn read_dolphin_ini(config: &EmulatorConfig) -> Option<IniFile> {
     } else {
         dirs::config_dir()?.join("dolphin-emu").join("Dolphin.ini")
     };
-    std::fs::read_to_string(path).ok().map(|t| IniFile::parse(&t))
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|t| IniFile::parse(&t))
 }
 
 fn ini_value<'a>(ini: Option<&'a IniFile>, section: &str, key: &str) -> Option<&'a str> {
@@ -166,7 +168,10 @@ fn gc_saves(config: &EmulatorConfig, ini: Option<&IniFile>, game_id: &str) -> Op
             return None;
         }
         Some(other) => {
-            debug!("Dolphin slot A holds device {} rather than a memory card", other);
+            debug!(
+                "Dolphin slot A holds device {} rather than a memory card",
+                other
+            );
             return None;
         }
     }
@@ -206,7 +211,11 @@ fn wii_save_dir(config: &EmulatorConfig, ini: Option<&IniFile>, game_id: &str) -
     let nand = ini_value(ini, "General", "NANDRootPath")
         .map(PathBuf::from)
         .unwrap_or_else(|| config.config_dir.join("Wii"));
-    let code: String = game_id.bytes().take(4).map(|b| format!("{:02x}", b)).collect();
+    let code: String = game_id
+        .bytes()
+        .take(4)
+        .map(|b| format!("{:02x}", b))
+        .collect();
     GameSaveDir {
         dir: nand.join("title").join("00010000").join(&code),
         archive_root: code,
@@ -248,7 +257,10 @@ fn read_disc(rom_path: &Path) -> Option<(String, DiscKind)> {
     } else if magic_at(0x1C) == Some(GC_MAGIC) {
         Some((id, DiscKind::GameCube))
     } else {
-        warn!("{} has neither a GameCube nor a Wii disc header", rom_path.display());
+        warn!(
+            "{} has neither a GameCube nor a Wii disc header",
+            rom_path.display()
+        );
         None
     }
 }
@@ -318,9 +330,25 @@ fn parse_game_id(b: &[u8]) -> Option<String> {
     // Region codes at position 3. The list covers all documented codes.
     let region_ok = matches!(
         b[3],
-        b'A' | b'D' | b'E' | b'F' | b'H' | b'I' | b'J' | b'K'
-            | b'L' | b'M' | b'N' | b'P' | b'Q' | b'R' | b'S'
-            | b'T' | b'U' | b'W' | b'X' | b'Z'
+        b'A' | b'D'
+            | b'E'
+            | b'F'
+            | b'H'
+            | b'I'
+            | b'J'
+            | b'K'
+            | b'L'
+            | b'M'
+            | b'N'
+            | b'P'
+            | b'Q'
+            | b'R'
+            | b'S'
+            | b'T'
+            | b'U'
+            | b'W'
+            | b'X'
+            | b'Z'
     );
     if !region_ok {
         return None;
@@ -343,9 +371,9 @@ mod tests {
     #[test]
     fn parse_rejects_invalid() {
         assert!(parse_game_id(b"WBFS\x00\x00").is_none()); // WBFS magic — non-alphanumeric bytes
-        assert!(parse_game_id(b"GAL501").is_none());        // '5' at position 3 is not a region code
-        assert!(parse_game_id(b"gale01").is_none());        // lowercase
-        assert!(parse_game_id(b"GAL 01").is_none());        // space
+        assert!(parse_game_id(b"GAL501").is_none()); // '5' at position 3 is not a region code
+        assert!(parse_game_id(b"gale01").is_none()); // lowercase
+        assert!(parse_game_id(b"GAL 01").is_none()); // space
     }
 
     #[test]
@@ -358,7 +386,10 @@ mod tests {
 
     #[test]
     fn wii_title_dir_is_hex_game_code() {
-        let config = EmulatorConfig { binary: "dolphin".into(), config_dir: "/d".into() };
+        let config = EmulatorConfig {
+            binary: "dolphin".into(),
+            config_dir: "/d".into(),
+        };
         let dir = wii_save_dir(&config, None, "RMGE01");
         assert_eq!(dir.dir, PathBuf::from("/d/Wii/title/00010000/524d4745"));
         assert_eq!(dir.archive_root, "524d4745");
@@ -366,10 +397,19 @@ mod tests {
 
     #[test]
     fn slot_a_modes() {
-        let config = EmulatorConfig { binary: "dolphin".into(), config_dir: "/d".into() };
+        let config = EmulatorConfig {
+            binary: "dolphin".into(),
+            config_dir: "/d".into(),
+        };
         let ini = |v: &str| IniFile::parse(&format!("[Core]\nSlotA = {}\n", v));
-        assert!(matches!(gc_saves(&config, None, "GALE01"), Some(SaveSet::Bundle(_))));
-        assert!(matches!(gc_saves(&config, Some(&ini("8")), "GALE01"), Some(SaveSet::Bundle(_))));
+        assert!(matches!(
+            gc_saves(&config, None, "GALE01"),
+            Some(SaveSet::Bundle(_))
+        ));
+        assert!(matches!(
+            gc_saves(&config, Some(&ini("8")), "GALE01"),
+            Some(SaveSet::Bundle(_))
+        ));
         assert!(gc_saves(&config, Some(&ini("1")), "GALE01").is_none());
         assert!(gc_saves(&config, Some(&ini("255")), "GALE01").is_none());
         let with_override = IniFile::parse("[Core]\nGCIFolderAPath = /cards/a\n");
@@ -402,14 +442,19 @@ mod tests {
     #[test]
     fn a_card_holding_the_games_saves_wins_over_the_region_guess() {
         let root = crate::testing::TempDir::new("gc-card");
-        let config = EmulatorConfig { binary: "dolphin".into(), config_dir: root.path().to_owned() };
+        let config = EmulatorConfig {
+            binary: "dolphin".into(),
+            config_dir: root.path().to_owned(),
+        };
         let dir_for = |config: &EmulatorConfig| match gc_saves(config, None, "GALP01") {
             Some(SaveSet::Bundle(set)) => set.dir,
             other => panic!("unexpected {:?}", other),
         };
         assert_eq!(dir_for(&config), root.path().join("GC/EUR/Card A"));
-        crate::testing::write(&root.path().join("GC/USA/Card A/01-GALE-save.gci"), b"GALP01 pal save on a usa card");
+        crate::testing::write(
+            &root.path().join("GC/USA/Card A/01-GALE-save.gci"),
+            b"GALP01 pal save on a usa card",
+        );
         assert_eq!(dir_for(&config), root.path().join("GC/USA/Card A"));
     }
 }
-

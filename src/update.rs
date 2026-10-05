@@ -111,8 +111,13 @@ impl Updater {
         Self::with(
             config.mode,
             GITHUB_API.into(),
-            config.repository.clone().unwrap_or_else(|| DEFAULT_REPOSITORY.into()),
-            env!("CARGO_PKG_VERSION").parse().expect("crate version is semver"),
+            config
+                .repository
+                .clone()
+                .unwrap_or_else(|| DEFAULT_REPOSITORY.into()),
+            env!("CARGO_PKG_VERSION")
+                .parse()
+                .expect("crate version is semver"),
             env!("ROMMD_TARGET").into(),
             option_env!("ROMMD_UPDATE_PUBKEY").map(Into::into),
         )
@@ -173,8 +178,12 @@ impl Updater {
                 status.last_checked = Some(chrono::Utc::now().to_rfc3339());
                 status.last_error = None;
                 if self.public_key.is_some() {
-                    status.install_blocker = (newer && release.asset.is_none())
-                        .then(|| format!("release {} has no build for {}", release.version, self.target));
+                    status.install_blocker = (newer && release.asset.is_none()).then(|| {
+                        format!(
+                            "release {} has no build for {}",
+                            release.version, self.target
+                        )
+                    });
                 }
                 *self.latest.lock().await = Some(release);
             }
@@ -184,7 +193,10 @@ impl Updater {
     }
 
     async fn fetch_latest(&self) -> Result<Release> {
-        let url = format!("{}/repos/{}/releases/latest", self.api_base, self.repository);
+        let url = format!(
+            "{}/repos/{}/releases/latest",
+            self.api_base, self.repository
+        );
         let gh: GhRelease = self
             .client
             .get(&url)
@@ -197,11 +209,19 @@ impl Updater {
             .json()
             .await
             .context("parsing the release")?;
-        anyhow::ensure!(!gh.draft && !gh.prerelease, "latest release is a draft or prerelease");
+        anyhow::ensure!(
+            !gh.draft && !gh.prerelease,
+            "latest release is a draft or prerelease"
+        );
         let version = semver::Version::parse(gh.tag_name.trim_start_matches('v'))
             .with_context(|| format!("release tag {:?} is not a version", gh.tag_name))?;
         let name = asset_name(&self.target);
-        let find = |n: &str| gh.assets.iter().find(|a| a.name == n).map(|a| a.browser_download_url.clone());
+        let find = |n: &str| {
+            gh.assets
+                .iter()
+                .find(|a| a.name == n)
+                .map(|a| a.browser_download_url.clone())
+        };
         Ok(Release {
             version,
             url: gh.html_url,
@@ -213,18 +233,44 @@ impl Updater {
     /// Download the latest release's binary for this target and verify it.
     /// Returns the version and a temp file holding the verified binary.
     async fn download_verified(&self, dir: &Path) -> Result<(semver::Version, PathBuf)> {
-        let key = self.public_key.as_deref().context("this build cannot verify updates (no signing key)")?;
-        let release = self.latest.lock().await.clone().context("no release checked yet")?;
-        anyhow::ensure!(release.version > self.current, "already on {} or newer", release.version);
-        let (name, asset_url) = release.asset.clone().with_context(|| format!("no build for {}", self.target))?;
-        let sig_url = release.signature_url.clone().with_context(|| format!("{} has no signature", name))?;
+        let key = self
+            .public_key
+            .as_deref()
+            .context("this build cannot verify updates (no signing key)")?;
+        let release = self
+            .latest
+            .lock()
+            .await
+            .clone()
+            .context("no release checked yet")?;
+        anyhow::ensure!(
+            release.version > self.current,
+            "already on {} or newer",
+            release.version
+        );
+        let (name, asset_url) = release
+            .asset
+            .clone()
+            .with_context(|| format!("no build for {}", self.target))?;
+        let sig_url = release
+            .signature_url
+            .clone()
+            .with_context(|| format!("{} has no signature", name))?;
 
         let binary = self.get_bytes(&asset_url).await?;
-        let signature = String::from_utf8(self.get_bytes(&sig_url).await?).context("signature is not text")?;
-        verify(&binary, &signature, key, &format!("rommd {} {}", release.version, name))?;
+        let signature =
+            String::from_utf8(self.get_bytes(&sig_url).await?).context("signature is not text")?;
+        verify(
+            &binary,
+            &signature,
+            key,
+            &format!("rommd {} {}", release.version, name),
+        )?;
 
         let path = dir.join(format!(".rommd-update-{}", std::process::id()));
-        tokio::fs::write(&path, &binary).await.with_context(|| format!("writing {}", path.display()))?;
+        tokio::fs::write(&path, &binary)
+            .await
+            .with_context(|| format!("writing {}", path.display()))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -253,7 +299,10 @@ impl Updater {
         self.status.lock().await.installing = true;
         let result = async {
             let exe = std::env::current_exe().context("locating the running binary")?;
-            let dir = exe.parent().map(Path::to_path_buf).unwrap_or_else(std::env::temp_dir);
+            let dir = exe
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(std::env::temp_dir);
             let (version, file) = self.download_verified(&dir).await?;
             let replaced = tokio::task::spawn_blocking({
                 let file = file.clone();
@@ -277,13 +326,19 @@ impl Updater {
 
 /// Release asset name for a target triple.
 pub fn asset_name(target: &str) -> String {
-    if target.contains("windows") { format!("rommd-{}.exe", target) } else { format!("rommd-{}", target) }
+    if target.contains("windows") {
+        format!("rommd-{}.exe", target)
+    } else {
+        format!("rommd-{}", target)
+    }
 }
 
 fn verify(binary: &[u8], signature: &str, public_key: &str, expected_comment: &str) -> Result<()> {
-    let key = minisign_verify::PublicKey::from_base64(public_key).context("invalid built-in public key")?;
+    let key = minisign_verify::PublicKey::from_base64(public_key)
+        .context("invalid built-in public key")?;
     let sig = minisign_verify::Signature::decode(signature).context("invalid signature file")?;
-    key.verify(binary, &sig, false).map_err(|e| anyhow::anyhow!("signature does not verify: {}", e))?;
+    key.verify(binary, &sig, false)
+        .map_err(|e| anyhow::anyhow!("signature does not verify: {}", e))?;
     anyhow::ensure!(
         sig.trusted_comment() == expected_comment,
         "signature is for {:?}, expected {:?}",
@@ -300,15 +355,21 @@ pub fn restart() -> ! {
         info!("exiting so the service manager starts the new version");
         std::process::exit(0);
     }
-    let started = std::env::current_exe()
-        .and_then(|exe| std::process::Command::new(exe).args(std::env::args_os().skip(1)).spawn());
+    let started = std::env::current_exe().and_then(|exe| {
+        std::process::Command::new(exe)
+            .args(std::env::args_os().skip(1))
+            .spawn()
+    });
     match started {
         Ok(child) => {
             info!("started the new version (pid {}); exiting", child.id());
             std::process::exit(0)
         }
         Err(e) => {
-            error!("could not start the new version: {}; restart rommd manually", e);
+            error!(
+                "could not start the new version: {}; restart rommd manually",
+                e
+            );
             std::process::exit(1)
         }
     }
@@ -340,7 +401,11 @@ pub fn spawn_background(updater: Arc<Updater>, processes: ProcessManager) {
                         }
                     }
                     (_, Some(blocker)) => info!("rommd {} is available, but {}", latest, blocker),
-                    _ => info!("rommd {} is available: {}", latest, status.release_url.unwrap_or_default()),
+                    _ => info!(
+                        "rommd {} is available: {}",
+                        latest,
+                        status.release_url.unwrap_or_default()
+                    ),
                 }
             }
             tokio::time::sleep(CHECK_INTERVAL).await;
@@ -370,13 +435,22 @@ mod tests {
     impl Signer {
         fn new() -> Self {
             let kp = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
-            Self { pk: kp.pk, sk: kp.sk }
+            Self {
+                pk: kp.pk,
+                sk: kp.sk,
+            }
         }
 
         fn sign(&self, data: &[u8], comment: &str) -> String {
-            minisign::sign(Some(&self.pk), &self.sk, std::io::Cursor::new(data), Some(comment), None)
-                .unwrap()
-                .into_string()
+            minisign::sign(
+                Some(&self.pk),
+                &self.sk,
+                std::io::Cursor::new(data),
+                Some(comment),
+                None,
+            )
+            .unwrap()
+            .into_string()
         }
     }
 
@@ -391,17 +465,31 @@ mod tests {
         let release = serde_json::json!({"tag_name": tag, "html_url": "https://example/release", "assets": listed});
         let files: std::collections::HashMap<String, Vec<u8>> = assets.into_iter().collect();
         let app = Router::new()
-            .route("/repos/o/r/releases/latest", get(move || async move { Json(release) }))
+            .route(
+                "/repos/o/r/releases/latest",
+                get(move || async move { Json(release) }),
+            )
             .route(
                 "/dl/{name}",
-                get(move |axum::extract::Path(name): axum::extract::Path<String>| async move { files[&name].clone() }),
+                get(
+                    move |axum::extract::Path(name): axum::extract::Path<String>| async move {
+                        files[&name].clone()
+                    },
+                ),
             );
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         base
     }
 
     fn updater(base: String, key: Option<String>) -> Updater {
-        Updater::with(UpdateMode::Auto, base, "o/r".into(), "0.1.0".parse().unwrap(), TARGET.into(), key)
+        Updater::with(
+            UpdateMode::Auto,
+            base,
+            "o/r".into(),
+            "0.1.0".parse().unwrap(),
+            TARGET.into(),
+            key,
+        )
     }
 
     #[tokio::test]
@@ -413,7 +501,12 @@ mod tests {
             "v0.2.0",
             vec![
                 (name.clone(), binary.clone()),
-                (format!("{name}.minisig"), signer.sign(&binary, &format!("rommd 0.2.0 {name}")).into_bytes()),
+                (
+                    format!("{name}.minisig"),
+                    signer
+                        .sign(&binary, &format!("rommd 0.2.0 {name}"))
+                        .into_bytes(),
+                ),
             ],
         )
         .await;
@@ -435,16 +528,42 @@ mod tests {
         let name = asset_name(TARGET);
         let dir = crate::testing::TempDir::new("update-bad");
         let cases: Vec<(&str, Vec<u8>, String)> = vec![
-            ("tampered binary", b"evil".to_vec(), signer.sign(b"good", &format!("rommd 0.2.0 {name}"))),
-            ("other key", b"good".to_vec(), other.sign(b"good", &format!("rommd 0.2.0 {name}"))),
-            ("old release relabelled", b"good".to_vec(), signer.sign(b"good", &format!("rommd 0.0.9 {name}"))),
-            ("other platform's build", b"good".to_vec(), signer.sign(b"good", "rommd 0.2.0 rommd-aarch64-apple-darwin")),
+            (
+                "tampered binary",
+                b"evil".to_vec(),
+                signer.sign(b"good", &format!("rommd 0.2.0 {name}")),
+            ),
+            (
+                "other key",
+                b"good".to_vec(),
+                other.sign(b"good", &format!("rommd 0.2.0 {name}")),
+            ),
+            (
+                "old release relabelled",
+                b"good".to_vec(),
+                signer.sign(b"good", &format!("rommd 0.0.9 {name}")),
+            ),
+            (
+                "other platform's build",
+                b"good".to_vec(),
+                signer.sign(b"good", "rommd 0.2.0 rommd-aarch64-apple-darwin"),
+            ),
         ];
         for (case, binary, sig) in cases {
-            let base = github("v0.2.0", vec![(name.clone(), binary), (format!("{name}.minisig"), sig.into_bytes())]).await;
+            let base = github(
+                "v0.2.0",
+                vec![
+                    (name.clone(), binary),
+                    (format!("{name}.minisig"), sig.into_bytes()),
+                ],
+            )
+            .await;
             let up = updater(base, Some(signer.pk.to_base64()));
             up.check().await;
-            assert!(up.download_verified(dir.path()).await.is_err(), "{case} must be rejected");
+            assert!(
+                up.download_verified(dir.path()).await.is_err(),
+                "{case} must be rejected"
+            );
         }
     }
 
@@ -455,7 +574,11 @@ mod tests {
         let status = up.check().await;
         assert!(status.update_available);
         assert!(status.install_blocker.is_some());
-        assert!(up.download_verified(Path::new("/nonexistent")).await.is_err());
+        assert!(
+            up.download_verified(Path::new("/nonexistent"))
+                .await
+                .is_err()
+        );
 
         let up = updater(base, Some(Signer::new().pk.to_base64()));
         let status = up.check().await;

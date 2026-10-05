@@ -77,14 +77,18 @@ impl RommClient {
             let rom_dir = platform_dir.join(&stem);
 
             if rom_dir.is_dir()
-                && let Some(launch) = find_launch_file(&rom_dir).await? {
-                    debug!("ROM cache hit (multi-file dir): {}", launch.display());
-                    return Ok(launch);
-                }
+                && let Some(launch) = find_launch_file(&rom_dir).await?
+            {
+                debug!("ROM cache hit (multi-file dir): {}", launch.display());
+                return Ok(launch);
+            }
             // If a stale single-file download sits at the directory path, remove it.
             if rom_dir.is_file() {
                 tokio::fs::remove_file(&rom_dir).await.ok();
-                debug!("removed stale single-file download at {}", rom_dir.display());
+                debug!(
+                    "removed stale single-file download at {}",
+                    rom_dir.display()
+                );
             }
 
             tokio::fs::create_dir_all(&platform_dir).await?;
@@ -97,7 +101,8 @@ impl RommClient {
                 .map(|f| f.id.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            self.download_content(rom.id, &rom.fs_name, Some(&file_ids), &zip_dest).await?;
+            self.download_content(rom.id, &rom.fs_name, Some(&file_ids), &zip_dest)
+                .await?;
 
             extract_zip(&zip_dest, &rom_dir).await?;
             tokio::fs::remove_file(&zip_dest).await.ok();
@@ -120,12 +125,14 @@ impl RommClient {
             // `dest` might collide with a directory left over from a prior
             // extraction. Look inside for a launchable file before re-downloading.
             if dest.is_dir()
-                && let Some(launch) = find_launch_file(&dest).await? {
-                    debug!("ROM cache hit (extracted dir): {}", launch.display());
-                    return Ok(launch);
-                }
+                && let Some(launch) = find_launch_file(&dest).await?
+            {
+                debug!("ROM cache hit (extracted dir): {}", launch.display());
+                return Ok(launch);
+            }
             tokio::fs::create_dir_all(&platform_dir).await?;
-            self.download_content(rom.id, &rom.fs_name, None, &dest).await?;
+            self.download_content(rom.id, &rom.fs_name, None, &dest)
+                .await?;
             return Ok(dest);
         }
 
@@ -138,10 +145,11 @@ impl RommClient {
         let rom_dir = platform_dir.join(&stem);
 
         if rom_dir.exists()
-            && let Some(launch) = find_launch_file(&rom_dir).await? {
-                debug!("ROM cache hit: {}", launch.display());
-                return Ok(launch);
-            }
+            && let Some(launch) = find_launch_file(&rom_dir).await?
+        {
+            debug!("ROM cache hit: {}", launch.display());
+            return Ok(launch);
+        }
 
         tokio::fs::create_dir_all(&platform_dir).await?;
         let zip_dest = platform_dir.join(&rom.fs_name);
@@ -154,10 +162,12 @@ impl RommClient {
                 .map(|f| f.id.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            self.download_content(rom.id, &rom.fs_name, Some(&file_ids), &zip_dest).await?;
+            self.download_content(rom.id, &rom.fs_name, Some(&file_ids), &zip_dest)
+                .await?;
         } else {
             // Single ROM stored in a zip — download fs_name directly.
-            self.download_content(rom.id, &rom.fs_name, None, &zip_dest).await?;
+            self.download_content(rom.id, &rom.fs_name, None, &zip_dest)
+                .await?;
         }
 
         extract_zip(&zip_dest, &rom_dir).await?;
@@ -215,10 +225,9 @@ impl RommClient {
         let file = tokio::fs::File::open(file_path)
             .await
             .with_context(|| format!("opening save {}", file_path.display()))?;
-        let part = reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
-            ReaderStream::new(file),
-        ))
-        .file_name(file_name);
+        let part =
+            reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(ReaderStream::new(file)))
+                .file_name(file_name);
         let form = reqwest::multipart::Form::new().part("saveFile", part);
 
         let mut req = self
@@ -236,7 +245,10 @@ impl RommClient {
             req = req.query(&[("slot", slot)]);
         }
         if let Some(keep) = keep_versions {
-            req = req.query(&[("autocleanup", "true".to_owned()), ("autocleanup_limit", keep.to_string())]);
+            req = req.query(&[
+                ("autocleanup", "true".to_owned()),
+                ("autocleanup_limit", keep.to_string()),
+            ]);
         }
 
         let resp = req.send().await.context("POST /api/saves")?;
@@ -247,7 +259,9 @@ impl RommClient {
         }
 
         debug!("uploaded save {}", file_path.display());
-        resp.json::<SaveSchema>().await.context("parsing save upload response")
+        resp.json::<SaveSchema>()
+            .await
+            .context("parsing save upload response")
     }
 
     /// Update an existing save in-place by ID.
@@ -266,10 +280,9 @@ impl RommClient {
         let file = tokio::fs::File::open(file_path)
             .await
             .with_context(|| format!("opening save {}", file_path.display()))?;
-        let part = reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
-            ReaderStream::new(file),
-        ))
-        .file_name(file_name);
+        let part =
+            reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(ReaderStream::new(file)))
+                .file_name(file_name);
         let form = reqwest::multipart::Form::new().part("saveFile", part);
 
         let resp = self
@@ -288,7 +301,9 @@ impl RommClient {
         }
 
         debug!("updated save id={} with {}", save_id, file_path.display());
-        resp.json::<SaveSchema>().await.context("parsing save update response")
+        resp.json::<SaveSchema>()
+            .await
+            .context("parsing save update response")
     }
 
     pub async fn download_save(&self, save_id: i64, dest_path: &Path) -> Result<()> {
@@ -331,10 +346,9 @@ impl RommClient {
             .into_owned();
 
         let file = tokio::fs::File::open(file_path).await?;
-        let part = reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
-            ReaderStream::new(file),
-        ))
-        .file_name(file_name);
+        let part =
+            reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(ReaderStream::new(file)))
+                .file_name(file_name);
         let form = reqwest::multipart::Form::new().part("stateFile", part);
 
         let resp = self
@@ -357,7 +371,9 @@ impl RommClient {
         }
 
         debug!("uploaded state {}", file_path.display());
-        resp.json::<StateSchema>().await.context("parsing state upload response")
+        resp.json::<StateSchema>()
+            .await
+            .context("parsing state upload response")
     }
 
     /// Update an existing state in-place by ID (see `update_save`).
@@ -372,10 +388,9 @@ impl RommClient {
         let file = tokio::fs::File::open(file_path)
             .await
             .with_context(|| format!("opening state {}", file_path.display()))?;
-        let part = reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(
-            ReaderStream::new(file),
-        ))
-        .file_name(file_name);
+        let part =
+            reqwest::multipart::Part::stream(reqwest::Body::wrap_stream(ReaderStream::new(file)))
+                .file_name(file_name);
         let form = reqwest::multipart::Form::new().part("stateFile", part);
 
         let resp = self
@@ -394,12 +409,17 @@ impl RommClient {
         }
 
         debug!("updated state id={} with {}", state_id, file_path.display());
-        resp.json::<StateSchema>().await.context("parsing state update response")
+        resp.json::<StateSchema>()
+            .await
+            .context("parsing state update response")
     }
 
     pub async fn download_state(&self, state_id: i64, dest_path: &Path) -> Result<()> {
         let bytes = self
-            .authed_get(&format!("{}/api/states/{}/content", self.base_url, state_id))
+            .authed_get(&format!(
+                "{}/api/states/{}/content",
+                self.base_url, state_id
+            ))
             .await?
             .bytes()
             .await?;
@@ -513,16 +533,22 @@ async fn find_launch_file(dir: &Path) -> Result<Option<PathBuf>> {
                 Some("bin") | Some("iso") | Some("img") | Some("chd") | Some("sbi")
             )
         });
-    if is_disc_game
-        && let Some(m3u) = m3u { return Ok(Some(m3u)); }
-    if let Some(cue) = cue { return Ok(Some(cue)); }
-    if others.len() == 1 { return Ok(others.into_iter().next()); }
+    if is_disc_game && let Some(m3u) = m3u {
+        return Ok(Some(m3u));
+    }
+    if let Some(cue) = cue {
+        return Ok(Some(cue));
+    }
+    if others.len() == 1 {
+        return Ok(others.into_iter().next());
+    }
     // Multiple non-disc files (e.g. base + update + DLC all at the top level):
     // treat the .m3u as an ordered index — the base game is listed first.
     if let Some(m3u_path) = m3u
-        && let Some(primary) = first_m3u_entry(&m3u_path, dir).await {
-            return Ok(Some(primary));
-        }
+        && let Some(primary) = first_m3u_entry(&m3u_path, dir).await
+    {
+        return Ok(Some(primary));
+    }
     Ok(None)
 }
 

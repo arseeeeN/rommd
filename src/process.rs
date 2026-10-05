@@ -46,7 +46,9 @@ pub struct ProcessManager {
 
 impl ProcessManager {
     pub fn new() -> Self {
-        Self { inner: Arc::new(Mutex::new(HashMap::new())) }
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub async fn add(&self, pid: u32, process: GameProcess) {
@@ -132,7 +134,8 @@ pub fn monitor(
                     .save_layout(&emu_config, &game.rom_path, game.game_id.as_deref())
                     .await
                     .or(game.save_layout.clone());
-                sync::sync_layout(&ctx, &layout, &game.rom_path, Some(&game.present_at_launch)).await;
+                sync::sync_layout(&ctx, &layout, &game.rom_path, Some(&game.present_at_launch))
+                    .await;
             }
         }
     });
@@ -186,7 +189,10 @@ async fn wait_for_process_group(pid: u32) {
         let mut logged = false;
         while killpg(pgid, None).is_ok() {
             if !logged {
-                info!("game pid={} exited; waiting for the rest of its process group", pid);
+                info!(
+                    "game pid={} exited; waiting for the rest of its process group",
+                    pid
+                );
                 logged = true;
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;

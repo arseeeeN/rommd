@@ -3,7 +3,10 @@
 //! `minisign.pub` when present. Builds without the key cannot install updates.
 
 fn main() {
-    println!("cargo:rustc-env=ROMMD_TARGET={}", std::env::var("TARGET").unwrap());
+    println!(
+        "cargo:rustc-env=ROMMD_TARGET={}",
+        std::env::var("TARGET").unwrap()
+    );
     println!("cargo:rerun-if-changed=minisign.pub");
     if let Ok(key) = std::fs::read_to_string("minisign.pub") {
         // The key file is two lines: an untrusted comment, then the key.

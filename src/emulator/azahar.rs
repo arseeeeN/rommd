@@ -41,7 +41,12 @@ impl Emulator for Azahar {
         SAVE_FAMILY
     }
 
-    async fn save_layout(&self, config: &EmulatorConfig, _rom_path: &Path, game_id: Option<&str>) -> SaveLayout {
+    async fn save_layout(
+        &self,
+        config: &EmulatorConfig,
+        _rom_path: &Path,
+        game_id: Option<&str>,
+    ) -> SaveLayout {
         let Some(id) = game_id.and_then(|g| u64::from_str_radix(g, 16).ok()) else {
             return SaveLayout::default();
         };
@@ -49,11 +54,17 @@ impl Emulator for Azahar {
         let root = sd_root(config);
         SaveLayout {
             saves: Some(SaveSet::Dir(GameSaveDir {
-                dir: root.join("title").join(format!("{:08x}", high)).join(format!("{:08x}", low)).join("data"),
+                dir: root
+                    .join("title")
+                    .join(format!("{:08x}", high))
+                    .join(format!("{:08x}", low))
+                    .join("data"),
                 archive_root: "data".into(),
                 extra_roots: vec![(
                     "extdata".into(),
-                    root.join("extdata").join("00000000").join(format!("{:08x}", low >> 8)),
+                    root.join("extdata")
+                        .join("00000000")
+                        .join(format!("{:08x}", low >> 8)),
                 )],
                 mirrors: Vec::new(),
                 required_subdir: None,
@@ -86,7 +97,10 @@ impl Emulator for Azahar {
 /// SD card copied from elsewhere with a single other pair is used as found.
 fn sd_root(config: &EmulatorConfig) -> PathBuf {
     let ini = read_qt_config(config);
-    let custom = ini.as_ref().and_then(|i| i.get("Data%20Storage", "use_custom_storage")) == Some("true");
+    let custom = ini
+        .as_ref()
+        .and_then(|i| i.get("Data%20Storage", "use_custom_storage"))
+        == Some("true");
     let sdmc = ini
         .as_ref()
         .and_then(|i| i.get("Data%20Storage", "sdmc_directory"))
@@ -99,11 +113,17 @@ fn sd_root(config: &EmulatorConfig) -> PathBuf {
         return zeros;
     }
     let only_dir = |dir: &Path| -> Option<PathBuf> {
-        let mut dirs = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).filter(|p| p.is_dir());
+        let mut dirs = std::fs::read_dir(dir)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir());
         let first = dirs.next()?;
         dirs.next().is_none().then_some(first)
     };
-    only_dir(&base).and_then(|id0| only_dir(&id0)).unwrap_or(zeros)
+    only_dir(&base)
+        .and_then(|id0| only_dir(&id0))
+        .unwrap_or(zeros)
 }
 
 /// Portable and macOS installs keep `config/qt-config.ini` inside the user
@@ -115,7 +135,9 @@ fn read_qt_config(config: &EmulatorConfig) -> Option<IniFile> {
     } else {
         dirs::config_dir()?.join("azahar-emu").join("qt-config.ini")
     };
-    std::fs::read_to_string(path).ok().map(|t| IniFile::parse(&t))
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|t| IniFile::parse(&t))
 }
 
 #[cfg(test)]
@@ -126,15 +148,32 @@ mod tests {
     #[tokio::test]
     async fn layout_covers_title_data_extdata_and_states() {
         let root = TempDir::new("azahar");
-        write(&root.path().join("config/qt-config.ini"), b"[Data%20Storage]\nuse_custom_storage=false\nsdmc_directory=/elsewhere/\n");
-        let config = EmulatorConfig { binary: "azahar".into(), config_dir: root.path().to_owned() };
-        let layout = Azahar.save_layout(&config, Path::new("psmd.cci"), Some("0004000000174400")).await;
+        write(
+            &root.path().join("config/qt-config.ini"),
+            b"[Data%20Storage]\nuse_custom_storage=false\nsdmc_directory=/elsewhere/\n",
+        );
+        let config = EmulatorConfig {
+            binary: "azahar".into(),
+            config_dir: root.path().to_owned(),
+        };
+        let layout = Azahar
+            .save_layout(&config, Path::new("psmd.cci"), Some("0004000000174400"))
+            .await;
 
-        let sd = root.path().join("sdmc/Nintendo 3DS").join(ZERO_ID).join(ZERO_ID);
-        let Some(SaveSet::Dir(save)) = layout.saves else { panic!("expected a directory save") };
+        let sd = root
+            .path()
+            .join("sdmc/Nintendo 3DS")
+            .join(ZERO_ID)
+            .join(ZERO_ID);
+        let Some(SaveSet::Dir(save)) = layout.saves else {
+            panic!("expected a directory save")
+        };
         assert_eq!(save.dir, sd.join("title/00040000/00174400/data"));
         assert_eq!(save.archive_root, "data");
-        assert_eq!(save.extra_roots, vec![("extdata".to_owned(), sd.join("extdata/00000000/00001744"))]);
+        assert_eq!(
+            save.extra_roots,
+            vec![("extdata".to_owned(), sd.join("extdata/00000000/00001744"))]
+        );
         let states = layout.states.unwrap();
         assert_eq!(states.dir, root.path().join("states"));
         assert!(states.matcher.matches_name("0004000000174400.01.cst"));
@@ -147,11 +186,22 @@ mod tests {
         let sd = root.path().join("card");
         write(
             &root.path().join("config/qt-config.ini"),
-            format!("[Data%20Storage]\nuse_custom_storage=true\nsdmc_directory={}/\n", sd.display()).as_bytes(),
+            format!(
+                "[Data%20Storage]\nuse_custom_storage=true\nsdmc_directory={}/\n",
+                sd.display()
+            )
+            .as_bytes(),
         );
-        let config = EmulatorConfig { binary: "azahar".into(), config_dir: root.path().to_owned() };
-        let layout = Azahar.save_layout(&config, Path::new("x.cci"), Some("00040000000ba900")).await;
-        let Some(SaveSet::Dir(save)) = layout.saves else { panic!() };
+        let config = EmulatorConfig {
+            binary: "azahar".into(),
+            config_dir: root.path().to_owned(),
+        };
+        let layout = Azahar
+            .save_layout(&config, Path::new("x.cci"), Some("00040000000ba900"))
+            .await;
+        let Some(SaveSet::Dir(save)) = layout.saves else {
+            panic!()
+        };
         assert!(save.dir.starts_with(&sd), "{}", save.dir.display());
         assert!(save.dir.ends_with("title/00040000/000ba900/data"));
     }

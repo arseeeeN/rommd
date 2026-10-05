@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use tokio::process::Child;
 use tracing::debug;
 
-use super::{ps1, Emulator, FileSet, LaunchContext, SaveLayout, SaveSet};
+use super::{Emulator, FileSet, LaunchContext, SaveLayout, SaveSet, ps1};
 use crate::config::EmulatorConfig;
 use crate::ini::IniFile;
 use crate::profile::{ProfileBlob, SnapshotCleaner};
@@ -114,7 +114,9 @@ fn per_game_title_card(config: &EmulatorConfig, rom_path: &Path, serial: &str) -
     let title = (!serial.is_empty())
         .then(|| lookup_save_title(&cache.join("gamedb.cache"), serial))
         .flatten()
-        .or_else(|| lookup_in_gamelist_cache(&cache.join("gamelist.cache"), rom_path).map(|e| e.title))?;
+        .or_else(|| {
+            lookup_in_gamelist_cache(&cache.join("gamelist.cache"), rom_path).map(|e| e.title)
+        })?;
     Some(sanitize_file_name(&title))
 }
 
@@ -141,17 +143,32 @@ fn lookup_save_title(cache_path: &Path, serial: &str) -> Option<String> {
     // The serial also appears inside other entries (e.g. disc set lists), so
     // take the first occurrence that parses as an entry with a title.
     let mut from = 0;
-    while let Some(pos) = data[from..].windows(needle.len()).position(|w| w == needle.as_slice()) {
+    while let Some(pos) = data[from..]
+        .windows(needle.len())
+        .position(|w| w == needle.as_slice())
+    {
         let start = from + pos + needle.len();
         from = start;
-        let Some((title, next)) = read_str(start) else { continue };
-        let Some((_sort, next)) = read_str(next) else { continue };
-        let Some((_localized, next)) = read_str(next) else { continue };
-        let Some((save_title, _)) = read_str(next) else { continue };
+        let Some((title, next)) = read_str(start) else {
+            continue;
+        };
+        let Some((_sort, next)) = read_str(next) else {
+            continue;
+        };
+        let Some((_localized, next)) = read_str(next) else {
+            continue;
+        };
+        let Some((save_title, _)) = read_str(next) else {
+            continue;
+        };
         if title.is_empty() {
             continue;
         }
-        return Some(if save_title.is_empty() { title } else { save_title });
+        return Some(if save_title.is_empty() {
+            title
+        } else {
+            save_title
+        });
     }
     None
 }
@@ -160,7 +177,13 @@ fn lookup_save_title(cache_path: &Path, serial: &str) -> Option<String> {
 /// names become `_`.
 fn sanitize_file_name(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') { '_' } else { c })
+        .map(|c| {
+            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect()
 }
 
@@ -198,18 +221,31 @@ fn lookup_in_gamelist_cache(cache_path: &Path, rom_path: &Path) -> Option<CacheE
 
             // [serial_len(u32)][serial_bytes][title_len(u32)][title_bytes]
             let sl_off = i + fb.len();
-            if sl_off + 4 > data.len() { break; }
+            if sl_off + 4 > data.len() {
+                break;
+            }
             let sl = u32::from_le_bytes(data[sl_off..sl_off + 4].try_into().ok()?) as usize;
             let ss = sl_off + 4;
-            if sl == 0 || sl > 16 || ss + sl > data.len() { i += 1; continue; }
+            if sl == 0 || sl > 16 || ss + sl > data.len() {
+                i += 1;
+                continue;
+            }
             let serial = std::str::from_utf8(&data[ss..ss + sl]).ok()?.to_owned();
-            if !is_ps_serial(&serial) { i += 1; continue; }
+            if !is_ps_serial(&serial) {
+                i += 1;
+                continue;
+            }
 
             let tl_off = ss + sl;
-            if tl_off + 4 > data.len() { break; }
+            if tl_off + 4 > data.len() {
+                break;
+            }
             let tl = u32::from_le_bytes(data[tl_off..tl_off + 4].try_into().ok()?) as usize;
             let ts = tl_off + 4;
-            if tl == 0 || tl > 256 || ts + tl > data.len() { i += 1; continue; }
+            if tl == 0 || tl > 256 || ts + tl > data.len() {
+                i += 1;
+                continue;
+            }
             let title = std::str::from_utf8(&data[ts..ts + tl]).ok()?.to_owned();
 
             return Some(CacheEntry { serial, title });
@@ -231,7 +267,9 @@ fn is_ps_serial(s: &str) -> bool {
 /// Read a single value from DuckStation's settings.ini.
 fn read_setting(config: &EmulatorConfig, section: &str, key: &str) -> Option<String> {
     let text = std::fs::read_to_string(config.config_dir.join("settings.ini")).ok()?;
-    IniFile::parse(&text).get(section, key).map(|v| v.to_owned())
+    IniFile::parse(&text)
+        .get(section, key)
+        .map(|v| v.to_owned())
 }
 
 /// Read a directory path from DuckStation's settings.ini, falling back to `default`
@@ -241,12 +279,19 @@ fn read_folder(config: &EmulatorConfig, section: &str, key: &str, default: &str)
 
     let dir = raw.as_deref().unwrap_or(default);
     let p = std::path::Path::new(dir);
-    if p.is_absolute() { p.to_owned() } else { config.config_dir.join(p) }
+    if p.is_absolute() {
+        p.to_owned()
+    } else {
+        config.config_dir.join(p)
+    }
 }
 
 impl DuckStation {
     fn gamesettings_path(&self, config: &EmulatorConfig, serial: &str) -> PathBuf {
-        config.config_dir.join("gamesettings").join(format!("{}.ini", serial))
+        config
+            .config_dir
+            .join("gamesettings")
+            .join(format!("{}.ini", serial))
     }
 
     async fn apply_profile(
@@ -289,7 +334,14 @@ mod tests {
     #[test]
     fn save_title_from_gamedb_cache() {
         let mut data = b"HLCE!\x00\x00\x00".to_vec();
-        for s in ["SLUS-00158", "King's Field", "King's Field 2", "", "King's Field (USA)", "rest"] {
+        for s in [
+            "SLUS-00158",
+            "King's Field",
+            "King's Field 2",
+            "",
+            "King's Field (USA)",
+            "rest",
+        ] {
             data.extend_from_slice(&(s.len() as u32).to_le_bytes());
             data.extend_from_slice(s.as_bytes());
         }
@@ -299,8 +351,14 @@ mod tests {
         }
         let path = std::env::temp_dir().join(format!("rommd-gamedb-{}.cache", std::process::id()));
         std::fs::write(&path, &data).unwrap();
-        assert_eq!(lookup_save_title(&path, "SLUS-00158").as_deref(), Some("King's Field (USA)"));
-        assert_eq!(lookup_save_title(&path, "SCUS-94900").as_deref(), Some("Crash Bandicoot"));
+        assert_eq!(
+            lookup_save_title(&path, "SLUS-00158").as_deref(),
+            Some("King's Field (USA)")
+        );
+        assert_eq!(
+            lookup_save_title(&path, "SCUS-94900").as_deref(),
+            Some("Crash Bandicoot")
+        );
         assert_eq!(lookup_save_title(&path, "SLUS-99999"), None);
         let _ = std::fs::remove_file(&path);
         assert_eq!(sanitize_file_name("Game: Part 1/2?"), "Game_ Part 1_2_");

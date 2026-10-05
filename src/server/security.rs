@@ -54,13 +54,23 @@ pub struct Guard {
 
 pub async fn check_request(State(guard): State<Arc<Guard>>, req: Request, next: Next) -> Response {
     if !host_is_local(req.headers().get(header::HOST)) {
-        return (StatusCode::FORBIDDEN, "rommd only answers requests addressed to localhost").into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            "rommd only answers requests addressed to localhost",
+        )
+            .into_response();
     }
     if let Some(origin) = req.headers().get(header::ORIGIN) {
-        let allowed = origin.to_str().is_ok_and(|o| guard.origins.iter().any(|a| a == o));
+        let allowed = origin
+            .to_str()
+            .is_ok_and(|o| guard.origins.iter().any(|a| a == o));
         if !allowed {
             warn!("rejected request from origin {:?}", origin);
-            return (StatusCode::FORBIDDEN, "origin not allowed; see server.allowed_origins").into_response();
+            return (
+                StatusCode::FORBIDDEN,
+                "origin not allowed; see server.allowed_origins",
+            )
+                .into_response();
         }
     }
     next.run(req).await
@@ -75,7 +85,10 @@ fn host_is_local(host: Option<&HeaderValue>) -> bool {
     } else {
         host.rsplit_once(':').map_or(host, |(name, _)| name)
     };
-    matches!(name.to_ascii_lowercase().as_str(), "localhost" | "127.0.0.1" | "::1")
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "::1"
+    )
 }
 
 #[cfg(test)]
@@ -95,16 +108,30 @@ mod tests {
             ..Default::default()
         };
         config.server.allowed_origins = vec!["http://localhost:5173".into(), "not a url".into()];
-        assert_eq!(allowed_origins(&config), ["https://romm.example.com", "http://localhost:5173"]);
+        assert_eq!(
+            allowed_origins(&config),
+            ["https://romm.example.com", "http://localhost:5173"]
+        );
     }
 
     #[test]
     fn only_localhost_hosts_pass() {
         let h = |v: &str| Some(HeaderValue::from_str(v).unwrap());
-        for ok in ["localhost:7497", "127.0.0.1:7497", "[::1]:7497", "LOCALHOST", "127.0.0.1"] {
+        for ok in [
+            "localhost:7497",
+            "127.0.0.1:7497",
+            "[::1]:7497",
+            "LOCALHOST",
+            "127.0.0.1",
+        ] {
             assert!(host_is_local(h(ok).as_ref()), "{ok}");
         }
-        for bad in ["evil.example.com", "evil.example.com:7497", "127.0.0.1.evil.com:7497", "[::2]:7497"] {
+        for bad in [
+            "evil.example.com",
+            "evil.example.com:7497",
+            "127.0.0.1.evil.com:7497",
+            "[::2]:7497",
+        ] {
             assert!(!host_is_local(h(bad).as_ref()), "{bad}");
         }
         assert!(!host_is_local(None));

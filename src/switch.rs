@@ -26,7 +26,11 @@ fn read_pfs0_index(f: &mut std::fs::File) -> Result<(Vec<Pfs0Entry>, Vec<u8>, u6
         let data_size = read_u64_le(f)?;
         let name_offset = read_u32_le(f)?;
         let _reserved = read_u32_le(f)?;
-        entries.push(Pfs0Entry { data_offset, data_size, name_offset });
+        entries.push(Pfs0Entry {
+            data_offset,
+            data_size,
+            name_offset,
+        });
     }
 
     let mut string_table = vec![0u8; string_table_size as usize];
@@ -82,7 +86,11 @@ pub fn title_id_for_rom(rom_path: &Path, prod_keys: &Path) -> Option<String> {
     let id = match read_title_id_from_ticket(rom_path) {
         Ok(id) => id,
         Err(e) => {
-            debug!("ticket read failed for {} ({}), trying NCA header", rom_path.display(), e);
+            debug!(
+                "ticket read failed for {} ({}), trying NCA header",
+                rom_path.display(),
+                e
+            );
             if !prod_keys.exists() {
                 warn!(
                     "prod.keys not found at {} — title ID unavailable for {}",
@@ -94,7 +102,11 @@ pub fn title_id_for_rom(rom_path: &Path, prod_keys: &Path) -> Option<String> {
             match read_title_id_from_nsp(rom_path, prod_keys) {
                 Ok(id) => id,
                 Err(e) => {
-                    warn!("could not read title ID from {}: {:#}", rom_path.display(), e);
+                    warn!(
+                        "could not read title ID from {}: {:#}",
+                        rom_path.display(),
+                        e
+                    );
                     return None;
                 }
             }
@@ -112,8 +124,8 @@ fn base_title_id(id: u64) -> u64 {
 /// The ticket's Rights ID is in plaintext at a fixed offset; its first 8 bytes
 /// are the title ID (big-endian). No cryptographic keys are required.
 pub fn read_title_id_from_ticket(nsp_path: &Path) -> Result<u64> {
-    let mut f = std::fs::File::open(nsp_path)
-        .with_context(|| format!("opening {}", nsp_path.display()))?;
+    let mut f =
+        std::fs::File::open(nsp_path).with_context(|| format!("opening {}", nsp_path.display()))?;
 
     let (entries, string_table, data_base) = read_pfs0_index(&mut f)?;
 
@@ -145,8 +157,11 @@ pub fn read_title_id_from_ticket(nsp_path: &Path) -> Result<u64> {
             rights_id_offset + 8,
             read_len
         );
-        let title_id =
-            u64::from_be_bytes(tik[rights_id_offset..rights_id_offset + 8].try_into().unwrap());
+        let title_id = u64::from_be_bytes(
+            tik[rights_id_offset..rights_id_offset + 8]
+                .try_into()
+                .unwrap(),
+        );
         anyhow::ensure!(
             (title_id >> 56) == 0x01,
             "rights ID title ID doesn't look like a valid Switch title: {:#018x}",
@@ -185,16 +200,17 @@ fn parse_header_key(path: &Path) -> Result<[u8; 32]> {
             continue;
         }
         if let Some((k, v)) = line.split_once('=')
-            && k.trim() == "header_key" {
-                let hex = v.trim();
-                anyhow::ensure!(
-                    hex.len() == 64,
-                    "header_key must be 64 hex chars, got {}",
-                    hex.len()
-                );
-                let bytes = decode_hex(hex).context("decoding header_key")?;
-                return Ok(bytes.try_into().unwrap());
-            }
+            && k.trim() == "header_key"
+        {
+            let hex = v.trim();
+            anyhow::ensure!(
+                hex.len() == 64,
+                "header_key must be 64 hex chars, got {}",
+                hex.len()
+            );
+            let bytes = decode_hex(hex).context("decoding header_key")?;
+            return Ok(bytes.try_into().unwrap());
+        }
     }
     anyhow::bail!("header_key not found in {}", path.display())
 }
@@ -208,8 +224,8 @@ fn parse_header_key(path: &Path) -> Result<[u8; 32]> {
 ///
 /// We only read the first 0x400 bytes of the CNMT NCA (two XTS sectors).
 fn extract_cnmt_nca_header(nsp_path: &Path) -> Result<Vec<u8>> {
-    let mut f = std::fs::File::open(nsp_path)
-        .with_context(|| format!("opening {}", nsp_path.display()))?;
+    let mut f =
+        std::fs::File::open(nsp_path).with_context(|| format!("opening {}", nsp_path.display()))?;
 
     let (entries, string_table, data_base) = read_pfs0_index(&mut f)?;
 
@@ -223,7 +239,10 @@ fn extract_cnmt_nca_header(nsp_path: &Path) -> Result<Vec<u8>> {
         }
     }
 
-    anyhow::bail!("no .cnmt.nca found in NSP (checked {} files)", entries.len())
+    anyhow::bail!(
+        "no .cnmt.nca found in NSP (checked {} files)",
+        entries.len()
+    )
 }
 
 /// Extract the title ID from the first two XTS sectors of an NCA header.
@@ -234,7 +253,11 @@ fn extract_cnmt_nca_header(nsp_path: &Path) -> Result<Vec<u8>> {
 ///     +0x000  magic  "NCA3" / "NCA2" / "NCA0"
 ///     +0x010  title_id  u64 LE
 fn title_id_from_nca_header(nca: &[u8], header_key: &[u8; 32]) -> Result<u64> {
-    anyhow::ensure!(nca.len() >= 0x400, "NCA data too short ({} bytes)", nca.len());
+    anyhow::ensure!(
+        nca.len() >= 0x400,
+        "NCA data too short ({} bytes)",
+        nca.len()
+    );
 
     // AES-XTS key split: first 16 bytes = AES cipher key, last 16 = tweak key.
     let key1 = &header_key[..16];
@@ -266,13 +289,13 @@ fn aes_xts_decrypt_sector(
     key2: &[u8],
     sector_num: u64,
 ) -> Result<()> {
-    use aes::cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt, KeyInit};
     use aes::Aes128;
+    use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit, generic_array::GenericArray};
 
-    let enc2 = Aes128::new_from_slice(key2)
-        .map_err(|e| anyhow::anyhow!("AES-128 key2 init: {e}"))?;
-    let dec1 = Aes128::new_from_slice(key1)
-        .map_err(|e| anyhow::anyhow!("AES-128 key1 init: {e}"))?;
+    let enc2 =
+        Aes128::new_from_slice(key2).map_err(|e| anyhow::anyhow!("AES-128 key2 init: {e}"))?;
+    let dec1 =
+        Aes128::new_from_slice(key1).map_err(|e| anyhow::anyhow!("AES-128 key1 init: {e}"))?;
 
     // Nintendo XTS tweak: sector_num as a 128-bit big-endian integer (non-standard —
     // IEEE P1619 uses little-endian; Nintendo puts the u64 in the high 8 bytes).

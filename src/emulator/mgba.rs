@@ -10,7 +10,6 @@ use crate::config::EmulatorConfig;
 use crate::ini::IniFile;
 use crate::profile::ProfileBlob;
 
-
 pub struct MGba;
 
 #[async_trait]
@@ -24,7 +23,9 @@ impl Emulator for MGba {
     }
 
     fn game_id_for_rom(&self, _config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
-        rom_path.file_stem().map(|s| s.to_string_lossy().into_owned())
+        rom_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
     }
 
     /// mGBA names saves and states after the ROM file stem (`Game.sav`,
@@ -149,7 +150,11 @@ fn read_path_key(config: &EmulatorConfig, key: &str) -> Option<PathBuf> {
     let ini = IniFile::parse(&text);
     let val = ini.get("", key).or_else(|| ini.get("ports.qt", key))?;
     let p = Path::new(val);
-    Some(if p.is_absolute() { p.to_owned() } else { config.config_dir.join(p) })
+    Some(if p.is_absolute() {
+        p.to_owned()
+    } else {
+        config.config_dir.join(p)
+    })
 }
 
 /// Ensure `savegamePath` and `savestatePath` are present in mGBA's config.ini.
@@ -166,10 +171,10 @@ async fn ensure_paths_configured(config: &EmulatorConfig) -> Result<()> {
         IniFile::default()
     };
 
-    let has_saves = ini.get("", "savegamePath").is_some()
-        || ini.get("ports.qt", "savegamePath").is_some();
-    let has_states = ini.get("", "savestatePath").is_some()
-        || ini.get("ports.qt", "savestatePath").is_some();
+    let has_saves =
+        ini.get("", "savegamePath").is_some() || ini.get("ports.qt", "savegamePath").is_some();
+    let has_states =
+        ini.get("", "savestatePath").is_some() || ini.get("ports.qt", "savestatePath").is_some();
 
     if has_saves && has_states {
         return Ok(());
@@ -181,10 +186,18 @@ async fn ensure_paths_configured(config: &EmulatorConfig) -> Result<()> {
     tokio::fs::create_dir_all(&states_dir).await?;
 
     if !has_saves {
-        ini.set("ports.qt", "savegamePath", saves_dir.to_string_lossy().as_ref());
+        ini.set(
+            "ports.qt",
+            "savegamePath",
+            saves_dir.to_string_lossy().as_ref(),
+        );
     }
     if !has_states {
-        ini.set("ports.qt", "savestatePath", states_dir.to_string_lossy().as_ref());
+        ini.set(
+            "ports.qt",
+            "savestatePath",
+            states_dir.to_string_lossy().as_ref(),
+        );
     }
 
     if let Some(parent) = config_path.parent() {
@@ -206,15 +219,31 @@ mod tests {
     #[tokio::test]
     async fn layout_follows_configured_paths_and_maps_srm() {
         let root = TempDir::new("mgba");
-        let config = EmulatorConfig { binary: "mgba".into(), config_dir: root.path().to_owned() };
-        write(&root.path().join("config.ini"), b"[ports.qt]\nsavegamePath=/games/saves\n");
-        let layout = MGba.save_layout(&config, Path::new("/roms/Golden Sun (USA).gba"), None).await;
-        let Some(SaveSet::Files(saves)) = layout.saves else { panic!("expected single-file saves") };
+        let config = EmulatorConfig {
+            binary: "mgba".into(),
+            config_dir: root.path().to_owned(),
+        };
+        write(
+            &root.path().join("config.ini"),
+            b"[ports.qt]\nsavegamePath=/games/saves\n",
+        );
+        let layout = MGba
+            .save_layout(&config, Path::new("/roms/Golden Sun (USA).gba"), None)
+            .await;
+        let Some(SaveSet::Files(saves)) = layout.saves else {
+            panic!("expected single-file saves")
+        };
         assert_eq!(saves.dir, PathBuf::from("/games/saves"));
         assert!(saves.matcher.matches_name("Golden Sun (USA).sav"));
-        assert!(!saves.matcher.matches_name("Golden Sun - The Lost Age (USA).sav"));
-        assert_eq!(saves.local_name("Golden Sun (USA).srm"), "Golden Sun (USA).sav");
+        assert!(
+            !saves
+                .matcher
+                .matches_name("Golden Sun - The Lost Age (USA).sav")
+        );
+        assert_eq!(
+            saves.local_name("Golden Sun (USA).srm"),
+            "Golden Sun (USA).sav"
+        );
         assert_eq!(layout.states.unwrap().dir, root.path().join("states"));
     }
 }
-

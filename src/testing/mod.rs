@@ -44,7 +44,12 @@ impl Emulator for TestEmulator {
         anyhow::bail!("not supported")
     }
 
-    async fn save_layout(&self, _config: &EmulatorConfig, _rom_path: &Path, _game_id: Option<&str>) -> SaveLayout {
+    async fn save_layout(
+        &self,
+        _config: &EmulatorConfig,
+        _rom_path: &Path,
+        _game_id: Option<&str>,
+    ) -> SaveLayout {
         SaveLayout::default()
     }
 
@@ -60,7 +65,8 @@ impl TempDir {
     pub fn new(label: &str) -> Self {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("rommd-test-{}-{}-{}", label, std::process::id(), n));
+        let dir =
+            std::env::temp_dir().join(format!("rommd-test-{}-{}-{}", label, std::process::id(), n));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         Self(dir)
@@ -87,7 +93,12 @@ pub fn write(path: &Path, data: &[u8]) {
 /// Set a file's mtime `age` in the past.
 pub fn age(path: &Path, age: Duration) {
     let t = SystemTime::now() - age;
-    std::fs::File::options().write(true).open(path).unwrap().set_modified(t).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(t)
+        .unwrap();
 }
 
 /// Build a zip in memory from (entry name, contents).
@@ -95,7 +106,8 @@ pub fn zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
     use std::io::Write;
     let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for (name, data) in entries {
-        zip.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+        zip.start_file(*name, zip::write::SimpleFileOptions::default())
+            .unwrap();
         zip.write_all(data).unwrap();
     }
     zip.finish().unwrap().into_inner()

@@ -100,7 +100,10 @@ impl TokenManager {
         let resp = self
             .client
             .post(format!("{}/api/token", self.base_url))
-            .form(&[("grant_type", "refresh_token"), ("refresh_token", refresh_token)])
+            .form(&[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", refresh_token),
+            ])
             .send()
             .await
             .context("sending refresh request")?

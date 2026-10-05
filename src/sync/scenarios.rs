@@ -14,10 +14,22 @@ use crate::testing::{TempDir, TestEmulator, age, write, zip_bytes};
 const ROM: i64 = 7;
 const TITLE: &str = "0100000000010000";
 const SWITCH: &[&str] = &["eden", "ryujinx"];
-const EDEN: TestEmulator = TestEmulator { id: "eden", family: SWITCH };
-const RYUJINX: TestEmulator = TestEmulator { id: "ryujinx", family: SWITCH };
-const MGBA: TestEmulator = TestEmulator { id: "mgba", family: &[] };
-const DOLPHIN: TestEmulator = TestEmulator { id: "dolphin", family: &[] };
+const EDEN: TestEmulator = TestEmulator {
+    id: "eden",
+    family: SWITCH,
+};
+const RYUJINX: TestEmulator = TestEmulator {
+    id: "ryujinx",
+    family: SWITCH,
+};
+const MGBA: TestEmulator = TestEmulator {
+    id: "mgba",
+    family: &[],
+};
+const DOLPHIN: TestEmulator = TestEmulator {
+    id: "dolphin",
+    family: &[],
+};
 
 struct Device {
     dir: TempDir,
@@ -43,7 +55,12 @@ impl Device {
         present_at_launch: Option<&HashSet<String>>,
     ) -> HashSet<String> {
         let romm = fake.client();
-        let ctx = SyncCtx { romm: &romm, store: &self.store, rom_id: ROM, emulator };
+        let ctx = SyncCtx {
+            romm: &romm,
+            store: &self.store,
+            rom_id: ROM,
+            emulator,
+        };
         sync_layout(&ctx, layout, Path::new("Game.rom"), present_at_launch).await
     }
 
@@ -53,7 +70,11 @@ impl Device {
         let mut stack = vec![self.store.backups_dir()];
         while let Some(d) = stack.pop() {
             for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
-                if e.path().is_dir() { stack.push(e.path()) } else { out.push(e.path()) }
+                if e.path().is_dir() {
+                    stack.push(e.path())
+                } else {
+                    out.push(e.path())
+                }
             }
         }
         out
@@ -81,7 +102,10 @@ impl Device {
     }
 
     fn gamecube(&self) -> SaveLayout {
-        SaveLayout { saves: Some(SaveSet::Bundle(FileSet::gci(self.path("card"), "GALE01"))), states: None }
+        SaveLayout {
+            saves: Some(SaveSet::Bundle(FileSet::gci(self.path("card"), "GALE01"))),
+            states: None,
+        }
     }
 }
 
@@ -91,7 +115,9 @@ fn read(path: PathBuf) -> Vec<u8> {
 
 fn zip_names(data: &[u8]) -> Vec<String> {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data)).unwrap();
-    let mut names: Vec<String> = (0..zip.len()).map(|i| zip.by_index(i).unwrap().name().to_owned()).collect();
+    let mut names: Vec<String> = (0..zip.len())
+        .map(|i| zip.by_index(i).unwrap().name().to_owned())
+        .collect();
     names.sort();
     names
 }
@@ -111,10 +137,26 @@ async fn archive_save_moves_between_devices_and_emulators() {
     let up = &saves[0];
     assert_eq!(up.slot.as_deref(), Some("autosave"));
     assert_eq!(up.emulator.as_deref(), Some("eden"));
-    assert!(up.file_name.starts_with("Game [") && up.file_name.ends_with("].zip"), "{}", up.file_name);
-    assert_eq!(zip_names(&up.data), [format!("{TITLE}/Common.bin"), format!("{TITLE}/slot/File1.bin")]);
-    let local = save_archive::entries_hash(&save_archive::dir_entries(&a.path("save"), TITLE).unwrap()).unwrap();
-    assert_eq!(local.as_deref(), Some(up.content_hash.as_str()), "local hash must follow RomM's scheme");
+    assert!(
+        up.file_name.starts_with("Game [") && up.file_name.ends_with("].zip"),
+        "{}",
+        up.file_name
+    );
+    assert_eq!(
+        zip_names(&up.data),
+        [
+            format!("{TITLE}/Common.bin"),
+            format!("{TITLE}/slot/File1.bin")
+        ]
+    );
+    let local =
+        save_archive::entries_hash(&save_archive::dir_entries(&a.path("save"), TITLE).unwrap())
+            .unwrap();
+    assert_eq!(
+        local.as_deref(),
+        Some(up.content_hash.as_str()),
+        "local hash must follow RomM's scheme"
+    );
 
     // Another device, another emulator of the family, restores it.
     b.sync(&fake, &RYUJINX, &b.switch(), None).await;
@@ -132,13 +174,23 @@ async fn archive_save_moves_between_devices_and_emulators() {
     assert_eq!(fake.saves(ROM).len(), 2, "each upload is a new version");
     a.sync(&fake, &EDEN, &a.switch(), None).await;
     assert_eq!(read(a.path("save/Common.bin")), b"common v2");
-    assert!(a.backups().iter().any(|p| p.ends_with("Common.bin") && read(p.clone()) == b"common v1"));
+    assert!(
+        a.backups()
+            .iter()
+            .any(|p| p.ends_with("Common.bin") && read(p.clone()) == b"common v1")
+    );
 }
 
 #[tokio::test]
 async fn emulators_outside_the_family_ignore_the_save() {
     let fake = FakeRomm::start().await;
-    fake.seed_save(ROM, "Game.zip", "ryujinx", Some("autosave"), &zip_bytes(&[(&format!("{TITLE}/a.bin"), b"a")]));
+    fake.seed_save(
+        ROM,
+        "Game.zip",
+        "ryujinx",
+        Some("autosave"),
+        &zip_bytes(&[(&format!("{TITLE}/a.bin"), b"a")]),
+    );
     let d = Device::new("other");
     d.sync(&fake, &DOLPHIN, &d.switch(), None).await;
     assert!(!d.path("save").exists());
@@ -155,7 +207,10 @@ async fn history_keeps_the_last_ten_versions() {
     let saves = fake.saves(ROM);
     assert_eq!(saves.len(), 10);
     let newest = saves.last().unwrap();
-    assert_eq!(newest.content_hash, content_hash(&zip_bytes(&[(&format!("{TITLE}/data.bin"), b"v12")])));
+    assert_eq!(
+        newest.content_hash,
+        content_hash(&zip_bytes(&[(&format!("{TITLE}/data.bin"), b"v12")]))
+    );
 }
 
 #[tokio::test]
@@ -166,19 +221,36 @@ async fn reverting_to_an_older_version_is_uploaded_not_undone() {
         write(&d.path("save/data.bin"), v.as_bytes());
         d.sync(&fake, &EDEN, &d.switch(), None).await;
     }
-    assert_eq!(fake.saves(ROM).len(), 3, "the revert is a new version, not the old entry");
+    assert_eq!(
+        fake.saves(ROM).len(),
+        3,
+        "the revert is a new version, not the old entry"
+    );
     d.sync(&fake, &EDEN, &d.switch(), None).await;
-    assert_eq!(read(d.path("save/data.bin")), b"v1", "the next sync must not restore v2");
+    assert_eq!(
+        read(d.path("save/data.bin")),
+        b"v1",
+        "the next sync must not restore v2"
+    );
 }
 
 #[tokio::test]
 async fn refuses_an_archive_of_another_game() {
     let fake = FakeRomm::start().await;
-    fake.seed_save(ROM, "Game.zip", "eden", Some("autosave"), &zip_bytes(&[("0100AAAA00000000/a.bin", b"other game")]));
+    fake.seed_save(
+        ROM,
+        "Game.zip",
+        "eden",
+        Some("autosave"),
+        &zip_bytes(&[("0100AAAA00000000/a.bin", b"other game")]),
+    );
     let d = Device::new("foreign");
     let present = d.sync(&fake, &EDEN, &d.switch(), None).await;
     assert!(present.is_empty());
-    assert!(save_archive::newest_mtime(&d.path("save")).is_none(), "nothing may be restored");
+    assert!(
+        save_archive::newest_mtime(&d.path("save")).is_none(),
+        "nothing may be restored"
+    );
 }
 
 #[tokio::test]
@@ -200,7 +272,10 @@ async fn a_folder_without_its_required_data_is_not_a_save() {
     assert!(fake.writes().is_empty());
     write(&d.path("title/data/save.bin"), b"progress");
     d.sync(&fake, &DOLPHIN, &layout, None).await;
-    assert_eq!(zip_names(&fake.saves(ROM)[0].data), ["524d3845/content/title.tmd", "524d3845/data/save.bin"]);
+    assert_eq!(
+        zip_names(&fake.saves(ROM)[0].data),
+        ["524d3845/content/title.tmd", "524d3845/data/save.bin"]
+    );
 }
 
 // ── GameCube bundles ──────────────────────────────────────────────────────────
@@ -212,18 +287,34 @@ async fn gamecube_bundle_holds_only_this_games_files() {
     write(&a.path("card/01-GALE-SuperSmashBros.gci"), b"GALE01 melee");
     write(&a.path("card/01-GMSE-Sunshine.gci"), b"GMSE01 sunshine");
     a.sync(&fake, &DOLPHIN, &a.gamecube(), None).await;
-    assert_eq!(zip_names(&fake.saves(ROM)[0].data), ["01-GALE-SuperSmashBros.gci"]);
+    assert_eq!(
+        zip_names(&fake.saves(ROM)[0].data),
+        ["01-GALE-SuperSmashBros.gci"]
+    );
 
     write(&b.path("card/01-GPOE-Other.gci"), b"GPOE01 other game");
     b.sync(&fake, &DOLPHIN, &b.gamecube(), None).await;
-    assert_eq!(read(b.path("card/01-GALE-SuperSmashBros.gci")), b"GALE01 melee");
-    assert_eq!(read(b.path("card/01-GPOE-Other.gci")), b"GPOE01 other game", "other games' saves stay");
+    assert_eq!(
+        read(b.path("card/01-GALE-SuperSmashBros.gci")),
+        b"GALE01 melee"
+    );
+    assert_eq!(
+        read(b.path("card/01-GPOE-Other.gci")),
+        b"GPOE01 other game",
+        "other games' saves stay"
+    );
 }
 
 #[tokio::test]
 async fn refuses_a_bundle_with_another_games_save() {
     let fake = FakeRomm::start().await;
-    fake.seed_save(ROM, "Game.zip", "dolphin", Some("autosave"), &zip_bytes(&[("01-GALE-renamed.gci", b"GMSE01 not melee")]));
+    fake.seed_save(
+        ROM,
+        "Game.zip",
+        "dolphin",
+        Some("autosave"),
+        &zip_bytes(&[("01-GALE-renamed.gci", b"GMSE01 not melee")]),
+    );
     let d = Device::new("gc-foreign");
     d.sync(&fake, &DOLPHIN, &d.gamecube(), None).await;
     assert!(!d.path("card/01-GALE-renamed.gci").exists());
@@ -251,7 +342,10 @@ async fn conflict_keeps_the_newer_local_save_and_the_romm_version() {
 
     assert_eq!(read(a.path("save/data.bin")), b"from a");
     let newest = fake.saves(ROM).pop().unwrap();
-    assert_eq!(newest.content_hash, content_hash(&zip_bytes(&[(&format!("{TITLE}/data.bin"), b"from a")])));
+    assert_eq!(
+        newest.content_hash,
+        content_hash(&zip_bytes(&[(&format!("{TITLE}/data.bin"), b"from a")]))
+    );
     let conflicts = a.store.conflicts().await;
     assert_eq!(conflicts.len(), 1);
     assert_eq!(conflicts[0].kept, "local");
@@ -274,7 +368,13 @@ async fn conflict_takes_a_newer_romm_save_and_backs_up_the_local_one() {
 #[tokio::test]
 async fn a_save_created_this_session_never_wins_a_conflict() {
     let fake = FakeRomm::start().await;
-    fake.seed_save(ROM, "Game.zip", "eden", Some("autosave"), &zip_bytes(&[(&format!("{TITLE}/data.bin"), b"real progress")]));
+    fake.seed_save(
+        ROM,
+        "Game.zip",
+        "eden",
+        Some("autosave"),
+        &zip_bytes(&[(&format!("{TITLE}/data.bin"), b"real progress")]),
+    );
     let d = Device::new("fresh");
 
     // Pre-launch restore fails (offline), so the game starts a new save.
@@ -297,7 +397,11 @@ async fn a_listing_failure_changes_nothing_but_records_presence() {
     write(&d.path("save/data.bin"), b"local");
     fake.set_fail_listing(true);
     let present = d.sync(&fake, &EDEN, &d.switch(), None).await;
-    assert_eq!(present.len(), 1, "an existing save must not look fresh after exit");
+    assert_eq!(
+        present.len(),
+        1,
+        "an existing save must not look fresh after exit"
+    );
     assert!(fake.writes().is_empty());
 }
 
@@ -306,7 +410,13 @@ async fn a_listing_failure_changes_nothing_but_records_presence() {
 #[tokio::test]
 async fn web_player_srm_restores_as_sav_and_comes_back() {
     let fake = FakeRomm::start().await;
-    fake.seed_save(ROM, "Game [2026-05-05 13-07-23-697].srm", "mgba", None, b"browser sram");
+    fake.seed_save(
+        ROM,
+        "Game [2026-05-05 13-07-23-697].srm",
+        "mgba",
+        None,
+        b"browser sram",
+    );
     let d = Device::new("srm");
     d.sync(&fake, &MGBA, &d.gba(), None).await;
     assert_eq!(read(d.path("saves/Game.sav")), b"browser sram");
@@ -316,7 +426,11 @@ async fn web_player_srm_restores_as_sav_and_comes_back() {
     write(&d.path("saves/Game.sav"), b"desktop sram");
     d.sync(&fake, &MGBA, &d.gba(), None).await;
     let newest = fake.saves(ROM).pop().unwrap();
-    assert!(newest.file_name.starts_with("Game [") && newest.file_name.ends_with("].sav"), "{}", newest.file_name);
+    assert!(
+        newest.file_name.starts_with("Game [") && newest.file_name.ends_with("].sav"),
+        "{}",
+        newest.file_name
+    );
     assert_eq!(newest.slot.as_deref(), Some("autosave"));
     assert_eq!(newest.data, b"desktop sram");
 }
@@ -324,7 +438,13 @@ async fn web_player_srm_restores_as_sav_and_comes_back() {
 #[tokio::test]
 async fn a_single_file_updates_in_place_when_the_slot_holds_other_files() {
     let fake = FakeRomm::start().await;
-    fake.seed_save(ROM, "Game.zip", "other", Some("autosave"), b"another emulator's archive");
+    fake.seed_save(
+        ROM,
+        "Game.zip",
+        "other",
+        Some("autosave"),
+        b"another emulator's archive",
+    );
     let d = Device::new("shared-slot");
     write(&d.path("saves/Game.sav"), b"v1");
     d.sync(&fake, &MGBA, &d.gba(), None).await;
@@ -334,7 +454,11 @@ async fn a_single_file_updates_in_place_when_the_slot_holds_other_files() {
     let writes = fake.writes();
     assert_eq!(writes[0], "POST save Game.sav slot=None");
     assert!(writes[1].starts_with("PUT save "), "{:?}", writes);
-    assert_eq!(fake.saves(ROM).len(), 2, "the other file is never cleaned up");
+    assert_eq!(
+        fake.saves(ROM).len(),
+        2,
+        "the other file is never cleaned up"
+    );
 }
 
 #[tokio::test]
@@ -344,7 +468,11 @@ async fn several_files_of_one_game_never_share_a_slot_history() {
     write(&d.path("saves/Game_1.mcd"), b"card 1");
     write(&d.path("saves/Game_2.mcd"), b"card 2");
     d.sync(&fake, &MGBA, &d.gba(), None).await;
-    assert!(fake.saves(ROM).iter().all(|s| s.slot.is_none()), "{:?}", fake.writes());
+    assert!(
+        fake.saves(ROM).iter().all(|s| s.slot.is_none()),
+        "{:?}",
+        fake.writes()
+    );
 }
 
 #[tokio::test]
@@ -387,15 +515,34 @@ async fn a_3ds_save_carries_title_data_and_extdata_separately() {
         states: None,
     };
     // Progress kept only in extdata still counts as a save.
-    write(&a.path("extdata/00001744/user/progress.bin"), b"ext progress");
+    write(
+        &a.path("extdata/00001744/user/progress.bin"),
+        b"ext progress",
+    );
     a.sync(&fake, &EDEN, &layout(&a), None).await;
-    assert_eq!(zip_names(&fake.saves(ROM)[0].data), ["extdata/user/progress.bin"]);
+    assert_eq!(
+        zip_names(&fake.saves(ROM)[0].data),
+        ["extdata/user/progress.bin"]
+    );
 
-    write(&b.path("title/data/00000001/local.bin"), b"b's own title data");
-    age(&b.path("title/data/00000001/local.bin"), Duration::from_secs(4 * 3600));
+    write(
+        &b.path("title/data/00000001/local.bin"),
+        b"b's own title data",
+    );
+    age(
+        &b.path("title/data/00000001/local.bin"),
+        Duration::from_secs(4 * 3600),
+    );
     b.sync(&fake, &EDEN, &layout(&b), None).await;
-    assert_eq!(read(b.path("extdata/00001744/user/progress.bin")), b"ext progress");
-    assert_eq!(read(b.path("title/data/00000001/local.bin")), b"b's own title data", "a root the zip lacks stays");
+    assert_eq!(
+        read(b.path("extdata/00001744/user/progress.bin")),
+        b"ext progress"
+    );
+    assert_eq!(
+        read(b.path("title/data/00000001/local.bin")),
+        b"b's own title data",
+        "a root the zip lacks stays"
+    );
 }
 
 #[tokio::test]
@@ -412,7 +559,12 @@ async fn states_without_history_are_compared_by_content() {
     write(&b.path("states/Game.ss2"), b"b's state");
     b.sync(&fake, &MGBA, &b.gba(), None).await;
     let conflicts = b.store.conflicts().await;
-    assert_eq!(conflicts.len(), 1, "only the state that differs: {:?}", conflicts);
+    assert_eq!(
+        conflicts.len(),
+        1,
+        "only the state that differs: {:?}",
+        conflicts
+    );
     assert!(conflicts[0].local_path.ends_with("Game.ss2"));
 }
 
@@ -425,8 +577,15 @@ async fn empty_folders_in_a_save_survive_the_round_trip() {
     write(&a.path("save/00000001.metadata"), b"format info");
     std::fs::create_dir_all(a.path("save/00000001")).unwrap();
     a.sync(&fake, &EDEN, &a.switch(), None).await;
-    let hash_without_dirs = content_hash(&zip_bytes(&[(&format!("{TITLE}/00000001.metadata"), b"format info")]));
-    assert_eq!(fake.saves(ROM)[0].content_hash, hash_without_dirs, "folders don't change the hash");
+    let hash_without_dirs = content_hash(&zip_bytes(&[(
+        &format!("{TITLE}/00000001.metadata"),
+        b"format info",
+    )]));
+    assert_eq!(
+        fake.saves(ROM)[0].content_hash,
+        hash_without_dirs,
+        "folders don't change the hash"
+    );
 
     b.sync(&fake, &EDEN, &b.switch(), None).await;
     assert!(b.path("save/00000001").is_dir());

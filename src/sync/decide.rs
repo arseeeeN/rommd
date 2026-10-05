@@ -23,7 +23,11 @@ pub enum Action {
 
 /// Three-way decision between the local save, the RomM save, and the state
 /// both were in when last synced.
-pub fn decide(local_hash: Option<&str>, remote: Option<RemoteView>, base: Option<&SyncBase>) -> Action {
+pub fn decide(
+    local_hash: Option<&str>,
+    remote: Option<RemoteView>,
+    base: Option<&SyncBase>,
+) -> Action {
     let (local, remote) = match (local_hash, remote) {
         (None, None) => return Action::Nothing,
         (Some(_), None) => return Action::Upload,
@@ -66,33 +70,59 @@ mod tests {
         }
     }
 
-    fn remote(id: i64, hash: Option<&'static str>, at: &'static str) -> Option<RemoteView<'static>> {
-        Some(RemoteView { id, hash, updated_at: at })
+    fn remote(
+        id: i64,
+        hash: Option<&'static str>,
+        at: &'static str,
+    ) -> Option<RemoteView<'static>> {
+        Some(RemoteView {
+            id,
+            hash,
+            updated_at: at,
+        })
     }
 
     #[test]
     fn missing_sides() {
         assert_eq!(decide(None, None, None), Action::Nothing);
         assert_eq!(decide(Some("a"), None, None), Action::Upload);
-        assert_eq!(decide(None, remote(1, Some("a"), T0), None), Action::Download);
+        assert_eq!(
+            decide(None, remote(1, Some("a"), T0), None),
+            Action::Download
+        );
     }
 
     #[test]
     fn equal_content_is_in_sync_even_without_history() {
-        assert_eq!(decide(Some("a"), remote(1, Some("a"), T0), None), Action::InSync);
+        assert_eq!(
+            decide(Some("a"), remote(1, Some("a"), T0), None),
+            Action::InSync
+        );
     }
 
     #[test]
     fn differing_content_without_history_is_a_conflict() {
-        assert_eq!(decide(Some("a"), remote(1, Some("b"), T0), None), Action::Conflict);
+        assert_eq!(
+            decide(Some("a"), remote(1, Some("b"), T0), None),
+            Action::Conflict
+        );
     }
 
     #[test]
     fn three_way_with_hashes() {
         let b = base("a", 1, Some("a"), T0);
-        assert_eq!(decide(Some("a"), remote(1, Some("r"), T1), Some(&b)), Action::Download);
-        assert_eq!(decide(Some("l"), remote(1, Some("a"), T0), Some(&b)), Action::Upload);
-        assert_eq!(decide(Some("l"), remote(1, Some("r"), T1), Some(&b)), Action::Conflict);
+        assert_eq!(
+            decide(Some("a"), remote(1, Some("r"), T1), Some(&b)),
+            Action::Download
+        );
+        assert_eq!(
+            decide(Some("l"), remote(1, Some("a"), T0), Some(&b)),
+            Action::Upload
+        );
+        assert_eq!(
+            decide(Some("l"), remote(1, Some("r"), T1), Some(&b)),
+            Action::Conflict
+        );
     }
 
     #[test]
@@ -100,21 +130,36 @@ mod tests {
         // RomM hashed our upload differently than we did: unchanged if its own
         // hash is stable.
         let b = base("a", 1, Some("x"), T0);
-        assert_eq!(decide(Some("a"), remote(1, Some("x"), T0), Some(&b)), Action::Nothing);
+        assert_eq!(
+            decide(Some("a"), remote(1, Some("x"), T0), Some(&b)),
+            Action::Nothing
+        );
     }
 
     #[test]
     fn falls_back_to_timestamps_without_remote_hash() {
         let b = base("a", 1, None, T0);
-        assert_eq!(decide(Some("a"), remote(1, None, T0), Some(&b)), Action::Nothing);
-        assert_eq!(decide(Some("a"), remote(1, None, T1), Some(&b)), Action::Download);
-        assert_eq!(decide(Some("l"), remote(1, None, T0), Some(&b)), Action::Upload);
+        assert_eq!(
+            decide(Some("a"), remote(1, None, T0), Some(&b)),
+            Action::Nothing
+        );
+        assert_eq!(
+            decide(Some("a"), remote(1, None, T1), Some(&b)),
+            Action::Download
+        );
+        assert_eq!(
+            decide(Some("l"), remote(1, None, T0), Some(&b)),
+            Action::Upload
+        );
     }
 
     #[test]
     fn switching_to_another_remote_entry_is_a_remote_change() {
         // e.g. a newer Ryujinx upload replaces the Eden entry we synced with.
         let b = base("a", 1, Some("a"), T0);
-        assert_eq!(decide(Some("a"), remote(2, Some("r"), T1), Some(&b)), Action::Download);
+        assert_eq!(
+            decide(Some("a"), remote(2, Some("r"), T1), Some(&b)),
+            Action::Download
+        );
     }
 }

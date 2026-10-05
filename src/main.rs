@@ -24,8 +24,8 @@ use tracing::{info, warn};
 
 use config::Config;
 use emulator::{
-    azahar::Azahar, dolphin::Dolphin, duckstation::DuckStation, eden::Eden, mgba::MGba, ryujinx::Ryujinx,
-    Emulator,
+    Emulator, azahar::Azahar, dolphin::Dolphin, duckstation::DuckStation, eden::Eden, mgba::MGba,
+    ryujinx::Ryujinx,
 };
 use process::ProcessManager;
 use romm::RommClient;
@@ -59,8 +59,12 @@ enum ServiceAction {
 
 fn main() -> Result<()> {
     match Cli::parse().command {
-        Some(Command::Service { action: ServiceAction::Install }) => service::install(),
-        Some(Command::Service { action: ServiceAction::Uninstall }) => service::uninstall(),
+        Some(Command::Service {
+            action: ServiceAction::Install,
+        }) => service::install(),
+        Some(Command::Service {
+            action: ServiceAction::Uninstall,
+        }) => service::uninstall(),
         None => tokio::runtime::Runtime::new()?.block_on(run_daemon()),
     }
 }
@@ -74,7 +78,11 @@ async fn run_daemon() -> Result<()> {
         .init();
 
     let config = Config::load_or_create().context("loading config")?;
-    info!("rommd {} ({})", env!("CARGO_PKG_VERSION"), env!("ROMMD_TARGET"));
+    info!(
+        "rommd {} ({})",
+        env!("CARGO_PKG_VERSION"),
+        env!("ROMMD_TARGET")
+    );
     info!("config loaded from {}", Config::path().display());
     info!("roms_dir: {}", config.roms_dir().display());
 
