@@ -68,6 +68,10 @@ impl ControllerConfig {
 pub struct ServerConfig {
     #[serde(default = "default_port")]
     pub port: u16,
+    /// Web origins (e.g. `"https://romm.example.com"`) allowed to call the API
+    /// from a browser, in addition to the configured RomM server's own origin.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
 }
 
 fn default_port() -> u16 {
@@ -76,7 +80,7 @@ fn default_port() -> u16 {
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        Self { port: default_port() }
+        Self { port: default_port(), allowed_origins: Vec::new() }
     }
 }
 
@@ -220,6 +224,9 @@ const DEFAULT_CONFIG_TEMPLATE: &str = r#"# rommd configuration — edit to match
 
 [server]
 port = 7497
+# Browsers may only call rommd from the RomM server's own page (its base_url
+# below). Add other web origins here if a different frontend needs access:
+# allowed_origins = ["https://my-frontend.example.com"]
 
 # RomM server connection. Required for remote launch and save sync.
 # [romm]

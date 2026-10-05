@@ -1,10 +1,11 @@
 pub mod handlers;
+mod security;
 pub mod state;
 pub mod types;
 
 use axum::{Json, Router, routing::get, routing::post};
 use std::sync::Arc;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 
 use state::AppState;
@@ -49,6 +50,9 @@ use crate::profile::ProfileBlob;
 struct ApiDoc;
 
 pub fn router(state: Arc<AppState>) -> Router {
+    let origins = security::allowed_origins(&state.config);
+    let cors = security::cors_layer(&origins);
+    let guard = Arc::new(security::Guard { origins });
     Router::new()
         .route("/health", get(handlers::health))
         .route("/emulators", get(handlers::list_emulators))
@@ -59,7 +63,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/controllers", get(handlers::list_controllers))
         .route("/saves/conflicts", get(handlers::save_conflicts))
         .route("/openapi.json", get(|| async { Json(ApiDoc::openapi()) }))
-        .layer(CorsLayer::permissive())
+        .layer(axum::middleware::from_fn_with_state(guard, security::check_request))
+        .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

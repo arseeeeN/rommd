@@ -23,6 +23,14 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 - **`src/profile.rs`** — portable settings overlay (ProfileBlob)
 - **`src/ini.rs`** — INI file read/write used by DuckStation and Dolphin
 
+## API access
+
+rommd binds 127.0.0.1 only, but any page in the user's browser can still reach
+it, so `server/security.rs` rejects requests whose `Origin` is not the RomM
+server's (from `romm.base_url`) or listed in `server.allowed_origins`, limits
+CORS to those origins, and requires a localhost `Host` header (DNS
+rebinding). Clients without a browser send no `Origin` and pass.
+
 ## Emulator trait
 
 Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
