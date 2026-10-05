@@ -50,7 +50,11 @@ jobs:
           key: ${{ matrix.target }}
       - name: Install musl tools
         if: contains(matrix.target, 'musl')
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y musl-tools
+          # ring compiles C; Ubuntu's musl-tools only provides `musl-gcc`.
+          target="${{ matrix.target }}"
+          echo "CC_${target//-/_}=musl-gcc" >> "$GITHUB_ENV"
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Stage asset
