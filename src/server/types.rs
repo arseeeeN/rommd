@@ -18,11 +18,13 @@ pub struct LaunchRequest {
     pub local_path: Option<String>,
     /// Physical controller bindings for each slot. Omit to launch without
     /// applying any controller configuration.
+    #[allow(dead_code)] // accepted ahead of wiring to emulator configs (dev/controller-design.md)
     pub controller_slots: Option<Vec<ControllerSlot>>,
 }
 
 /// Binds a locally configured physical controller to an emulator slot.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[allow(dead_code)] // see LaunchRequest::controller_slots
 pub struct ControllerSlot {
     /// Emulator slot number (1-indexed).
     pub slot: u8,

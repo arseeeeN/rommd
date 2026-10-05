@@ -56,11 +56,9 @@ fn looks_like_path(value: &str) -> bool {
         let mut chars = value.chars();
         if let (Some(drive), Some(colon), Some(slash)) =
             (chars.next(), chars.next(), chars.next())
-        {
-            if drive.is_ascii_alphabetic() && colon == ':' && (slash == '\\' || slash == '/') {
+            && drive.is_ascii_alphabetic() && colon == ':' && (slash == '\\' || slash == '/') {
                 return true;
             }
-        }
     }
     false
 }

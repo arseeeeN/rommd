@@ -92,7 +92,7 @@ impl TokenManager {
             .await
             .context("parsing token response")?;
 
-        Ok(self.into_state(resp))
+        Ok(self.token_state(resp))
     }
 
     async fn refresh(&self, refresh_token: &str) -> Result<TokenState> {
@@ -110,10 +110,10 @@ impl TokenManager {
             .await
             .context("parsing refresh response")?;
 
-        Ok(self.into_state(resp))
+        Ok(self.token_state(resp))
     }
 
-    fn into_state(&self, resp: TokenResponse) -> TokenState {
+    fn token_state(&self, resp: TokenResponse) -> TokenState {
         let now = Instant::now();
         let margin = Duration::from_secs(60);
         TokenState {

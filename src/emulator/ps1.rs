@@ -139,8 +139,8 @@ fn find_in_dir(dir: &[u8], target: &str) -> Option<u64> {
         }
         let rec = &dir[pos..pos + len];
         let name_len = rec[32] as usize;
-        if name_len > 0 && pos + 33 + name_len <= dir.len() {
-            if let Ok(name) = std::str::from_utf8(&rec[33..33 + name_len]) {
+        if name_len > 0 && pos + 33 + name_len <= dir.len()
+            && let Ok(name) = std::str::from_utf8(&rec[33..33 + name_len]) {
                 // Strip ISO 9660 version suffix (";1").
                 let name = name.split(';').next().unwrap_or(name);
                 if name.eq_ignore_ascii_case(target) {
@@ -148,7 +148,6 @@ fn find_in_dir(dir: &[u8], target: &str) -> Option<u64> {
                     return Some(lba);
                 }
             }
-        }
         pos += len;
     }
     None
@@ -167,9 +166,9 @@ fn parse_serial(cnf: &str) -> Option<String> {
         } else {
             continue;
         };
-        let value = rest.splitn(2, '=').nth(1)?.trim();
+        let value = rest.split_once('=')?.1.trim();
         // Take the last path component, strip the version suffix.
-        let file = value.split(['\\', '/']).last()?.split(';').next()?;
+        let file = value.split(['\\', '/']).next_back()?.split(';').next()?;
         return normalize_serial(file);
     }
     None

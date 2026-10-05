@@ -54,10 +54,8 @@ impl RommClient {
             .context("parsing ROM response")
     }
 
-    /// Ensure the ROM is present in `roms_dir` and return the path to launch.
-    ///
-    /// - Single-file ROM → `roms_dir/{platform_fs_slug}/{fs_name}`
-    /// Download a ROM and return the path to launch.
+    /// Ensure the ROM is present in `roms_dir/{platform_fs_slug}/` and return
+    /// the path to launch.
     ///
     /// - `fs_name` is not a zip → download directly, done.
     /// - `fs_name` is a zip, `files.len() <= 1` → download the zip as-is, extract.
@@ -78,12 +76,11 @@ impl RommClient {
                 .into_owned();
             let rom_dir = platform_dir.join(&stem);
 
-            if rom_dir.is_dir() {
-                if let Some(launch) = find_launch_file(&rom_dir).await? {
+            if rom_dir.is_dir()
+                && let Some(launch) = find_launch_file(&rom_dir).await? {
                     debug!("ROM cache hit (multi-file dir): {}", launch.display());
                     return Ok(launch);
                 }
-            }
             // If a stale single-file download sits at the directory path, remove it.
             if rom_dir.is_file() {
                 tokio::fs::remove_file(&rom_dir).await.ok();
@@ -122,12 +119,11 @@ impl RommClient {
             }
             // `dest` might collide with a directory left over from a prior
             // extraction. Look inside for a launchable file before re-downloading.
-            if dest.is_dir() {
-                if let Some(launch) = find_launch_file(&dest).await? {
+            if dest.is_dir()
+                && let Some(launch) = find_launch_file(&dest).await? {
                     debug!("ROM cache hit (extracted dir): {}", launch.display());
                     return Ok(launch);
                 }
-            }
             tokio::fs::create_dir_all(&platform_dir).await?;
             self.download_content(rom.id, &rom.fs_name, None, &dest).await?;
             return Ok(dest);
@@ -141,12 +137,11 @@ impl RommClient {
             .into_owned();
         let rom_dir = platform_dir.join(&stem);
 
-        if rom_dir.exists() {
-            if let Some(launch) = find_launch_file(&rom_dir).await? {
+        if rom_dir.exists()
+            && let Some(launch) = find_launch_file(&rom_dir).await? {
                 debug!("ROM cache hit: {}", launch.display());
                 return Ok(launch);
             }
-        }
 
         tokio::fs::create_dir_all(&platform_dir).await?;
         let zip_dest = platform_dir.join(&rom.fs_name);
@@ -518,18 +513,16 @@ async fn find_launch_file(dir: &Path) -> Result<Option<PathBuf>> {
                 Some("bin") | Some("iso") | Some("img") | Some("chd") | Some("sbi")
             )
         });
-    if is_disc_game {
-        if let Some(m3u) = m3u { return Ok(Some(m3u)); }
-    }
+    if is_disc_game
+        && let Some(m3u) = m3u { return Ok(Some(m3u)); }
     if let Some(cue) = cue { return Ok(Some(cue)); }
     if others.len() == 1 { return Ok(others.into_iter().next()); }
     // Multiple non-disc files (e.g. base + update + DLC all at the top level):
     // treat the .m3u as an ordered index — the base game is listed first.
-    if let Some(m3u_path) = m3u {
-        if let Some(primary) = first_m3u_entry(&m3u_path, dir).await {
+    if let Some(m3u_path) = m3u
+        && let Some(primary) = first_m3u_entry(&m3u_path, dir).await {
             return Ok(Some(primary));
         }
-    }
     Ok(None)
 }
 

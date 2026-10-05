@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::info;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default)]
     pub server: ServerConfig,
@@ -153,18 +153,6 @@ impl Config {
     }
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            romm: None,
-            roms_dir: None,
-            emulators: HashMap::new(),
-            controllers: HashMap::new(),
-            updates: Default::default(),
-        }
-    }
-}
 
 pub fn default_roms_dir() -> PathBuf {
     dirs::data_local_dir()
@@ -182,11 +170,10 @@ fn expand_path(path: PathBuf) -> PathBuf {
     if s == "~" {
         return dirs::home_dir().unwrap_or(path);
     }
-    if let Some(rest) = s.strip_prefix("~/").or_else(|| s.strip_prefix("~\\")) {
-        if let Some(home) = dirs::home_dir() {
+    if let Some(rest) = s.strip_prefix("~/").or_else(|| s.strip_prefix("~\\"))
+        && let Some(home) = dirs::home_dir() {
             return PathBuf::from(expand_percent_vars(&home.join(rest).to_string_lossy()));
         }
-    }
     PathBuf::from(expand_percent_vars(s))
 }
 
@@ -194,11 +181,7 @@ fn expand_path(path: PathBuf) -> PathBuf {
 /// Unexpandable variables are left as-is.
 fn expand_percent_vars(s: &str) -> String {
     let mut result = s.to_owned();
-    loop {
-        let start = match result.find('%') {
-            Some(i) => i,
-            None => break,
-        };
+    while let Some(start) = result.find('%') {
         match result[start + 1..].find('%') {
             Some(rel_end) => {
                 let end = start + 1 + rel_end;

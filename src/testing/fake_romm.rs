@@ -145,8 +145,8 @@ impl FakeRomm {
 // ── Hashing (RomM's scheme) ───────────────────────────────────────────────────
 
 pub fn content_hash(data: &[u8]) -> String {
-    if data.starts_with(b"PK\x03\x04") {
-        if let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(data)) {
+    if data.starts_with(b"PK\x03\x04")
+        && let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(data)) {
             let mut lines = Vec::new();
             for i in 0..zip.len() {
                 let mut f = zip.by_index(i).unwrap();
@@ -160,7 +160,6 @@ pub fn content_hash(data: &[u8]) -> String {
             lines.sort();
             return format!("{:x}", Md5::digest(lines.join("\n").as_bytes()));
         }
-    }
     format!("{:x}", Md5::digest(data))
 }
 
@@ -237,11 +236,10 @@ async fn add_save(State(s): State<Shared>, Query(q): Params, form: Multipart) ->
     let hash = content_hash(&data);
     s.writes.push(format!("POST save {} slot={:?}", name, slot));
 
-    if let (Some(slot), false) = (&slot, overwrite) {
-        if let Some(existing) = s.saves.iter().find(|e| e.rom_id == rom && e.slot.as_ref() == Some(slot) && e.content_hash == hash) {
+    if let (Some(slot), false) = (&slot, overwrite)
+        && let Some(existing) = s.saves.iter().find(|e| e.rom_id == rom && e.slot.as_ref() == Some(slot) && e.content_hash == hash) {
             return Json(save_json(existing));
         }
-    }
     let at = s.tick();
     let file_name = if slot.is_some() { tag_with_time(&name, at) } else { name };
     let result = match s.saves.iter_mut().find(|e| e.rom_id == rom && e.file_name == file_name && e.slot == slot) {

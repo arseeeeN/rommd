@@ -184,8 +184,8 @@ fn parse_header_key(path: &Path) -> Result<[u8; 32]> {
         if line.starts_with('#') || line.is_empty() {
             continue;
         }
-        if let Some((k, v)) = line.split_once('=') {
-            if k.trim() == "header_key" {
+        if let Some((k, v)) = line.split_once('=')
+            && k.trim() == "header_key" {
                 let hex = v.trim();
                 anyhow::ensure!(
                     hex.len() == 64,
@@ -195,7 +195,6 @@ fn parse_header_key(path: &Path) -> Result<[u8; 32]> {
                 let bytes = decode_hex(hex).context("decoding header_key")?;
                 return Ok(bytes.try_into().unwrap());
             }
-        }
     }
     anyhow::bail!("header_key not found in {}", path.display())
 }
@@ -281,7 +280,7 @@ fn aes_xts_decrypt_sector(
     tweak[8..].copy_from_slice(&sector_num.to_be_bytes());
     enc2.encrypt_block(GenericArray::from_mut_slice(&mut tweak));
 
-    for chunk in sector.chunks_exact_mut(16) {
+    for chunk in sector.as_chunks_mut::<16>().0 {
         for (b, t) in chunk.iter_mut().zip(&tweak) {
             *b ^= t;
         }
@@ -312,7 +311,7 @@ fn cstr_at(table: &[u8], offset: usize) -> &str {
 }
 
 fn decode_hex(s: &str) -> Result<Vec<u8>> {
-    anyhow::ensure!(s.len() % 2 == 0, "odd-length hex string");
+    anyhow::ensure!(s.len().is_multiple_of(2), "odd-length hex string");
     s.as_bytes()
         .chunks(2)
         .map(|pair| {

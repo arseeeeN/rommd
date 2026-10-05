@@ -214,12 +214,11 @@ pub fn restore_roots(zip_path: &Path, roots: &[(String, Vec<PathBuf>)], backup_d
         for (root, targets) in roots {
             let Some(staged) = present.iter().find(|p| p.eq_ignore_ascii_case(root)) else { continue };
             let staged = staging.join(staged);
-            if let Some(primary) = targets.first() {
-                if newest_mtime(primary).is_some() {
+            if let Some(primary) = targets.first()
+                && newest_mtime(primary).is_some() {
                     copy_dir(primary, &backup_dir.join(root))
                         .with_context(|| format!("backing up {}", primary.display()))?;
                 }
-            }
             for target in targets {
                 replace_dir_contents(&staged, target)
                     .with_context(|| format!("restoring into {}", target.display()))?;

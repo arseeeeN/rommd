@@ -85,13 +85,15 @@ mod tests {
 
     #[test]
     fn origins_come_from_romm_and_config() {
-        let mut config = Config::default();
-        config.romm = Some(RommConfig {
-            base_url: "https://romm.example.com/".into(),
-            api_token: None,
-            username: None,
-            password: None,
-        });
+        let mut config = Config {
+            romm: Some(RommConfig {
+                base_url: "https://romm.example.com/".into(),
+                api_token: None,
+                username: None,
+                password: None,
+            }),
+            ..Default::default()
+        };
         config.server.allowed_origins = vec!["http://localhost:5173".into(), "not a url".into()];
         assert_eq!(allowed_origins(&config), ["https://romm.example.com", "http://localhost:5173"]);
     }

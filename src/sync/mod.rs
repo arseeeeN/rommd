@@ -345,13 +345,11 @@ async fn sync_unit(ctx: &SyncCtx<'_>, unit: &Unit, key: &str) -> bool {
 
     let had_local = hash.is_some();
     let mut action = decide(hash.as_deref(), view, base.as_ref());
-    if action == Action::Conflict && base.is_none() {
-        if let (Some(h), Some(r)) = (&hash, &unit.remote) {
-            if r.content_hash.is_none() && remote_matches(ctx, unit, r, h).await {
+    if action == Action::Conflict && base.is_none()
+        && let (Some(h), Some(r)) = (&hash, &unit.remote)
+            && r.content_hash.is_none() && remote_matches(ctx, unit, r, h).await {
                 action = Action::InSync;
             }
-        }
-    }
     let result = match action {
         Action::Nothing => {
             debug!("{} unchanged", path);

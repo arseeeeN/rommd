@@ -76,7 +76,7 @@ impl FileSet {
     /// stem would attribute every file in the directory to this game.
     pub fn stem(dir: PathBuf, stem: impl Into<String>) -> Option<Self> {
         let stem = stem.into();
-        (!stem.is_empty()).then(|| Self { dir, matcher: FileMatcher::Stem(stem), remote_extensions: &[] })
+        (!stem.is_empty()).then_some(Self { dir, matcher: FileMatcher::Stem(stem), remote_extensions: &[] })
     }
 
     pub fn gci(dir: PathBuf, game_id: impl Into<String>) -> Self {
