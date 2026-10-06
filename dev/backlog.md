@@ -86,3 +86,30 @@ Azahar keeps per-game settings in `~/.config/azahar-emu/custom/<TITLE ID>.ini`
 (Linux; `config_dir/config/custom/` elsewhere). That is where profile support
 (`launch` overlay, `snapshot`) would hook in, as Dolphin's GameSettings do.
 
+
+## MCP server for assistants
+
+Let an AI assistant find and start games ("play Mario Kart", "continue my
+Zelda save", "why did my save conflict"). Starting a game is already one click
+in RomM, so the payoff is in the tasks around a launch, not the launch itself.
+
+**The OpenAPI spec is not enough.** Generic OpenAPI-to-MCP bridges would expose
+the routes one-to-one, but:
+- `POST /launch` needs a `rom_id` and an `emulator` id, and nothing in rommd
+  resolves a title to either. Search lives in RomM, so the assistant would need
+  RomM's API and credentials as well, plus the platform → emulator mapping.
+- `profile`, `local_path` (launches any file on disk) and `snapshot` are not
+  for a model to choose, and `/update` must stay a user action.
+
+**Proposed: a small set of tools written for the job.**
+- `search_games(query, platform?)` — through rommd's RomM client, returning
+  title, platform and `rom_id`.
+- `launch_game(rom_id, emulator?)` — without `emulator`, rommd picks a
+  configured one for the ROM's platform (worth having in the daemon anyway).
+- `status`, `stop_game`, `list_save_conflicts` — map onto existing routes.
+
+**Transport.** A `rommd mcp` stdio subcommand that calls the running daemon on
+localhost: the client spawns it, nothing new is exposed on the network, and
+`server/security.rs` is unaffected. A streamable-HTTP endpoint in the daemon
+would also work, but MCP clients send no RomM `Origin`, so it would need its
+own place in the access rules.
