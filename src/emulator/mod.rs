@@ -22,6 +22,7 @@ pub use layout::{FileSet, GameSaveDir, SaveLayout, SaveSet};
 /// uruntime AppImages (Eden) stay alive as the parent, and killing only that
 /// PID would orphan the emulator.
 pub fn emulator_command(binary: &Path) -> tokio::process::Command {
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut cmd = tokio::process::Command::new(binary);
     #[cfg(unix)]
     cmd.process_group(0);

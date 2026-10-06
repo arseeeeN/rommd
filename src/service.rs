@@ -4,7 +4,9 @@
 //! simply exit and be started again.
 
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::path::PathBuf;
 use std::process::Command;
 
 pub fn install() -> Result<()> {
@@ -22,6 +24,7 @@ fn run(cmd: &mut Command) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn write(path: &Path, contents: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
