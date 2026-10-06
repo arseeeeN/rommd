@@ -10,6 +10,7 @@
 use anyhow::{Context, Result};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use md5::Digest;
@@ -363,12 +364,22 @@ fn walk_files(dir: &Path) -> Result<Vec<(PathBuf, PathBuf)>> {
 }
 
 fn tempdir_near(path: &Path) -> Result<PathBuf> {
-    let parent = path.parent().unwrap_or(path);
+    unique_dir(path.parent().unwrap_or(path), ".staging-")
+}
+
+/// Create a new directory in `parent` that no other caller in this process
+/// gets: the clock alone can repeat between threads (seen on Windows), and two
+/// syncs sharing a directory would write into each other's zips.
+pub fn unique_dir(parent: &Path, prefix: &str) -> Result<PathBuf> {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let dir = parent.join(format!(
-        ".staging-{}",
+        "{}{}-{}-{}",
+        prefix,
+        std::process::id(),
         SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)?
-            .as_nanos()
+            .as_nanos(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&dir)?;
     Ok(dir)

@@ -902,15 +902,7 @@ fn prune_backups(dir: &Path) {
 }
 
 fn scratch_dir() -> Result<PathBuf> {
-    let dir = std::env::temp_dir().join(format!(
-        "rommd-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)?
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir)
+    save_archive::unique_dir(&std::env::temp_dir(), "rommd-")
 }
 
 #[cfg(test)]

@@ -223,9 +223,10 @@ mod tests {
             binary: "mgba".into(),
             config_dir: root.path().to_owned(),
         };
+        let saves_dir = root.path().join("saves");
         write(
             &root.path().join("config.ini"),
-            b"[ports.qt]\nsavegamePath=/games/saves\n",
+            format!("[ports.qt]\nsavegamePath={}\n", saves_dir.display()).as_bytes(),
         );
         let layout = MGba
             .save_layout(&config, Path::new("/roms/Golden Sun (USA).gba"), None)
@@ -233,7 +234,7 @@ mod tests {
         let Some(SaveSet::Files(saves)) = layout.saves else {
             panic!("expected single-file saves")
         };
-        assert_eq!(saves.dir, PathBuf::from("/games/saves"));
+        assert_eq!(saves.dir, saves_dir);
         assert!(saves.matcher.matches_name("Golden Sun (USA).sav"));
         assert!(
             !saves
