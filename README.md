@@ -2,9 +2,13 @@
 
 rommd is a small daemon that connects [RomM](https://github.com/rommapp/romm),
 the self-hosted game library manager, with the emulators on your computer. A
-frontend (such as RomM's web UI) asks rommd to launch a game. rommd downloads
-the ROM, restores your latest save from RomM, starts the emulator, and uploads
-your progress when you quit.
+frontend asks rommd to launch a game through its local [HTTP API](#api). rommd
+downloads the ROM, restores your latest save from RomM, starts the emulator,
+and uploads your progress when you quit.
+
+> **Status:** early and not yet released. rommd has no user interface of its
+> own, and RomM's web UI doesn't call it yet, so for now games are launched
+> through the API (for example with `curl`).
 
 - **Launch from your library**: ROMs are downloaded on demand and cached.
 - **Save sync that doesn't lose progress**: every save is compared against
@@ -21,13 +25,26 @@ your progress when you quit.
 
 ## Supported emulators
 
-| System | Emulator | Saves | Save states |
-|---|---|---|---|
-| Nintendo Switch | Eden, Ryujinx | ✓ (per user and per console) | — |
-| Nintendo 3DS | Azahar | ✓ (save data and extdata) | ✓ |
-| GameCube / Wii | Dolphin | ✓ | ✓ |
-| Game Boy Advance | mGBA | ✓ | ✓ |
-| PlayStation | DuckStation | ✓ (memory cards) | ✓ |
+| System | Emulator | ID | Saves | Save states |
+|---|---|---|---|---|
+| Nintendo Switch | [Eden](https://eden-emu.dev) | `eden` | ✓ (per user and per console) | — |
+| Nintendo Switch | [Ryujinx](https://ryujinx.app) | `ryujinx` | ✓ (per user and per console) | — |
+| Nintendo 3DS | [Azahar](https://azahar-emu.org) | `azahar` | ✓ (save data and extdata) | ✓ |
+| GameCube / Wii | [Dolphin](https://dolphin-emu.org) | `dolphin` | ✓ | ✓ |
+| Game Boy Advance | [mGBA](https://mgba.io) | `mgba` | ✓ | ✓ |
+| PlayStation | [DuckStation](https://www.duckstation.org) | `duckstation` | ✓ (memory cards) | ✓ |
+
+The ID is the emulator's name in the config file (`[emulators.<id>]`) and in
+launch requests. Things to know:
+
+- **Switch:** only the active user's saves are synced. rommd identifies a game
+  by its title ID, read from the NSP. Most NSPs work as they are; ones without
+  a ticket need `prod.keys` in the emulator's keys folder. Ryujinx only creates
+  a game's save folder the first time it boots the game, so on a fresh install
+  your RomM save is restored from the second launch on.
+- **GameCube:** memory card slot A must be a GCI folder (Dolphin's default).
+  A raw memory card image holds every game's saves in one file and is not
+  synced.
 
 ## Install
 
@@ -52,6 +69,17 @@ Prefer to do it by hand? Download the binary for your platform from the
 it with [minisign](https://jedisct1.github.io/minisign/)
 (`minisign -Vm rommd-<target> -p minisign.pub`), and run
 `rommd service install`.
+
+**From source** (needed until the first release is out): install
+[Rust](https://rustup.rs), then
+
+```sh
+cargo install --git https://github.com/arseeeeN/rommd
+rommd service install
+```
+
+Builds from source don't carry the release signing key, so they never
+update themselves.
 
 ## Configure
 
@@ -86,13 +114,14 @@ examples. Restart rommd after editing the config.
 
 ## Running
 
-`rommd service install` starts rommd at login and restarts it if it stops: a
-systemd user service on Linux, a launch agent on macOS, a logon task on
-Windows. `rommd service uninstall` removes it. Running `rommd` with no command
-runs it in the foreground.
+`rommd service install` starts rommd at login: a systemd user service on
+Linux and a launch agent on macOS (both restart it if it stops), a logon task
+on Windows. `rommd service uninstall` removes it. Running `rommd` with no
+command runs it in the foreground.
 
 Logs: `journalctl --user -u rommd -f` on Linux, `~/Library/Logs/rommd.log` on
-macOS.
+macOS. The Windows logon task keeps no log; to watch one, stop the task
+(`schtasks /End /TN rommd`) and run `rommd` in a terminal.
 
 ## Updates
 
@@ -123,13 +152,22 @@ rommd listens on `http://localhost:7497`. The full API is described by
 | `GET /saves/conflicts` | Recent save conflicts and where the other version was kept |
 | `GET /update`, `POST /update` | Update status (`?check=true` checks now); install the latest release |
 
+To launch a game by hand, take its ID from the game's URL in RomM
+(`…/rom/123`):
+
+```sh
+curl -X POST localhost:7497/launch -H 'Content-Type: application/json' \
+  -d '{"rom_id": 123, "emulator": "dolphin"}'
+```
+
 **Security**: rommd only accepts connections from your own computer. Web pages
 may only call it from your RomM server's address (`romm.base_url`). Allow other
 frontends with `[server] allowed_origins = ["https://…"]`.
 
 ## Your data
 
-rommd keeps its sync history and backups next to each other:
+rommd keeps downloaded ROMs (`roms/`, or `roms_dir` in the config), its sync
+history and save backups in one folder:
 
 | Platform | Folder |
 |---|---|
