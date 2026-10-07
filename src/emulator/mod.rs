@@ -84,4 +84,68 @@ pub trait Emulator: Send + Sync {
             None => false,
         }
     }
+
+    /// Paths relative to `config_dir`, one of which exists once the emulator
+    /// has run with that folder. Empty skips the check.
+    fn config_dir_markers(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Where `config_dir` usually is on this OS, for the warning when it
+    /// looks wrong.
+    fn config_dir_hint(&self) -> &'static str {
+        ""
+    }
+}
+
+/// Why `config_dir` does not look like this emulator's folder, if it doesn't.
+/// A wrong folder means saves silently never sync, so this is logged at
+/// startup and launch.
+pub fn config_dir_problem(emulator: &dyn Emulator, config: &EmulatorConfig) -> Option<String> {
+    let dir = &config.config_dir;
+    let markers = emulator.config_dir_markers();
+    let name = emulator.display_name();
+    let problem = if !dir.is_dir() {
+        format!("config_dir {} does not exist", dir.display())
+    } else if !markers.is_empty() && !markers.iter().any(|m| dir.join(m).exists()) {
+        format!(
+            "config_dir {} has no {}; unless {} has never run, it is not {}'s folder",
+            dir.display(),
+            markers.join(" or "),
+            name,
+            name
+        )
+    } else {
+        return None;
+    };
+    Some(match emulator.config_dir_hint() {
+        "" => problem,
+        hint => format!("{problem}. {name} usually keeps it in {hint}"),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{TempDir, write};
+
+    #[test]
+    fn config_dir_problems_name_the_missing_marker() {
+        let root = TempDir::new("config-dir-check");
+        let config = |dir: &Path| EmulatorConfig {
+            binary: "duckstation".into(),
+            config_dir: dir.to_owned(),
+        };
+        let emu = duckstation::DuckStation;
+
+        let missing = config_dir_problem(&emu, &config(&root.path().join("nope"))).unwrap();
+        assert!(missing.contains("does not exist"), "{missing}");
+
+        let wrong = config_dir_problem(&emu, &config(root.path())).unwrap();
+        assert!(wrong.contains("has no settings.ini"), "{wrong}");
+        assert!(wrong.contains("usually keeps it in"), "{wrong}");
+
+        write(&root.path().join("settings.ini"), b"");
+        assert_eq!(config_dir_problem(&emu, &config(root.path())), None);
+    }
 }

@@ -23,6 +23,20 @@ impl Emulator for Dolphin {
         "Dolphin"
     }
 
+    fn config_dir_markers(&self) -> &'static [&'static str] {
+        &["GC", "Wii", "StateSaves"]
+    }
+
+    fn config_dir_hint(&self) -> &'static str {
+        if cfg!(windows) {
+            r"%APPDATA%\Dolphin Emulator (Documents\Dolphin Emulator for older installs; the User folder next to Dolphin.exe when portable.txt is there)"
+        } else if cfg!(target_os = "macos") {
+            "~/Library/Application Support/Dolphin"
+        } else {
+            "~/.local/share/dolphin-emu (Flatpak: ~/.var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu)"
+        }
+    }
+
     fn game_id_for_rom(&self, _config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         read_disc(rom_path).map(|(id, _)| id)
     }

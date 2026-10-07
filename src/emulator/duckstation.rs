@@ -22,6 +22,20 @@ impl Emulator for DuckStation {
         "DuckStation"
     }
 
+    fn config_dir_markers(&self) -> &'static [&'static str] {
+        &["settings.ini"]
+    }
+
+    fn config_dir_hint(&self) -> &'static str {
+        if cfg!(windows) {
+            r"%LOCALAPPDATA%\DuckStation (Documents\DuckStation if that folder existed first; the install folder when it holds portable.txt)"
+        } else if cfg!(target_os = "macos") {
+            "~/Library/Application Support/DuckStation"
+        } else {
+            "~/.local/share/duckstation ($XDG_CONFIG_HOME/duckstation when XDG_CONFIG_HOME is set)"
+        }
+    }
+
     async fn launch(
         &self,
         config: &EmulatorConfig,

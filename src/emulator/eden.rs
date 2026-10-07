@@ -30,6 +30,20 @@ impl Emulator for Eden {
         "Eden"
     }
 
+    fn config_dir_markers(&self) -> &'static [&'static str] {
+        &["nand", "keys"]
+    }
+
+    fn config_dir_hint(&self) -> &'static str {
+        if cfg!(windows) {
+            r"%APPDATA%\eden (the user folder next to eden.exe for portable installs)"
+        } else if cfg!(target_os = "macos") {
+            ""
+        } else {
+            "~/.local/share/eden"
+        }
+    }
+
     fn game_id_for_rom(&self, config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         crate::switch::title_id_for_rom(rom_path, &config.config_dir.join("keys").join("prod.keys"))
     }

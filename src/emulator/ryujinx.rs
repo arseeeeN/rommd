@@ -20,6 +20,20 @@ impl Emulator for Ryujinx {
         "Ryujinx"
     }
 
+    fn config_dir_markers(&self) -> &'static [&'static str] {
+        &["Config.json", "bis", "system"]
+    }
+
+    fn config_dir_hint(&self) -> &'static str {
+        if cfg!(windows) {
+            r"%APPDATA%\Ryujinx (the portable folder next to Ryujinx.exe for portable installs)"
+        } else if cfg!(target_os = "macos") {
+            "~/Library/Application Support/Ryujinx"
+        } else {
+            "~/.config/Ryujinx"
+        }
+    }
+
     fn game_id_for_rom(&self, config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         crate::switch::title_id_for_rom(
             rom_path,

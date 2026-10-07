@@ -107,10 +107,21 @@ binary     = "~/Applications/Eden.AppImage"
 config_dir = "~/.local/share/eden"
 ```
 
+On Windows, write paths in single quotes, since a backslash in double quotes
+starts an escape sequence:
+
+```toml
+[emulators.dolphin]
+binary     = 'C:\Program Files\Dolphin\Dolphin.exe'
+config_dir = '%APPDATA%\Dolphin Emulator'
+```
+
 `config_dir` is the folder where the emulator keeps its saves. Where an
 emulator splits its settings into a separate folder (Dolphin, Eden and Azahar
-on Linux), rommd finds them on its own. See `dev/config.example.toml` for more
-examples. Restart rommd after editing the config.
+on Linux), rommd finds them on its own. At startup rommd warns in its log when
+a `config_dir` does not look like that emulator's folder and says where it
+usually is. The generated config file has examples for each platform.
+Restart rommd after editing the config.
 
 ## Running
 

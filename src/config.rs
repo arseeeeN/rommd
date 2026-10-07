@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::info;
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -115,8 +115,7 @@ impl Config {
         if path.exists() {
             let content = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading config from {}", path.display()))?;
-            let config: Self = toml::from_str(&content).context("parsing config TOML")?;
-            return Ok(config.expand_paths());
+            return Self::parse(&content, &path);
         }
 
         if let Some(parent) = path.parent() {
@@ -128,6 +127,21 @@ impl Config {
         info!("created default config at {}", path.display());
 
         Ok(Self::default())
+    }
+
+    fn parse(content: &str, path: &Path) -> Result<Self> {
+        let config: Self = toml::from_str(content).map_err(|e| {
+            // The usual cause: a Windows path in double quotes.
+            let hint = if e.message().contains("escape") {
+                "\nhint: in double quotes a backslash starts an escape sequence; \
+                 write Windows paths in single quotes ('C:\\Games\\rom.gba') \
+                 or with forward slashes (\"C:/Games/rom.gba\")"
+            } else {
+                ""
+            };
+            anyhow::anyhow!("parsing {}: {}{}", path.display(), e, hint)
+        })?;
+        Ok(config.expand_paths())
     }
 
     pub fn path() -> PathBuf {
@@ -257,38 +271,40 @@ mode = "auto"
 #
 # Windows
 # -------
+# Write Windows paths in single quotes: in double quotes a backslash starts
+# an escape sequence. Portable installs keep config_dir next to the program
+# (DuckStation and mGBA: its folder; Dolphin, Eden, Azahar: "User"/"user";
+# Ryujinx: "portable").
+#
 # [emulators.duckstation]
-# binary     = "C:/Program Files/DuckStation/duckstation-qt.exe"
-# config_dir = "~/Documents/DuckStation"       # or the portable install folder
+# binary     = 'C:\Program Files\DuckStation\duckstation-qt-x64-ReleaseLTCG.exe'
+# config_dir = '%LOCALAPPDATA%\DuckStation'   # older installs: '~\Documents\DuckStation'
 #
 # [emulators.mgba]
-# binary     = "C:/Program Files/mGBA/mGBA.exe"
-# config_dir = "%APPDATA%/mGBA"
+# binary     = 'C:\Program Files\mGBA\mGBA.exe'
+# config_dir = '%APPDATA%\mGBA'
 #
 # [emulators.dolphin]
-# binary     = "C:/Program Files/Dolphin/Dolphin.exe"
-# config_dir = "%APPDATA%/Dolphin Emulator"
+# binary     = 'C:\Program Files\Dolphin\Dolphin.exe'
+# config_dir = '%APPDATA%\Dolphin Emulator'  # older installs: '~\Documents\Dolphin Emulator'
 #
 # [emulators.ryujinx]
-# binary     = "C:/Program Files/Ryujinx/Ryujinx.exe"
-# config_dir = "%APPDATA%/Ryujinx"
+# binary     = 'C:\Program Files\Ryujinx\Ryujinx.exe'
+# config_dir = '%APPDATA%\Ryujinx'
 #
 # [emulators.eden]
-# binary     = "C:/Program Files/Eden/eden.exe"
-# config_dir = "%APPDATA%/eden"
+# binary     = 'C:\Program Files\Eden\eden.exe'
+# config_dir = '%APPDATA%\eden'
 #
 # [emulators.azahar]
-# binary     = "C:/Program Files/Azahar/azahar.exe"
-# config_dir = "%APPDATA%/Azahar"
-#
-# Use forward slashes (or single-quoted strings) for Windows paths: a
-# backslash in a double-quoted TOML string is an escape character.
+# binary     = 'C:\Program Files\Azahar\azahar.exe'
+# config_dir = '%APPDATA%\Azahar'
 #
 # Linux
 # -----
 # [emulators.duckstation]
 # binary     = "/usr/bin/duckstation-qt"
-# config_dir = "~/.config/duckstation"
+# config_dir = "~/.local/share/duckstation"   # or $XDG_CONFIG_HOME/duckstation if set
 #
 # [emulators.mgba]
 # binary     = "/usr/bin/mgba-qt"
@@ -345,6 +361,49 @@ mod tests {
         let config: Config = toml::from_str(toml).unwrap();
         let dir = config.expand_paths().roms_dir();
         assert_eq!(dir, dirs::home_dir().unwrap().join("Roms"));
+    }
+
+    #[test]
+    fn backslashes_in_double_quotes_get_a_hint() {
+        let err = Config::parse(
+            "[emulators.mgba]\nbinary = \"C:\\Program Files\\mGBA\\mGBA.exe\"\nconfig_dir = \"x\"\n",
+            Path::new("config.toml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("single quotes"), "{err}");
+    }
+
+    /// Uncomment one platform's emulator examples in the template.
+    fn template_examples(platform: &str) -> String {
+        DEFAULT_CONFIG_TEMPLATE
+            .split(&format!("# {platform}\n"))
+            .nth(1)
+            .unwrap()
+            .lines()
+            .take_while(|l| !l.starts_with("# ──") && *l != "# Linux" && *l != "# Windows")
+            .filter_map(|l| l.strip_prefix("# "))
+            .filter(|l| {
+                l.starts_with('[') || l.starts_with("binary") || l.starts_with("config_dir")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn template_examples_parse() {
+        for platform in ["macOS", "Windows", "Linux"] {
+            let examples = template_examples(platform);
+            let config = Config::parse(&examples, Path::new("template"))
+                .unwrap_or_else(|e| panic!("{platform}: {e:#}\n{examples}"));
+            assert!(config.emulators.len() >= 4, "{platform}: {examples}");
+        }
+        let windows = Config::parse(&template_examples("Windows"), Path::new("t")).unwrap();
+        let mgba = &windows.emulators["mgba"];
+        assert_eq!(
+            mgba.binary,
+            PathBuf::from(r"C:\Program Files\mGBA\mGBA.exe")
+        );
     }
 
     #[test]

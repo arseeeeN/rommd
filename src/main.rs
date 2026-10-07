@@ -159,6 +159,25 @@ async fn run_daemon(background: bool) -> Result<()> {
     let azahar = Azahar;
     emulators.insert(azahar.id().to_owned(), Arc::new(azahar));
 
+    for (id, emu_config) in &config.emulators {
+        match emulators.get(id) {
+            Some(emu) => {
+                if let Some(problem) = emulator::config_dir_problem(emu.as_ref(), emu_config) {
+                    warn!("[emulators.{}] {}", id, problem);
+                }
+            }
+            None => {
+                let mut known: Vec<_> = emulators.keys().map(String::as_str).collect();
+                known.sort_unstable();
+                warn!(
+                    "[emulators.{}] is not an emulator rommd knows; use one of: {}",
+                    id,
+                    known.join(", ")
+                );
+            }
+        }
+    }
+
     let updater = Arc::new(update::Updater::new(&config.updates));
     let state = Arc::new(AppState {
         updater: updater.clone(),

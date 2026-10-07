@@ -92,6 +92,9 @@ pub async fn launch(
         romm.download_rom_to_dir(&rom, &roms_dir).await?
     };
 
+    if let Some(problem) = crate::emulator::config_dir_problem(emulator.as_ref(), emu_config) {
+        tracing::warn!("[emulators.{}] {}", req.emulator, problem);
+    }
     let game_id = emulator.game_id_for_rom(emu_config, &rom_path);
 
     let save_layout = emulator

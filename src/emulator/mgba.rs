@@ -22,6 +22,20 @@ impl Emulator for MGba {
         "mGBA"
     }
 
+    fn config_dir_markers(&self) -> &'static [&'static str] {
+        &["config.ini"]
+    }
+
+    fn config_dir_hint(&self) -> &'static str {
+        if cfg!(windows) {
+            r"%APPDATA%\mGBA (mGBA's install folder when it holds portable.ini)"
+        } else if cfg!(target_os = "macos") {
+            ""
+        } else {
+            "~/.config/mgba ($XDG_CONFIG_HOME/mgba when XDG_CONFIG_HOME is set)"
+        }
+    }
+
     fn game_id_for_rom(&self, _config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         rom_path
             .file_stem()

@@ -33,6 +33,20 @@ impl Emulator for Azahar {
         "Azahar"
     }
 
+    fn config_dir_markers(&self) -> &'static [&'static str] {
+        &["sdmc", "nand"]
+    }
+
+    fn config_dir_hint(&self) -> &'static str {
+        if cfg!(windows) {
+            r"%APPDATA%\Azahar (the user folder next to azahar.exe for portable installs)"
+        } else if cfg!(target_os = "macos") {
+            ""
+        } else {
+            "~/.local/share/azahar-emu"
+        }
+    }
+
     fn game_id_for_rom(&self, _config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         crate::n3ds::title_id_for_rom(rom_path)
     }
