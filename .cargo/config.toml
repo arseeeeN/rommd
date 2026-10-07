@@ -1,0 +1,4 @@
+# Link the C runtime statically: VCRUNTIME140.dll is not part of Windows, and
+# without it the binary would not start on machines lacking the VC++ runtime.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
