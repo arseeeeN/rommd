@@ -266,11 +266,7 @@ mod platform {
 /// window; `--background` detaches from it, which closes the window.
 #[cfg(windows)]
 pub mod console {
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn FreeConsole() -> i32;
-        fn GetConsoleWindow() -> *mut std::ffi::c_void;
-    }
+    use windows_sys::Win32::System::Console::{FreeConsole, GetConsoleWindow};
 
     pub fn detach() {
         // SAFETY: no arguments; detaching only invalidates the std handles,

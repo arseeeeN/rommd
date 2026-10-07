@@ -12,7 +12,7 @@ use super::state::AppState;
 use super::types::*;
 use crate::config::ControllerConfig;
 use crate::error::AppError;
-use crate::process::{GameProcess, monitor};
+use crate::process::{GameProcess, ProcessTree, monitor};
 use crate::sync::{self, ConflictRecord, SyncCtx};
 use crate::update::UpdateStatus;
 
@@ -120,6 +120,8 @@ pub async fn launch(
         )
         .await?;
 
+    let tree =
+        ProcessTree::new(&child).ok_or_else(|| anyhow::anyhow!("process exited immediately"))?;
     let pid = child
         .id()
         .ok_or_else(|| anyhow::anyhow!("process exited immediately"))?;
@@ -142,6 +144,7 @@ pub async fn launch(
                 launch_ctx,
                 save_layout,
                 present_at_launch,
+                tree: Arc::new(tree),
             },
         )
         .await;
@@ -190,27 +193,30 @@ pub async fn status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     path = "/stop",
     request_body = StopRequest,
     responses(
-        (status = 204, description = "Game(s) stopped"),
-        (status = 500, description = "Error stopping process")
+        (status = 204, description = "Asked the game(s) to close; they are killed if still running 5 s later"),
+        (status = 404, description = "No game launched by rommd has this PID")
     )
 )]
-pub async fn stop(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<StopRequest>,
-) -> Result<impl IntoResponse, AppError> {
+pub async fn stop(State(state): State<Arc<AppState>>, Json(req): Json<StopRequest>) -> Response {
     match req.pid {
         Some(pid) => {
-            state.processes.kill(pid).await?;
+            if !state.processes.stop(pid).await {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(
+                        serde_json::json!({ "error": format!("no running game has pid {}", pid) }),
+                    ),
+                )
+                    .into_response();
+            }
         }
         None => {
             for game in state.processes.list().await {
-                if let Err(e) = state.processes.kill(game.pid).await {
-                    tracing::warn!("could not kill pid={}: {}", game.pid, e);
-                }
+                state.processes.stop(game.pid).await;
             }
         }
     }
-    Ok(StatusCode::NO_CONTENT)
+    StatusCode::NO_CONTENT.into_response()
 }
 
 #[utoipa::path(
