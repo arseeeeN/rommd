@@ -62,16 +62,17 @@ impl RommClient {
     /// - `fs_name` is a zip, `files.len() > 1`  → bundle all files via RomM's
     ///   `file_ids` endpoint, extract (handles multi-disc / .cue+.bin sets).
     pub async fn download_rom_to_dir(&self, rom: &RomDetail, roms_dir: &Path) -> Result<PathBuf> {
-        let platform_dir = roms_dir.join(&rom.platform_fs_slug);
+        let platform_dir = roms_dir.join(local_file_name(&rom.platform_fs_slug));
+        let local_name = local_file_name(&rom.fs_name);
 
         // Multi-file ROM stored as component files with no zip wrapper in RomM
         // (fs_name has no extension, files list is non-empty). RomM's content
         // endpoint bundles all component files into a zip when file_ids is
         // provided, so we use the same extract approach as zip ROMs.
         if rom.files.len() > 1 && !rom.fs_name.ends_with(".zip") {
-            let stem = Path::new(&rom.fs_name)
+            let stem = Path::new(&local_name)
                 .file_stem()
-                .unwrap_or_else(|| std::ffi::OsStr::new(&rom.fs_name))
+                .unwrap_or_else(|| std::ffi::OsStr::new(&local_name))
                 .to_string_lossy()
                 .into_owned();
             let rom_dir = platform_dir.join(&stem);
@@ -117,7 +118,7 @@ impl RommClient {
 
         if !rom.fs_name.ends_with(".zip") {
             // Plain single-file ROM — download directly, no extraction.
-            let dest = platform_dir.join(&rom.fs_name);
+            let dest = platform_dir.join(&local_name);
             if dest.is_file() {
                 debug!("ROM cache hit: {}", dest.display());
                 return Ok(dest);
@@ -137,14 +138,14 @@ impl RommClient {
         }
 
         // fs_name is a zip — need to extract.
-        let stem = Path::new(&rom.fs_name)
+        let stem = Path::new(&local_name)
             .file_stem()
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
         let rom_dir = platform_dir.join(&stem);
 
-        if rom_dir.exists()
+        if rom_dir.is_dir()
             && let Some(launch) = find_launch_file(&rom_dir).await?
         {
             debug!("ROM cache hit: {}", launch.display());
@@ -152,7 +153,7 @@ impl RommClient {
         }
 
         tokio::fs::create_dir_all(&platform_dir).await?;
-        let zip_dest = platform_dir.join(&rom.fs_name);
+        let zip_dest = platform_dir.join(&local_name);
 
         if rom.files.len() > 1 {
             // Multi-file zip: ask RomM to bundle everything into one zip.
@@ -445,16 +446,13 @@ impl RommClient {
         }
 
         debug!("downloading ROM content from {}", url);
-        let bytes = req
+        let response = req
             .send()
             .await
             .context("GET rom content")?
             .error_for_status()
-            .context("ROM content download failed")?
-            .bytes()
-            .await?;
-
-        write_file(dest, &bytes).await
+            .context("ROM content download failed")?;
+        write_response(response, dest).await
     }
 
     async fn authed_get(&self, url: &str) -> Result<reqwest::Response> {
@@ -471,6 +469,82 @@ impl RommClient {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// A name from RomM (`fs_name`, a platform slug) made safe to use as one path
+/// component: never a separator or `..`, and on Windows none of the
+/// characters it rejects or treats specially (`:` would write to an NTFS
+/// alternate data stream instead of the file), no trailing dots or spaces
+/// (Windows drops them) and no device name such as `CON`.
+fn local_file_name(name: &str) -> String {
+    let reserved = |c: char| {
+        c == '/'
+            || c == '\0'
+            || (cfg!(windows)
+                && (c.is_control() || matches!(c, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')))
+    };
+    let mut local: String = name
+        .chars()
+        .map(|c| if reserved(c) { '_' } else { c })
+        .collect();
+    if cfg!(windows) {
+        local.truncate(local.trim_end_matches(['.', ' ']).len());
+        let device = local.split('.').next().unwrap_or("").trim_end();
+        let is_device = matches!(
+            device.to_ascii_uppercase().as_str(),
+            "CON" | "PRN" | "AUX" | "NUL"
+        ) || (device.len() == 4
+            && device.is_ascii()
+            && ["COM", "LPT"]
+                .iter()
+                .any(|p| device[..3].eq_ignore_ascii_case(p))
+            && device.as_bytes()[3].is_ascii_digit());
+        if is_device {
+            local.insert(0, '_');
+        }
+    }
+    if local.is_empty() || local == "." || local == ".." {
+        local = "_".into();
+    }
+    local
+}
+
+/// `path` with `suffix` appended to its file name.
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut s = path.as_os_str().to_owned();
+    s.push(suffix);
+    PathBuf::from(s)
+}
+
+/// Stream a download to `dest` through `<dest>.part`, so it never sits in
+/// memory whole (Switch ROMs run to tens of GB) and an interrupted download
+/// never leaves a truncated file that looks complete.
+async fn write_response(mut response: reqwest::Response, dest: &Path) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let part = with_suffix(dest, ".part");
+    let result = async {
+        if let Some(parent) = dest.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let mut file = tokio::fs::File::create(&part)
+            .await
+            .with_context(|| format!("creating {}", part.display()))?;
+        while let Some(chunk) = response.chunk().await.context("downloading")? {
+            file.write_all(&chunk)
+                .await
+                .with_context(|| format!("writing {}", part.display()))?;
+        }
+        file.flush().await?;
+        drop(file);
+        tokio::fs::rename(&part, dest)
+            .await
+            .with_context(|| format!("moving the download to {}", dest.display()))
+    }
+    .await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&part).await;
+    }
+    result
+}
 
 async fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
@@ -514,7 +588,7 @@ async fn find_launch_file(dir: &Path) -> Result<Option<PathBuf>> {
         if path.is_dir() {
             continue;
         }
-        match path.extension().and_then(|e| e.to_str()) {
+        match extension(&path).as_deref() {
             Some("m3u") => m3u = Some(path),
             Some("cue") => cue = Some(path),
             Some("zip") => {} // skip inner zips
@@ -529,7 +603,7 @@ async fn find_launch_file(dir: &Path) -> Result<Option<PathBuf>> {
     let is_disc_game = !others.is_empty()
         && others.iter().all(|p| {
             matches!(
-                p.extension().and_then(|e| e.to_str()),
+                extension(p).as_deref(),
                 Some("bin") | Some("iso") | Some("img") | Some("chd") | Some("sbi")
             )
         });
@@ -552,17 +626,107 @@ async fn find_launch_file(dir: &Path) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
+/// Lowercase extension, since disc dumps often come as `GAME.CUE`.
+fn extension(path: &Path) -> Option<String> {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+}
+
+/// Extract into `<dest_dir>.extracting` and move it into place when done, so
+/// an interrupted extraction never leaves a partial game at `dest_dir`.
 async fn extract_zip(zip_path: &Path, dest_dir: &Path) -> Result<()> {
     let zip_path = zip_path.to_owned();
     let dest_dir = dest_dir.to_owned();
     tokio::task::spawn_blocking(move || -> Result<()> {
+        let staging = with_suffix(&dest_dir, ".extracting");
+        if staging.exists() {
+            std::fs::remove_dir_all(&staging)
+                .with_context(|| format!("removing {}", staging.display()))?;
+        }
         let file = std::fs::File::open(&zip_path)
             .with_context(|| format!("opening zip {}", zip_path.display()))?;
         let mut archive = zip::ZipArchive::new(file).context("reading zip archive")?;
-        std::fs::create_dir_all(&dest_dir)?;
-        archive.extract(&dest_dir).context("extracting zip")?;
-        Ok(())
+        std::fs::create_dir_all(&staging)?;
+        if let Err(e) = archive.extract(&staging) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(e).context("extracting zip");
+        }
+        if dest_dir.is_dir() {
+            std::fs::remove_dir_all(&dest_dir)
+                .with_context(|| format!("removing the old {}", dest_dir.display()))?;
+        }
+        std::fs::rename(&staging, &dest_dir)
+            .with_context(|| format!("moving the extracted game to {}", dest_dir.display()))
     })
     .await
     .context("zip extraction task panicked")?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::TempDir;
+
+    #[test]
+    fn local_names_stay_one_safe_component() {
+        assert_eq!(
+            local_file_name("Golden Sun (USA).gba"),
+            "Golden Sun (USA).gba"
+        );
+        assert_eq!(local_file_name("../../evil.gba"), ".._.._evil.gba");
+        assert_eq!(local_file_name(".."), "_");
+        assert_eq!(local_file_name(""), "_");
+        if cfg!(windows) {
+            assert_eq!(
+                local_file_name("Zelda: Link's Awakening?.gb"),
+                "Zelda_ Link's Awakening_.gb"
+            );
+            assert_eq!(local_file_name(r"a\b.gb"), "a_b.gb");
+            assert_eq!(local_file_name("Game. "), "Game");
+            assert_eq!(local_file_name("con.gb"), "_con.gb");
+            assert_eq!(local_file_name("COM1"), "_COM1");
+            assert_eq!(local_file_name("Console.gb"), "Console.gb");
+        }
+    }
+
+    async fn serve(status: u16, body: &'static [u8]) -> RommClient {
+        use axum::{Router, http::StatusCode, routing::get};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route(
+            "/api/roms/{id}/content/{name}",
+            get(move || async move { (StatusCode::from_u16(status).unwrap(), body) }),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        RommClient::new(&RommConfig {
+            base_url: base,
+            api_token: Some("token".into()),
+            username: None,
+            password: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn downloads_land_whole_or_not_at_all() {
+        let dir = TempDir::new("rom-download");
+        let dest = dir.path().join("gba/game.gba");
+
+        let failing = serve(500, b"").await;
+        assert!(
+            failing
+                .download_content(1, "game.gba", None, &dest)
+                .await
+                .is_err()
+        );
+        assert!(!dest.exists());
+        assert!(!with_suffix(&dest, ".part").exists());
+
+        let ok = serve(200, b"rom bytes").await;
+        ok.download_content(1, "game.gba", None, &dest)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"rom bytes");
+        assert!(!with_suffix(&dest, ".part").exists());
+    }
 }
