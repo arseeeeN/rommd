@@ -113,3 +113,13 @@ localhost: the client spawns it, nothing new is exposed on the network, and
 `server/security.rs` is unaffected. A streamable-HTTP endpoint in the daemon
 would also work, but MCP clients send no RomM `Origin`, so it would need its
 own place in the access rules.
+
+## A status surface for the background daemon
+
+Windows users expect a background app to have a notification-area icon
+(status, open config or log, check for updates, quit). A tray icon means
+platform-specific UI code on three platforms, so it is deferred. The
+preferred direction is to configure and watch rommd from RomM instead, which
+depends on what RomM's API can carry. Until then the log file
+(`<data dir>/rommd.log` under the logon task) and the HTTP API are the
+interface.
