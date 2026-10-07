@@ -25,7 +25,7 @@ try {
     if (-not $expected -or $expected -ne $actual) { throw "checksum mismatch for $asset; not installing" }
 
     # A running rommd locks its binary; stop it before replacing.
-    schtasks /End /TN rommd 2>$null | Out-Null
+    if (Get-ScheduledTask -TaskName rommd -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName rommd }
     Get-Process rommd -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe } | Stop-Process -Force
     Start-Sleep -Milliseconds 500
     Move-Item -Force "$tmp\$asset" $exe
