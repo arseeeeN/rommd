@@ -259,7 +259,7 @@ mode = "auto"
 # -------
 # [emulators.duckstation]
 # binary     = "C:/Program Files/DuckStation/duckstation-qt.exe"
-# config_dir = "%APPDATA%/DuckStation"
+# config_dir = "~/Documents/DuckStation"       # or the portable install folder
 #
 # [emulators.mgba]
 # binary     = "C:/Program Files/mGBA/mGBA.exe"
@@ -267,11 +267,22 @@ mode = "auto"
 #
 # [emulators.dolphin]
 # binary     = "C:/Program Files/Dolphin/Dolphin.exe"
-# config_dir = "%APPDATA%/Dolphin"
+# config_dir = "%APPDATA%/Dolphin Emulator"
 #
 # [emulators.ryujinx]
 # binary     = "C:/Program Files/Ryujinx/Ryujinx.exe"
 # config_dir = "%APPDATA%/Ryujinx"
+#
+# [emulators.eden]
+# binary     = "C:/Program Files/Eden/eden.exe"
+# config_dir = "%APPDATA%/eden"
+#
+# [emulators.azahar]
+# binary     = "C:/Program Files/Azahar/azahar.exe"
+# config_dir = "%APPDATA%/Azahar"
+#
+# Use forward slashes (or single-quoted strings) for Windows paths: a
+# backslash in a double-quoted TOML string is an escape character.
 #
 # Linux
 # -----
