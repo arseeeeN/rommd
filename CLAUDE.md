@@ -23,7 +23,7 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 - **`src/profile.rs`** — portable settings overlay (ProfileBlob)
 - **`src/ini.rs`** — INI file read/write used by DuckStation and Dolphin
 - **`src/update.rs`** — signed self-update from GitHub Releases, `GET/POST /update`
-- **`src/service.rs`** — start at login: systemd user unit, launchd agent, Windows logon task
+- **`src/service.rs`** — start at login: systemd user unit, launchd agent, Windows per-user logon task (XML, `--background`)
 - **`install/`, `.github/workflows/`** — install scripts, CI, release pipeline (`dev/releasing.md`)
 
 ## API access
@@ -46,7 +46,11 @@ while no game runs, then restart) / notify / off. Restart: with
 `ROMMD_SUPERVISED` set (by the service definitions) rommd exits and the service
 manager restarts it; otherwise it spawns the new binary first. The systemd unit
 uses `KillMode=process` and the launchd agent `AbandonProcessGroup` so running
-emulators survive a rommd restart. Linux release builds are static musl;
+emulators survive a rommd restart. The Windows task is registered from XML
+(a per-user logon trigger needs no elevation) to lift Task Scheduler's
+battery, 3-day and below-normal-priority defaults; it runs `rommd
+--background`, which logs to `<data dir>/rommd.log` and detaches from the
+console window. It is not supervised: the updater spawns the new binary. Linux release builds are static musl;
 reqwest uses rustls and zip only deflate, so there are no C dependencies
 beyond `ring`.
 

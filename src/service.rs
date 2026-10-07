@@ -1,7 +1,7 @@
 //! `rommd service install|uninstall`: start rommd at login with the platform's
 //! own mechanism, so it runs without a terminal and restarts after updates.
-//! Every definition sets `ROMMD_SUPERVISED`, which tells the updater it may
-//! simply exit and be started again.
+//! The systemd and launchd definitions set `ROMMD_SUPERVISED`, which tells the
+//! updater it may simply exit and be started again.
 
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -22,6 +22,13 @@ fn run(cmd: &mut Command) -> Result<()> {
     let status = cmd.status().with_context(|| format!("running {:?}", cmd))?;
     anyhow::ensure!(status.success(), "{:?} failed ({})", cmd, status);
     Ok(())
+}
+
+#[cfg(any(target_os = "macos", windows))]
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -141,12 +148,6 @@ mod platform {
         ))
     }
 
-    fn xml_escape(s: &str) -> String {
-        s.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-    }
-
     pub fn install(exe: &Path) -> Result<()> {
         let path = plist_path()?;
         let _ =
@@ -179,16 +180,64 @@ mod platform {
 
     const TASK: &str = "rommd";
 
-    /// A logon task. Windows has no restart-on-exit here, so the updater starts
-    /// the new version itself (`ROMMD_SUPERVISED` is not set).
+    /// A task started at this user's logon, with `--background` so it runs
+    /// without a console window and logs to a file. A logon trigger for one
+    /// user needs no elevation (`schtasks /SC ONLOGON` does). The settings
+    /// override Task Scheduler's defaults, which would not start rommd on
+    /// battery, stop it when unplugged or after 3 days, and run it below
+    /// normal priority, which the emulators it starts would inherit. Ending
+    /// the task leaves those emulators running. Windows has no restart-on-exit
+    /// here, so the updater starts the new version itself (`ROMMD_SUPERVISED`
+    /// is not set).
+    pub fn task_xml(exe: &Path, user: &str) -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>rommd: RomM emulator bridge</Description></RegistrationInfo>
+  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{user}</UserId></LogonTrigger></Triggers>
+  <Principals>
+    <Principal id="Author"><UserId>{user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>5</Priority>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>{exe}</Command><Arguments>--background</Arguments></Exec></Actions>
+</Task>
+"#,
+            user = xml_escape(user),
+            exe = xml_escape(&exe.display().to_string()),
+        )
+    }
+
+    fn current_user() -> Result<String> {
+        let name = std::env::var("USERNAME").context("USERNAME is not set")?;
+        Ok(match std::env::var("USERDOMAIN") {
+            Ok(domain) if !domain.is_empty() => format!("{domain}\\{name}"),
+            _ => name,
+        })
+    }
+
     pub fn install(exe: &Path) -> Result<()> {
-        let action = format!("\"{}\"", exe.display());
-        run(Command::new("schtasks").args([
-            "/Create", "/F", "/SC", "ONLOGON", "/RL", "LIMITED", "/TN", TASK, "/TR", &action,
-        ]))?;
+        // schtasks reads the definition from a file, as UTF-16 like it declares.
+        let xml: Vec<u8> = std::iter::once(0xFEFF)
+            .chain(task_xml(exe, &current_user()?).encode_utf16())
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        let path = std::env::temp_dir().join(format!("rommd-task-{}.xml", std::process::id()));
+        std::fs::write(&path, xml).with_context(|| format!("writing {}", path.display()))?;
+        let created = run(Command::new("schtasks")
+            .args(["/Create", "/F", "/TN", TASK, "/XML"])
+            .arg(&path));
+        let _ = std::fs::remove_file(&path);
+        created?;
         let _ = run(Command::new("schtasks").args(["/End", "/TN", TASK]));
         run(Command::new("schtasks").args(["/Run", "/TN", TASK]))?;
         println!("rommd now starts when you log in (scheduled task \"{TASK}\").");
+        println!("Logs: {}", crate::log_path().display());
         Ok(())
     }
 
@@ -210,6 +259,48 @@ mod platform {
 
     pub fn uninstall() -> Result<()> {
         anyhow::bail!("starting rommd at login is not supported on this platform")
+    }
+}
+
+/// rommd is a console program, so the logon task starts it with a console
+/// window; `--background` detaches from it, which closes the window.
+#[cfg(windows)]
+pub mod console {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn FreeConsole() -> i32;
+        fn GetConsoleWindow() -> *mut std::ffi::c_void;
+    }
+
+    pub fn detach() {
+        // SAFETY: no arguments; detaching only invalidates the std handles,
+        // which logging no longer uses in background mode.
+        unsafe { FreeConsole() };
+    }
+
+    pub fn has_window() -> bool {
+        // SAFETY: no arguments; returns a window handle or null.
+        !unsafe { GetConsoleWindow() }.is_null()
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    #[test]
+    fn task_runs_in_the_background_without_default_limits() {
+        let xml = super::platform::task_xml(
+            std::path::Path::new(r"C:\Users\A&B\AppData\Local\Programs\rommd\rommd.exe"),
+            r"PC\A&B",
+        );
+        assert!(xml.contains(
+            r"<Command>C:\Users\A&amp;B\AppData\Local\Programs\rommd\rommd.exe</Command>"
+        ));
+        assert!(xml.contains("<Arguments>--background</Arguments>"));
+        assert!(xml.contains(r"<LogonTrigger><Enabled>true</Enabled><UserId>PC\A&amp;B</UserId>"));
+        assert!(xml.contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"));
+        assert!(xml.contains("<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>"));
+        assert!(xml.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
+        assert!(xml.contains("<Priority>5</Priority>"));
     }
 }
 

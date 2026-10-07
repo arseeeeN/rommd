@@ -356,9 +356,17 @@ pub fn restart() -> ! {
         std::process::exit(0);
     }
     let started = std::env::current_exe().and_then(|exe| {
-        std::process::Command::new(exe)
-            .args(std::env::args_os().skip(1))
-            .spawn()
+        let mut cmd = std::process::Command::new(exe);
+        cmd.args(std::env::args_os().skip(1));
+        // Running detached (`--background`), the new copy would otherwise
+        // open a console window of its own.
+        #[cfg(windows)]
+        if !crate::service::console::has_window() {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        cmd.spawn()
     });
     match started {
         Ok(child) => {

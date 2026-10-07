@@ -18,6 +18,7 @@ mod update;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -38,6 +39,10 @@ use server::state::AppState;
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+    /// Log to a file instead of the terminal and, on Windows, close the
+    /// console window. Used by the Windows logon task.
+    #[arg(long, hide = true)]
+    background: bool,
 }
 
 #[derive(Subcommand)]
@@ -58,24 +63,75 @@ enum ServiceAction {
 }
 
 fn main() -> Result<()> {
-    match Cli::parse().command {
+    let cli = Cli::parse();
+    match cli.command {
         Some(Command::Service {
             action: ServiceAction::Install,
         }) => service::install(),
         Some(Command::Service {
             action: ServiceAction::Uninstall,
         }) => service::uninstall(),
-        None => tokio::runtime::Runtime::new()?.block_on(run_daemon()),
+        None => {
+            let result = tokio::runtime::Runtime::new()?.block_on(run_daemon(cli.background));
+            // In the background stderr goes nowhere; the log is all there is.
+            if cli.background
+                && let Err(e) = &result
+            {
+                tracing::error!("{:#}", e);
+            }
+            result
+        }
     }
 }
 
-async fn run_daemon() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("rommd=debug".parse().unwrap()),
-        )
+/// Where `--background` writes the log.
+pub fn log_path() -> PathBuf {
+    sync::data_dir().join("rommd.log")
+}
+
+const LOG_ROTATE_BYTES: u64 = 10 * 1024 * 1024;
+
+fn init_logging(background: bool) -> Result<()> {
+    let fmt = tracing_subscriber::fmt().with_env_filter(
+        tracing_subscriber::EnvFilter::from_default_env()
+            .add_directive("rommd=debug".parse().unwrap()),
+    );
+    if !background {
+        fmt.init();
+        return Ok(());
+    }
+    let path = log_path();
+    let file = open_log(&path).with_context(|| format!("opening {}", path.display()))?;
+    fmt.with_ansi(false)
+        .with_writer(std::sync::Mutex::new(file))
         .init();
+    // A panic message would go to the console, which is gone.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
+        tracing::error!("{}", panic);
+        default_hook(panic);
+    }));
+    #[cfg(windows)]
+    service::console::detach();
+    Ok(())
+}
+
+/// Append to the log, moving it to `rommd.log.old` once it grows large.
+fn open_log(path: &Path) -> std::io::Result<std::fs::File> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    if std::fs::metadata(path).is_ok_and(|m| m.len() > LOG_ROTATE_BYTES) {
+        let _ = std::fs::rename(path, path.with_extension("log.old"));
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+}
+
+async fn run_daemon(background: bool) -> Result<()> {
+    init_logging(background)?;
 
     let config = Config::load_or_create().context("loading config")?;
     info!(
