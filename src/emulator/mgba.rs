@@ -62,24 +62,38 @@ impl Emulator for MGba {
     ) -> Result<(Child, LaunchContext)> {
         ensure_paths_configured(config).await?;
 
+        #[cfg_attr(windows, allow(unused_mut))]
         let mut launch_ctx = LaunchContext::default();
         let mut cmd = super::emulator_command(&config.binary);
 
+        // Write a merged config to a temp dir and point XDG_CONFIG_HOME at it.
+        #[cfg(not(windows))]
         if let Some(profile) = profile {
-            // Write a merged config to a temp dir and redirect mGBA's config
-            // home to it. mGBA resolves its config dir from XDG_CONFIG_HOME on
-            // Unix and from APPDATA on Windows, so we set the appropriate var.
             let temp_dir = write_temp_config_dir(config, profile).await?;
-            #[cfg(not(windows))]
             cmd.env("XDG_CONFIG_HOME", &temp_dir);
-            #[cfg(windows)]
-            cmd.env("APPDATA", &temp_dir);
             debug!(
                 "launching mGBA with temp config dir {} ({} override(s))",
                 temp_dir.display(),
                 profile.overlay.len()
             );
             launch_ctx.temp_dirs.push(temp_dir);
+        }
+        // On Windows mGBA finds its config through the shell's known folders,
+        // which no environment variable redirects, so pass the settings as
+        // `-C key=value` overrides instead.
+        #[cfg(windows)]
+        if let Some(profile) = profile {
+            let (overrides, skipped) = command_line_overrides(&profile.overlay);
+            if !skipped.is_empty() {
+                tracing::warn!(
+                    "mGBA on Windows cannot take these profile settings on its command line: {}",
+                    skipped.join(", ")
+                );
+            }
+            debug!("launching mGBA with {} -C override(s)", overrides.len());
+            for o in overrides {
+                cmd.arg("-C").arg(o);
+            }
         }
 
         cmd.arg(rom_path);
@@ -106,21 +120,32 @@ impl Emulator for MGba {
     }
 }
 
-/// Write a merged config to a fresh temp directory for use as the mGBA config
-/// home. The directory name mGBA expects differs by platform:
-///   Unix:    `$XDG_CONFIG_HOME/mgba/config.ini`
-///   Windows: `%APPDATA%\mGBA\config.ini`
-/// The caller sets the appropriate env var and is responsible for cleanup.
+/// `key=value` arguments for mGBA's `-C` option. mGBA consults these before
+/// its `[ports.qt]` and root settings, but not for other sections such as
+/// input mappings, whose keys are returned separately.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn command_line_overrides(overlay: &IndexMap<String, String>) -> (Vec<String>, Vec<&str>) {
+    let mut overrides = Vec::new();
+    let mut skipped = Vec::new();
+    for (flat_key, value) in overlay {
+        match flat_key.rsplit_once('.') {
+            Some(("" | "ports.qt", key)) => overrides.push(format!("{}={}", key, value)),
+            _ => skipped.push(flat_key.as_str()),
+        }
+    }
+    (overrides, skipped)
+}
+
+/// Write a merged config to `<fresh temp dir>/mgba/config.ini` for use as
+/// `XDG_CONFIG_HOME`. The caller is responsible for cleanup.
+#[cfg(not(windows))]
 async fn write_temp_config_dir(config: &EmulatorConfig, profile: &ProfileBlob) -> Result<PathBuf> {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let temp_dir = std::env::temp_dir().join(format!("rommd-mgba-{}", ts));
-    #[cfg(not(windows))]
     let mgba_dir = temp_dir.join("mgba");
-    #[cfg(windows)]
-    let mgba_dir = temp_dir.join("mGBA");
     tokio::fs::create_dir_all(&mgba_dir)
         .await
         .context("creating temp config dir")?;
@@ -215,6 +240,21 @@ async fn ensure_paths_configured(config: &EmulatorConfig) -> Result<()> {
 mod tests {
     use super::*;
     use crate::testing::{TempDir, write};
+
+    #[test]
+    fn command_line_overrides_cover_core_settings_only() {
+        let overlay: IndexMap<String, String> = [
+            ("ports.qt.frameskip", "2"),
+            (".volume", "0x80"),
+            ("gba.input.QT_K.keyA", "88"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+        let (overrides, skipped) = command_line_overrides(&overlay);
+        assert_eq!(overrides, ["frameskip=2", "volume=0x80"]);
+        assert_eq!(skipped, ["gba.input.QT_K.keyA"]);
+    }
 
     #[tokio::test]
     async fn layout_follows_configured_paths_and_maps_srm() {
