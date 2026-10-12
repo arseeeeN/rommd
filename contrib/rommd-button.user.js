@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         rommd: Launch button
 // @namespace    https://github.com/arseeeeN/rommd
-// @version      0.3.0
+// @version      0.3.1
 // @description  Adds a Launch button to the action bar of RomM game pages that starts the game on this PC through the local rommd daemon.
 // @match        https://romm.example.com/*
 // @grant        none
@@ -53,6 +53,26 @@
     }
   }
 
+  // A refused origin looks like a network error to the page, since rommd's
+  // refusal carries no CORS headers. A no-cors request still completes when
+  // rommd is running, which tells the two apart.
+  async function whyUnreachable() {
+    try {
+      await fetch(ROMMD + "/health", { mode: "no-cors" });
+    } catch (_) {
+      return (
+        "rommd is not reachable at " + ROMMD + ". Is it running? Opening " +
+        ROMMD + "/health in a tab should show its status. In Chrome and " +
+        "Edge, also check that this site may access your local network."
+      );
+    }
+    return (
+      "rommd is running but refused this page. Set romm.base_url in rommd's " +
+      "config.toml to " + location.origin + " (or add it to " +
+      "server.allowed_origins), then restart rommd."
+    );
+  }
+
   async function launch(romId) {
     const romRes = await fetch("/api/roms/" + romId, { credentials: "include" });
     if (!romRes.ok) throw new Error("RomM: " + (await errorText(romRes)));
@@ -69,7 +89,7 @@
         body: JSON.stringify({ rom_id: romId, emulator: emulator }),
       });
     } catch (_) {
-      throw new Error("rommd is not reachable at " + ROMMD + ". Is it running?");
+      throw new Error(await whyUnreachable());
     }
     if (!res.ok) throw new Error(await errorText(res));
   }
