@@ -131,3 +131,29 @@ growing (manual installs, Windows path quoting, where each emulator keeps its
 folder on each OS, portable installs). Move the detail into a wiki or docs
 site, one page per emulator and per platform, and keep the README to a quick
 start with links.
+
+## Sync saves while the game runs
+
+Newer RomM versions sync saves from the browser player while the game runs,
+by watching its save files. rommd syncs only before launch and after exit,
+so a shutdown, crash or power loss during play loses the upload until the
+next launch, and another device can't pick up progress mid-session.
+
+**Idea.** Watch the launch layout's save locations (`notify` crate:
+inotify, FSEvents, ReadDirectoryChangesW) and run the same `sync_unit`
+on a change, upload-only while the game runs.
+
+**To work out first.**
+- How RomM's browser sync behaves (endpoints, slot, how often it uploads),
+  so both sides agree on what a mid-session version is.
+- Debounce: emulators write saves in several steps (Ryujinx's two-phase
+  commit, Dolphin rewriting GCI files, multi-file bundles), so wait until
+  the files are quiet and consistent before hashing.
+- History: archive saves go into `autosave`, where RomM keeps the newest
+  10 per ROM and slot. An upload per in-game save would push out older
+  versions within one session; coalesce, or upload mid-session versions
+  somewhere that does not rotate the history.
+- Base and conflicts: each mid-session upload becomes the new base, so the
+  post-exit pass stays a no-op when nothing changed after the last upload.
+- Restores never happen mid-session; a newer RomM save that appears while
+  the game runs is a conflict for the post-exit pass, as today.
