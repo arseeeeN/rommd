@@ -25,6 +25,7 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 - **`src/update.rs`** — signed self-update from GitHub Releases, `GET/POST /update`
 - **`src/service.rs`** — start at login: systemd user unit, launchd agent, Windows per-user logon task (XML, `--background`)
 - **`install/`, `.github/workflows/`** — install scripts, CI, release pipeline (`dev/releasing.md`)
+- **`contrib/rommd-button.user.js`** — temporary userscript adding a Launch button next to Play on RomM game pages (anchored on the buttons' aria-labels); keep it ASCII-only
 
 ## API access
 

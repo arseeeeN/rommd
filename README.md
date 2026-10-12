@@ -6,9 +6,9 @@ frontend asks rommd to launch a game through its local [HTTP API](#api). rommd
 downloads the ROM, restores your latest save from RomM, starts the emulator,
 and uploads your progress when you quit.
 
-> **Status:** early and not yet released. rommd has no user interface of its
-> own, and RomM's web UI doesn't call it yet, so for now games are launched
-> through the API (for example with `curl`).
+> **Status:** early (0.x). rommd has no user interface of its own, and RomM's
+> web UI doesn't call it yet. Games are launched through the API, or from
+> RomM's game pages with a [temporary browser script](#launch-button-in-romm-temporary).
 
 - **Launch from your library**: ROMs are downloaded on demand and cached.
 - **Save sync that doesn't lose progress**: every save is compared against
@@ -151,6 +151,29 @@ mode = "auto"    # auto | notify | off
 
 Every release binary is signed. rommd only installs an update whose signature
 matches the key built into it, for exactly that version and platform.
+
+## Launch button in RomM (temporary)
+
+Until RomM itself can call rommd, a userscript adds a **Launch** button next
+to **Play** on RomM's game pages. It starts the game on your computer through
+rommd; Play keeps opening RomM's in-browser player. This is a stopgap and
+will be replaced once RomM supports launching through local apps.
+
+1. Install [Tampermonkey](https://www.tampermonkey.net/). Firefox works as
+   is. In Chrome and Edge, turn on **Allow User Scripts** in Tampermonkey's
+   extension details; the first launch may ask to let your RomM site access
+   your local network. Tampermonkey currently does not run scripts in
+   Vivaldi.
+2. Create a new script in Tampermonkey and replace its contents with
+   [`contrib/rommd-button.user.js`](contrib/rommd-button.user.js).
+3. Change the `@match` line to your RomM address, e.g.
+   `https://romm.mydomain.net/*`. It must be the same address as
+   `romm.base_url` in rommd's config, or rommd refuses the browser's requests.
+4. Check the `EMULATORS` table near the top: it maps RomM platforms to
+   rommd's emulator IDs. Point each platform at an emulator you configured.
+
+The script finds the button bar by its button labels, so a RomM update that
+renames them can make the button disappear until the script is adjusted.
 
 ## API
 
