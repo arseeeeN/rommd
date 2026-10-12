@@ -183,3 +183,13 @@ field, so it would go into the file name (tags like `[Dolphin 2606]` would
 need to survive `local_file_name`) or the `emulator` field, or RomM gains a
 field. Then check the other emulators: DuckStation, mGBA and Azahar states
 may each have their own version rules.
+
+## Reload the config without a restart
+
+Editing `config.toml` needs `rommd service restart` today. Watching the file
+and applying changes in place would be friendlier, but the emulator registry,
+the RomM client, the allowed origins and the update settings are all built
+once at startup and shared by running games. Decide per setting what a
+reload may change while a game runs (a running game should keep the emulator
+config it launched with), and report a config with errors in the log while
+keeping the last good one.

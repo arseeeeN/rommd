@@ -18,6 +18,11 @@ pub fn uninstall() -> Result<()> {
     platform::uninstall()
 }
 
+/// Restart the installed service through the platform's service manager.
+pub fn restart() -> Result<()> {
+    platform::restart().context("restarting rommd; is it installed (`rommd service install`)?")
+}
+
 fn run(cmd: &mut Command) -> Result<()> {
     let status = cmd.status().with_context(|| format!("running {:?}", cmd))?;
     anyhow::ensure!(status.success(), "{:?} failed ({})", cmd, status);
@@ -91,6 +96,10 @@ mod platform {
         Ok(())
     }
 
+    pub fn restart() -> Result<()> {
+        run(Command::new("systemctl").args(["--user", "restart", UNIT]))
+    }
+
     pub fn uninstall() -> Result<()> {
         let _ = run(Command::new("systemctl").args(["--user", "disable", "--now", UNIT]));
         let path = unit_path()?;
@@ -160,6 +169,10 @@ mod platform {
         println!("rommd now starts when you log in ({}).", path.display());
         println!("Logs: ~/Library/Logs/rommd.log");
         Ok(())
+    }
+
+    pub fn restart() -> Result<()> {
+        run(Command::new("launchctl").args(["kickstart", "-k", &format!("{}/{}", domain(), LABEL)]))
     }
 
     pub fn uninstall() -> Result<()> {
@@ -234,15 +247,58 @@ mod platform {
             .arg(&path));
         let _ = std::fs::remove_file(&path);
         created?;
-        let _ = run(Command::new("schtasks").args(["/End", "/TN", TASK]));
+        stop_running();
         run(Command::new("schtasks").args(["/Run", "/TN", TASK]))?;
         println!("rommd now starts when you log in (scheduled task \"{TASK}\").");
         println!("Logs: {}", crate::log_path().display());
         Ok(())
     }
 
+    /// Stop every running rommd but this process, and wait until they have
+    /// exited. Ending the task is not enough: after a self-update the daemon
+    /// is the copy the old version started, which the task does not track,
+    /// and `schtasks /End` returns before the process is gone.
+    fn stop_running() {
+        let filters = [
+            "/FI",
+            "IMAGENAME eq rommd.exe",
+            "/FI",
+            &format!("PID ne {}", std::process::id()),
+        ];
+        let _ = Command::new("schtasks")
+            .args(["/End", "/TN", TASK])
+            .output();
+        let _ = Command::new("taskkill").arg("/F").args(filters).output();
+        for _ in 0..50 {
+            let listed = Command::new("tasklist")
+                .args(filters)
+                .args(["/FO", "CSV", "/NH"])
+                .output();
+            match listed {
+                Ok(out) if String::from_utf8_lossy(&out.stdout).contains("rommd.exe") => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                _ => return,
+            }
+        }
+    }
+
+    pub fn restart() -> Result<()> {
+        stop_running();
+        let run = Command::new("schtasks")
+            .args(["/Run", "/TN", TASK])
+            .output()
+            .context("running schtasks")?;
+        anyhow::ensure!(
+            run.status.success(),
+            "{}",
+            String::from_utf8_lossy(&run.stderr).trim()
+        );
+        Ok(())
+    }
+
     pub fn uninstall() -> Result<()> {
-        let _ = run(Command::new("schtasks").args(["/End", "/TN", TASK]));
+        stop_running();
         run(Command::new("schtasks").args(["/Delete", "/F", "/TN", TASK]))?;
         println!("rommd no longer starts automatically.");
         Ok(())
@@ -254,6 +310,10 @@ mod platform {
     use super::*;
 
     pub fn install(_exe: &Path) -> Result<()> {
+        anyhow::bail!("starting rommd at login is not supported on this platform")
+    }
+
+    pub fn restart() -> Result<()> {
         anyhow::bail!("starting rommd at login is not supported on this platform")
     }
 

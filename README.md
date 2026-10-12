@@ -124,15 +124,17 @@ emulator splits its settings into a separate folder (Dolphin, Eden and Azahar
 on Linux), rommd finds them on its own. At startup rommd warns in its log when
 a `config_dir` does not look like that emulator's folder and says where it
 usually is. The generated config file has examples for each platform.
-Restart rommd after editing the config.
+Restart rommd after editing the config with `rommd service restart`. It
+checks the config for errors first and refuses while a game is running, so
+that game's saves still sync when it closes.
 
 ## Running
 
 `rommd service install` starts rommd at login: a systemd user service on
 Linux and a launch agent on macOS (both restart it if it stops), a logon task
 on Windows (no administrator rights needed; it runs without a console window).
-`rommd service uninstall` removes it. Running `rommd` with no command runs it
-in the foreground.
+`rommd service restart` restarts it and `rommd service uninstall` removes it.
+Running `rommd` with no command runs it in the foreground.
 
 Logs: `journalctl --user -u rommd -f` on Linux, `~/Library/Logs/rommd.log` on
 macOS, `%LOCALAPPDATA%\rommd\rommd.log` on Windows.
