@@ -37,6 +37,53 @@ impl RommClient {
 // Dead-code suppression covers methods not yet wired up (save download, etc.).
 #[allow(dead_code)]
 impl RommClient {
+    /// Whether `base_url` is a RomM server that accepts our credentials.
+    /// Returns its version. Run at startup, so a wrong address or token shows
+    /// up in the log instead of only when a game is launched.
+    pub async fn check(&self) -> Result<String> {
+        let url = format!("{}/api/heartbeat", self.base_url);
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .with_context(|| format!("cannot reach {}", self.base_url))?;
+        let heartbeat: serde_json::Value = match response.error_for_status() {
+            Ok(r) => r.json().await.ok(),
+            Err(_) => None,
+        }
+        .with_context(|| {
+            format!(
+                "{} does not look like a RomM server (no /api/heartbeat); check romm.base_url",
+                self.base_url
+            )
+        })?;
+        let version = heartbeat["SYSTEM"]["VERSION"]
+            .as_str()
+            .unwrap_or("of unknown version")
+            .to_owned();
+
+        let token = self
+            .tokens
+            .get_token()
+            .await
+            .context("RomM rejected the username and password")?;
+        let me = self
+            .client
+            .get(format!("{}/api/users/me", self.base_url))
+            .bearer_auth(token)
+            .send()
+            .await
+            .context("checking the RomM login")?;
+        anyhow::ensure!(
+            me.status().is_success(),
+            "RomM {} rejected the credentials ({}); check romm.api_token or username and password",
+            version,
+            me.status()
+        );
+        Ok(version)
+    }
+
     // ── ROM ──────────────────────────────────────────────────────────────────
 
     pub async fn get_rom(&self, rom_id: i64) -> Result<RomDetail> {
@@ -705,6 +752,73 @@ mod tests {
             username: None,
             password: None,
         })
+    }
+
+    fn client(base_url: String, token: &str) -> RommClient {
+        RommClient::new(&RommConfig {
+            base_url,
+            api_token: Some(token.into()),
+            username: None,
+            password: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn check_names_what_is_wrong_with_the_connection() {
+        use axum::{Json, Router, http::HeaderMap, http::StatusCode, routing::get};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route(
+                "/api/heartbeat",
+                get(|| async { Json(serde_json::json!({"SYSTEM": {"VERSION": "5.2.0"}})) }),
+            )
+            .route(
+                "/api/users/me",
+                get(|headers: HeaderMap| async move {
+                    let ok = headers
+                        .get("authorization")
+                        .is_some_and(|v| v == "Bearer good");
+                    if ok {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::UNAUTHORIZED
+                    }
+                }),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        assert_eq!(client(base.clone(), "good").check().await.unwrap(), "5.2.0");
+
+        let bad_token = format!(
+            "{:#}",
+            client(base.clone(), "bad").check().await.unwrap_err()
+        );
+        assert!(
+            bad_token.contains("rejected the credentials"),
+            "{bad_token}"
+        );
+
+        let not_romm = format!(
+            "{:#}",
+            client(format!("{base}/sub"), "good")
+                .check()
+                .await
+                .unwrap_err()
+        );
+        assert!(
+            not_romm.contains("does not look like a RomM server"),
+            "{not_romm}"
+        );
+
+        let unreachable = format!(
+            "{:#}",
+            client("http://127.0.0.1:1".into(), "good")
+                .check()
+                .await
+                .unwrap_err()
+        );
+        assert!(unreachable.contains("cannot reach"), "{unreachable}");
     }
 
     #[tokio::test]

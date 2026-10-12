@@ -143,6 +143,19 @@ async fn run_daemon(background: bool) -> Result<()> {
     info!("roms_dir: {}", config.roms_dir().display());
 
     let romm = config.romm.as_ref().map(|c| Arc::new(RommClient::new(c)));
+    match (&romm, &config.romm) {
+        (Some(client), Some(romm_config)) => {
+            let client = client.clone();
+            let url = romm_config.base_url.clone();
+            tokio::spawn(async move {
+                match client.check().await {
+                    Ok(version) => info!("connected to RomM {} at {}", version, url),
+                    Err(e) => warn!("RomM: {:#}", e),
+                }
+            });
+        }
+        _ => warn!("no [romm] section in the config: games can only launch with local_path"),
+    }
 
     let mut emulators: HashMap<String, Arc<dyn Emulator>> = HashMap::new();
     // Use id() as the registry key so the trait and the map stay in sync.
