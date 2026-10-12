@@ -10,7 +10,7 @@ and bidirectional save/state sync with RomM.
 RomM (remote) ←→ rommd daemon ←→ local emulators
 ```
 
-- **`src/main.rs`** — CLI (`rommd`, `rommd service install|uninstall`), startup, emulator registry
+- **`src/main.rs`** — CLI (`rommd`, `rommd service install|restart|uninstall`), startup, emulator registry
 - **`src/server/`** — axum HTTP handlers, OpenAPI spec (utoipa), request/response types
 - **`src/process.rs`** — process tracking (a game is its whole process tree: Unix process group, Windows job object), stop, post-exit sync trigger
 - **`src/emulator/`** — one file per emulator, all implement the `Emulator` trait
