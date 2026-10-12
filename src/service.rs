@@ -1,13 +1,15 @@
-//! `rommd service install|uninstall`: start rommd at login with the platform's
-//! own mechanism, so it runs without a terminal and restarts after updates.
-//! The systemd and launchd definitions set `ROMMD_SUPERVISED`, which tells the
-//! updater it may simply exit and be started again.
+//! `rommd service install|start|stop|restart|uninstall`: start rommd at login
+//! with the platform's own mechanism, so it runs without a terminal and
+//! restarts after updates, and control it there. The systemd and launchd
+//! definitions set `ROMMD_SUPERVISED`, which tells the updater it may simply
+//! exit and be started again.
 
 use anyhow::{Context, Result};
-use std::path::Path;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
+
+use crate::config::{Config, ServerConfig};
 
 pub fn install() -> Result<()> {
     let exe = std::env::current_exe().context("locating the rommd binary")?;
@@ -18,9 +20,146 @@ pub fn uninstall() -> Result<()> {
     platform::uninstall()
 }
 
-/// Restart the installed service through the platform's service manager.
-pub fn restart() -> Result<()> {
-    platform::restart().context("restarting rommd; is it installed (`rommd service install`)?")
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Control {
+    Start,
+    Stop,
+    Restart,
+}
+
+/// Start, stop or restart the installed service. Starting with a broken
+/// config would leave rommd stopped, and stopping during a game would skip
+/// its save sync, so both are checked first; each step then waits until the
+/// daemon answers, or no longer does.
+pub async fn control(action: Control) -> Result<()> {
+    let config = Config::load_or_create();
+    let port = config
+        .as_ref()
+        .map_or(ServerConfig::default().port, |c| c.server.port);
+    if action != Control::Stop {
+        config.context("the config has an error; fix it and try again")?;
+    }
+    let daemon = Daemon::new(port)?;
+    let installed = "is rommd installed (`rommd service install`)?";
+    match action {
+        Control::Start => {
+            if let Some(version) = daemon.version().await {
+                println!("rommd {version} is already running.");
+                return Ok(());
+            }
+            platform::start().context(installed)?;
+            let version = daemon.wait_until_up().await?;
+            println!("rommd {version} is running.");
+        }
+        Control::Stop => {
+            daemon.refuse_while_playing().await?;
+            platform::stop().context(installed)?;
+            daemon.wait_until_down().await?;
+            println!(
+                "rommd is stopped. It starts again when you log in; \
+                 `rommd service uninstall` stops that too."
+            );
+        }
+        Control::Restart => {
+            daemon.refuse_while_playing().await?;
+            platform::restart().context(installed)?;
+            let version = daemon.wait_until_up().await?;
+            println!("rommd {version} is running with the current config.");
+        }
+    }
+    Ok(())
+}
+
+/// The running daemon, reached through its own API.
+struct Daemon {
+    client: reqwest::Client,
+    base: String,
+}
+
+impl Daemon {
+    fn new(port: u16) -> Result<Self> {
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(3))
+                .build()?,
+            base: format!("http://127.0.0.1:{port}"),
+        })
+    }
+
+    async fn get(&self, path: &str) -> Option<serde_json::Value> {
+        let response = self
+            .client
+            .get(format!("{}{}", self.base, path))
+            .send()
+            .await
+            .ok()?;
+        response.json().await.ok()
+    }
+
+    async fn version(&self) -> Option<String> {
+        let health = self.get("/health").await?;
+        Some(health["version"].as_str().unwrap_or("?").to_owned())
+    }
+
+    async fn refuse_while_playing(&self) -> Result<()> {
+        let Some(status) = self.get("/status").await else {
+            return Ok(());
+        };
+        let games: Vec<String> = status["running"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|g| {
+                format!(
+                    "{} (rom {})",
+                    g["emulator"].as_str().unwrap_or("?"),
+                    g["rom_id"]
+                )
+            })
+            .collect();
+        anyhow::ensure!(
+            games.is_empty(),
+            "a game is running: {}. Close it first so its saves sync, then try again.",
+            games.join(", ")
+        );
+        Ok(())
+    }
+
+    async fn wait_until_up(&self) -> Result<String> {
+        for _ in 0..20 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            if let Some(version) = self.version().await {
+                return Ok(version);
+            }
+        }
+        anyhow::bail!(
+            "rommd did not start within 10 s; see {}",
+            log_hint().display()
+        )
+    }
+
+    async fn wait_until_down(&self) -> Result<()> {
+        for _ in 0..20 {
+            if self.version().await.is_none() {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        anyhow::bail!("rommd is still answering after 10 s")
+    }
+}
+
+/// Where to look when the service does not start.
+fn log_hint() -> PathBuf {
+    if cfg!(windows) {
+        crate::log_path()
+    } else if cfg!(target_os = "macos") {
+        dirs::home_dir()
+            .unwrap_or_default()
+            .join("Library/Logs/rommd.log")
+    } else {
+        PathBuf::from("journalctl --user -u rommd")
+    }
 }
 
 fn run(cmd: &mut Command) -> Result<()> {
@@ -94,6 +233,14 @@ mod platform {
         );
         println!("Logs: journalctl --user -u rommd -f");
         Ok(())
+    }
+
+    pub fn start() -> Result<()> {
+        run(Command::new("systemctl").args(["--user", "start", UNIT]))
+    }
+
+    pub fn stop() -> Result<()> {
+        run(Command::new("systemctl").args(["--user", "stop", UNIT]))
     }
 
     pub fn restart() -> Result<()> {
@@ -171,7 +318,30 @@ mod platform {
         Ok(())
     }
 
+    /// Load the agent if `stop` unloaded it; loading one that is loaded
+    /// fails, which is fine.
+    fn load() -> Result<()> {
+        let _ = Command::new("launchctl")
+            .arg("bootstrap")
+            .arg(domain())
+            .arg(plist_path()?)
+            .output();
+        Ok(())
+    }
+
+    pub fn start() -> Result<()> {
+        load()?;
+        run(Command::new("launchctl").args(["kickstart", &format!("{}/{}", domain(), LABEL)]))
+    }
+
+    /// The agent restarts rommd whenever it exits (`KeepAlive`), so stopping
+    /// means unloading it; the next login loads it again.
+    pub fn stop() -> Result<()> {
+        run(Command::new("launchctl").args(["bootout", &format!("{}/{}", domain(), LABEL)]))
+    }
+
     pub fn restart() -> Result<()> {
+        load()?;
         run(Command::new("launchctl").args(["kickstart", "-k", &format!("{}/{}", domain(), LABEL)]))
     }
 
@@ -283,8 +453,7 @@ mod platform {
         }
     }
 
-    pub fn restart() -> Result<()> {
-        stop_running();
+    pub fn start() -> Result<()> {
         let run = Command::new("schtasks")
             .args(["/Run", "/TN", TASK])
             .output()
@@ -295,6 +464,16 @@ mod platform {
             String::from_utf8_lossy(&run.stderr).trim()
         );
         Ok(())
+    }
+
+    pub fn stop() -> Result<()> {
+        stop_running();
+        Ok(())
+    }
+
+    pub fn restart() -> Result<()> {
+        stop_running();
+        start()
     }
 
     pub fn uninstall() -> Result<()> {
@@ -310,6 +489,14 @@ mod platform {
     use super::*;
 
     pub fn install(_exe: &Path) -> Result<()> {
+        anyhow::bail!("starting rommd at login is not supported on this platform")
+    }
+
+    pub fn start() -> Result<()> {
+        anyhow::bail!("starting rommd at login is not supported on this platform")
+    }
+
+    pub fn stop() -> Result<()> {
         anyhow::bail!("starting rommd at login is not supported on this platform")
     }
 

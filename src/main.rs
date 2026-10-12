@@ -47,7 +47,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Start rommd automatically when you log in.
+    /// Run rommd in the background from login, and start, stop or restart it.
     Service {
         #[command(subcommand)]
         action: ServiceAction,
@@ -58,6 +58,10 @@ enum Command {
 enum ServiceAction {
     /// Register this binary to start at login, and start it now.
     Install,
+    /// Start it now if it is not running. Checks the config first.
+    Start,
+    /// Stop it until the next login. Refuses while a game is running.
+    Stop,
     /// Restart it, e.g. after editing the config. Checks the config first and
     /// refuses while a game is running.
     Restart,
@@ -67,16 +71,15 @@ enum ServiceAction {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let control = |action| tokio::runtime::Runtime::new()?.block_on(service::control(action));
     match cli.command {
-        Some(Command::Service {
-            action: ServiceAction::Install,
-        }) => service::install(),
-        Some(Command::Service {
-            action: ServiceAction::Restart,
-        }) => tokio::runtime::Runtime::new()?.block_on(restart_service()),
-        Some(Command::Service {
-            action: ServiceAction::Uninstall,
-        }) => service::uninstall(),
+        Some(Command::Service { action }) => match action {
+            ServiceAction::Install => service::install(),
+            ServiceAction::Start => control(service::Control::Start),
+            ServiceAction::Stop => control(service::Control::Stop),
+            ServiceAction::Restart => control(service::Control::Restart),
+            ServiceAction::Uninstall => service::uninstall(),
+        },
         None => {
             let result = tokio::runtime::Runtime::new()?.block_on(run_daemon(cli.background));
             // In the background stderr goes nowhere; the log is all there is.
@@ -87,70 +90,6 @@ fn main() -> Result<()> {
             }
             result
         }
-    }
-}
-
-/// `rommd service restart`: restarting with a broken config would leave
-/// rommd stopped, and restarting during a game would skip its save sync, so
-/// both are checked first.
-async fn restart_service() -> Result<()> {
-    let config = Config::load_or_create().context("the config has an error; not restarting")?;
-    let base = format!("http://127.0.0.1:{}", config.server.port);
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(3))
-        .build()?;
-
-    if let Ok(response) = client.get(format!("{base}/status")).send().await
-        && let Ok(status) = response.json::<serde_json::Value>().await
-        && let Some(running) = status["running"].as_array()
-        && !running.is_empty()
-    {
-        let games: Vec<String> = running
-            .iter()
-            .map(|g| {
-                format!(
-                    "{} (rom {})",
-                    g["emulator"].as_str().unwrap_or("?"),
-                    g["rom_id"]
-                )
-            })
-            .collect();
-        anyhow::bail!(
-            "a game is running: {}. Close it first so its saves sync, then restart.",
-            games.join(", ")
-        );
-    }
-
-    service::restart()?;
-
-    for _ in 0..20 {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        if let Ok(response) = client.get(format!("{base}/health")).send().await
-            && let Ok(health) = response.json::<serde_json::Value>().await
-        {
-            println!(
-                "rommd {} is running with the new config.",
-                health["version"].as_str().unwrap_or("?")
-            );
-            return Ok(());
-        }
-    }
-    anyhow::bail!(
-        "rommd did not come back within 10 s; see {}",
-        log_hint().display()
-    )
-}
-
-/// Where to look when the service does not start.
-fn log_hint() -> PathBuf {
-    if cfg!(windows) {
-        log_path()
-    } else if cfg!(target_os = "macos") {
-        dirs::home_dir()
-            .unwrap_or_default()
-            .join("Library/Logs/rommd.log")
-    } else {
-        PathBuf::from("journalctl --user -u rommd")
     }
 }
 

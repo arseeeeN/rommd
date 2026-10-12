@@ -133,8 +133,10 @@ that game's saves still sync when it closes.
 `rommd service install` starts rommd at login: a systemd user service on
 Linux and a launch agent on macOS (both restart it if it stops), a logon task
 on Windows (no administrator rights needed; it runs without a console window).
-`rommd service restart` restarts it and `rommd service uninstall` removes it.
-Running `rommd` with no command runs it in the foreground.
+`rommd service start`, `stop` and `restart` control the running daemon (stop
+lasts until the next login), and `rommd service uninstall` removes it. Stop
+and restart refuse while a game is running, so its saves still sync. Running
+`rommd` with no command runs it in the foreground.
 
 Logs: `journalctl --user -u rommd -f` on Linux, `~/Library/Logs/rommd.log` on
 macOS, `%LOCALAPPDATA%\rommd\rommd.log` on Windows.
