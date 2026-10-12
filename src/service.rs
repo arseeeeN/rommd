@@ -266,12 +266,32 @@ mod platform {
 /// window; `--background` detaches from it, which closes the window.
 #[cfg(windows)]
 pub mod console {
-    use windows_sys::Win32::System::Console::{FreeConsole, GetConsoleWindow};
+    use std::os::windows::io::IntoRawHandle;
+    use windows_sys::Win32::System::Console::{
+        FreeConsole, GetConsoleWindow, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        SetStdHandle,
+    };
 
+    /// Detach from the console and point the std handles at `NUL`. They would
+    /// otherwise still name the console, and every process rommd starts
+    /// inherits them: Windows refuses to create one with those handles
+    /// ("The request is not supported", os error 50).
     pub fn detach() {
-        // SAFETY: no arguments; detaching only invalidates the std handles,
-        // which logging no longer uses in background mode.
+        // SAFETY: no arguments; logging no longer uses the console.
         unsafe { FreeConsole() };
+        let Ok(nul) = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("NUL")
+        else {
+            return;
+        };
+        // Owned by the process from here on, like the handles it replaces.
+        let handle = nul.into_raw_handle();
+        for std in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            // SAFETY: a valid handle that stays open for the process lifetime.
+            unsafe { SetStdHandle(std, handle) };
+        }
     }
 
     pub fn has_window() -> bool {
