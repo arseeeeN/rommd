@@ -157,3 +157,29 @@ on a change, upload-only while the game runs.
   post-exit pass stays a no-op when nothing changed after the last upload.
 - Restores never happen mid-session; a newer RomM save that appears while
   the game runs is a conflict for the post-exit pass, as today.
+
+## Tag save states with the emulator version
+
+Save states are snapshots of the emulator's internals and often only load in
+the version that made them. Seen with Dolphin: a state made by Dolphin 2606
+(laptop) synced to a PC running 2609, and 2609 refused it as incompatible.
+States update in place in RomM, so two devices on different versions keep
+replacing each other's state with one the other can't load (the replaced
+local state is backed up, nothing is lost). Saves are not affected.
+
+**Idea.** Record the emulator version with each uploaded state and only
+restore a state made by the version installed here; keep others in RomM
+untouched instead of overwriting them.
+
+**What we know.**
+- Dolphin writes its version into every state header: 6-byte game ID
+  (padded to 16 bytes), f64 time, a u32 magic `0xBAADBB7D`, then a u32
+  length and the version string (`Dolphin 2606`).
+- `Dolphin.exe --version` prints the installed version (`Dolphin 2609`),
+  also on Windows when its output is captured.
+
+**To decide.** Where the tag lives: RomM's state entries have no version
+field, so it would go into the file name (tags like `[Dolphin 2606]` would
+need to survive `local_file_name`) or the `emulator` field, or RomM gains a
+field. Then check the other emulators: DuckStation, mGBA and Azahar states
+may each have their own version rules.
