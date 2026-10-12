@@ -123,3 +123,11 @@ preferred direction is to configure and watch rommd from RomM instead, which
 depends on what RomM's API can carry. Until then the log file
 (`<data dir>/rommd.log` under the logon task) and the HTTP API are the
 interface.
+
+## User documentation beyond the README
+
+The README carries install, configuration and per-emulator notes, and keeps
+growing (manual installs, Windows path quoting, where each emulator keeps its
+folder on each OS, portable installs). Move the detail into a wiki or docs
+site, one page per emulator and per platform, and keep the README to a quick
+start with links.

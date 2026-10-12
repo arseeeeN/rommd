@@ -64,22 +64,25 @@ The script installs the latest release (to `~/.local/bin` or
 `%LOCALAPPDATA%\Programs\rommd`), checks it against the release checksums,
 and registers rommd to start when you log in. Run it again to reinstall.
 
-Prefer to do it by hand? Download the binary for your platform from the
-[releases page](https://github.com/arseeeeN/rommd/releases), optionally verify
-it with [minisign](https://jedisct1.github.io/minisign/)
-(`minisign -Vm rommd-<target> -p minisign.pub`), and run
-`rommd service install`.
+Prefer to do it by hand? Download `rommd-<target>` (`.exe` on Windows) for
+your platform from the [releases page](https://github.com/arseeeeN/rommd/releases)
+and optionally verify it with [minisign](https://jedisct1.github.io/minisign/)
+(`minisign -Vm rommd-<target> -p minisign.pub`). Rename it to `rommd`
+(`rommd.exe`; on Linux and macOS also `chmod +x` it) and move it to a folder
+it can stay in, such as `~/.local/bin` or `%LOCALAPPDATA%\Programs\rommd`.
+Then run `rommd service install`. It registers the binary where it is, so
+moving or deleting it later stops rommd from starting at login.
 
-**From source** (needed until the first release is out): install
-[Rust](https://rustup.rs), then
+**From source:** install [Rust](https://rustup.rs), then
 
 ```sh
 cargo install --git https://github.com/arseeeeN/rommd
 rommd service install
 ```
 
-Builds from source don't carry the release signing key, so they never
-update themselves.
+Builds from source embed the release signing key too, so they update
+themselves to the latest release like an installed binary. To keep running
+your own build, set `mode = "off"` under `[updates]`.
 
 ## Configure
 
