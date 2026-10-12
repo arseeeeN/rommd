@@ -192,6 +192,8 @@ async fn run_daemon(background: bool) -> Result<()> {
     let addr = format!("127.0.0.1:{}", port);
     let listener = bind(&addr).await?;
     info!("rommd listening on http://{}", addr);
+    // The previous version has released the port, so it has exited.
+    update::remove_replaced_binary();
     update::spawn_background(updater, state.processes.clone());
 
     axum::serve(listener, server::router(state))

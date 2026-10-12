@@ -305,8 +305,8 @@ impl Updater {
                 .unwrap_or_else(std::env::temp_dir);
             let (version, file) = self.download_verified(&dir).await?;
             let replaced = tokio::task::spawn_blocking({
-                let file = file.clone();
-                move || self_replace::self_replace(&file)
+                let (exe, file) = (exe.clone(), file.clone());
+                move || replace_binary(&exe, &file)
             })
             .await?;
             let _ = tokio::fs::remove_file(&file).await;
@@ -321,6 +321,43 @@ impl Updater {
             status.last_error = Some(format!("{:#}", e));
         }
         result
+    }
+}
+
+#[cfg(not(windows))]
+fn replace_binary(_exe: &Path, new: &Path) -> std::io::Result<()> {
+    self_replace::self_replace(new)
+}
+
+/// Windows lets a running program be renamed but not overwritten: move it
+/// to `<exe>.old`, put the new binary in its place, and move it back if that
+/// fails, so a failed update never leaves the install without a binary.
+/// `self_replace` relocates the old binary first and then starts a helper
+/// process, and an error in between left no binary at all.
+#[cfg(windows)]
+fn replace_binary(exe: &Path, new: &Path) -> std::io::Result<()> {
+    let old = old_binary_path(exe);
+    let _ = std::fs::remove_file(&old);
+    std::fs::rename(exe, &old)?;
+    if let Err(e) = std::fs::rename(new, exe) {
+        let _ = std::fs::rename(&old, exe);
+        return Err(e);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn old_binary_path(exe: &Path) -> PathBuf {
+    let mut name = exe.as_os_str().to_owned();
+    name.push(".old");
+    PathBuf::from(name)
+}
+
+/// Delete the binary an update replaced; it ran until the restart.
+pub fn remove_replaced_binary() {
+    #[cfg(windows)]
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::fs::remove_file(old_binary_path(&exe));
     }
 }
 
@@ -591,6 +628,31 @@ mod tests {
         let up = updater(base, Some(Signer::new().pk.to_base64()));
         let status = up.check().await;
         assert!(status.install_blocker.unwrap().contains("no build for"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn replaces_a_running_binary_and_keeps_it_on_failure() {
+        let dir = crate::testing::TempDir::new("replace-binary");
+        let exe = dir.path().join("app.exe");
+        std::fs::copy(r"C:\Windows\System32\ping.exe", &exe).unwrap();
+        let mut running = std::process::Command::new(&exe)
+            .args(["-n", "5", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let missing = dir.path().join("missing.exe");
+        assert!(replace_binary(&exe, &missing).is_err());
+        assert!(exe.is_file(), "a failed replace keeps the binary");
+
+        let new = dir.path().join("new.exe");
+        std::fs::write(&new, b"new version").unwrap();
+        replace_binary(&exe, &new).unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), b"new version");
+        assert!(old_binary_path(&exe).is_file());
+        running.kill().unwrap();
+        running.wait().unwrap();
     }
 
     #[tokio::test]
