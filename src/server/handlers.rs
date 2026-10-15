@@ -28,6 +28,7 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
         emulators: emulator_list(&state),
+        config_error: state.live.error(),
     })
 }
 
@@ -43,13 +44,14 @@ pub async fn list_emulators(State(state): State<Arc<AppState>>) -> impl IntoResp
 }
 
 fn emulator_list(state: &AppState) -> Vec<EmulatorInfo> {
+    let config = state.config();
     state
         .emulators
         .iter()
         .map(|(id, emu)| EmulatorInfo {
             id: id.clone(),
             display_name: emu.display_name().to_owned(),
-            configured: state.config.emulators.contains_key(id),
+            configured: config.emulators.contains_key(id),
         })
         .collect()
 }
@@ -73,8 +75,11 @@ pub async fn launch(
         .get(&req.emulator)
         .ok_or_else(|| anyhow::anyhow!("emulator '{}' is not configured", req.emulator))?;
 
-    let emu_config = state
-        .config
+    // One config and RomM client for the whole launch, even if the config
+    // file is reloaded meanwhile; the session keeps them until it ends.
+    let config = state.config();
+    let romm_client = state.romm();
+    let emu_config = config
         .emulators
         .get(&req.emulator)
         .ok_or_else(|| anyhow::anyhow!("no config entry for emulator '{}'", req.emulator))?;
@@ -82,13 +87,12 @@ pub async fn launch(
     let rom_path: PathBuf = if let Some(local) = &req.local_path {
         PathBuf::from(local)
     } else {
-        let romm = state
-            .romm
+        let romm = romm_client
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("RomM is not configured; provide local_path"))?;
 
         let rom = romm.get_rom(req.rom_id).await?;
-        let roms_dir = state.config.roms_dir();
+        let roms_dir = config.roms_dir();
         romm.download_rom_to_dir(&rom, &roms_dir).await?
     };
 
@@ -101,7 +105,7 @@ pub async fn launch(
         .save_layout(emu_config, &rom_path, game_id.as_deref())
         .await;
 
-    let present_at_launch = match &state.romm {
+    let present_at_launch = match &romm_client {
         Some(romm) => {
             let ctx = SyncCtx {
                 romm,
@@ -156,7 +160,7 @@ pub async fn launch(
         pid,
         child,
         state.processes.clone(),
-        state.romm.clone(),
+        romm_client.clone(),
         emulator.clone(),
         emu_config.clone(),
         state.sync_store.clone(),
@@ -231,7 +235,7 @@ pub async fn stop(State(state): State<Arc<AppState>>, Json(req): Json<StopReques
 )]
 pub async fn list_controllers(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut controllers: Vec<ControllerInfo> = state
-        .config
+        .config()
         .controllers
         .iter()
         .map(|(id, cfg)| {
@@ -272,8 +276,8 @@ pub async fn snapshot(
         .get(&req.emulator)
         .ok_or_else(|| anyhow::anyhow!("emulator '{}' is not configured", req.emulator))?;
 
-    let emu_config = state
-        .config
+    let config = state.config();
+    let emu_config = config
         .emulators
         .get(&req.emulator)
         .ok_or_else(|| anyhow::anyhow!("no config entry for emulator '{}'", req.emulator))?;

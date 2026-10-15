@@ -16,6 +16,7 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 - **`src/emulator/`** — one file per emulator, all implement the `Emulator` trait
 - **`src/romm/`** — RomM HTTP client (ROM download, save/state upload/download)
 - **`src/config.rs`** — config file parsing, controller registry
+- **`src/live.rs`** — the running config, reloaded when its file changes
 - **`src/switch.rs`** — Switch NSP title ID extraction (ticket + NCA header decryption)
 - **`src/n3ds.rs`** — 3DS title ID extraction (NCSD / NCCH headers, CIA TMD; no keys)
 - **`src/sync/`** — save/state sync engine, three-way decision, persistent sync state
@@ -34,6 +35,23 @@ it, so `server/security.rs` rejects requests whose `Origin` is not the RomM
 server's (from `romm.base_url`) or listed in `server.allowed_origins`, limits
 CORS to those origins, and requires a localhost `Host` header (DNS
 rebinding). Clients without a browser send no `Origin` and pass.
+
+## Config reload (`src/live.rs`)
+
+`Live` holds a `Snapshot` (config, RomM client, allowed origins) that is
+swapped whole when `config.toml` changes; read it through `state.config()` /
+`state.romm()` and keep the returned `Arc` for one operation. The config
+*directory* is watched with OS file events (`notify`; editors often save by
+renaming a new file over the old one), debounced 300 ms; the file is then read
+and applied only if its contents changed and it parses. Only create / modify /
+remove events count: every reload reads the file, and reacting to its access
+events made rommd reload (and wake) forever. A broken file keeps the last good
+config and shows in `GET /health` `config_error`. Reload hooks (`apply_changes`
+in main.rs): RomM changes rebuild the client and re-check the connection,
+`[updates]` reconfigures the updater, changed emulators are re-validated, and a
+new port only takes effect after a restart. Running games keep the emulator
+config and RomM client they launched with. Polling (5 s) is only the fallback
+when file events are unavailable — idle rommd must not wake up.
 
 ## Updates and releases
 

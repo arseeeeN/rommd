@@ -1,5 +1,5 @@
 pub mod handlers;
-mod security;
+pub mod security;
 pub mod state;
 pub mod types;
 
@@ -55,9 +55,8 @@ use types::*;
 struct ApiDoc;
 
 pub fn router(state: Arc<AppState>) -> Router {
-    let origins = security::allowed_origins(&state.config);
-    let cors = security::cors_layer(&origins);
-    let guard = Arc::new(security::Guard { origins });
+    let cors = security::cors_layer(state.live.clone());
+    let guard = state.live.clone();
     Router::new()
         .route("/health", get(handlers::health))
         .route("/emulators", get(handlers::list_emulators))

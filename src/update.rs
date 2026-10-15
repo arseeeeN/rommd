@@ -43,7 +43,7 @@ pub enum UpdateMode {
     Off,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 pub struct UpdateConfig {
     #[serde(default)]
     pub mode: UpdateMode,
@@ -95,9 +95,12 @@ struct GhAsset {
 }
 
 pub struct Updater {
-    pub mode: UpdateMode,
+    /// Mode and repository follow the config file (`reconfigure`).
+    mode: std::sync::Mutex<UpdateMode>,
     api_base: String,
-    repository: String,
+    repository: std::sync::Mutex<String>,
+    /// Wakes the background loop after `reconfigure`.
+    wake: tokio::sync::Notify,
     current: semver::Version,
     target: String,
     public_key: Option<String>,
@@ -146,9 +149,10 @@ impl Updater {
             installing: false,
         };
         Self {
-            mode,
+            mode: std::sync::Mutex::new(mode),
             api_base,
-            repository,
+            repository: std::sync::Mutex::new(repository),
+            wake: tokio::sync::Notify::new(),
             current,
             target,
             public_key,
@@ -158,6 +162,32 @@ impl Updater {
                 .expect("building HTTP client"),
             status: Mutex::new(status),
             latest: Mutex::new(None),
+        }
+    }
+
+    pub fn mode(&self) -> UpdateMode {
+        *self.mode.lock().unwrap()
+    }
+
+    /// Apply a changed `[updates]` config section. A changed mode or source
+    /// takes effect right away instead of at the next daily check.
+    pub async fn reconfigure(&self, config: &UpdateConfig) {
+        let repository = config
+            .repository
+            .clone()
+            .unwrap_or_else(|| DEFAULT_REPOSITORY.into());
+        let changed = {
+            let mut mode = self.mode.lock().unwrap();
+            let mut repo = self.repository.lock().unwrap();
+            let changed = *mode != config.mode || *repo != repository;
+            *mode = config.mode;
+            *repo = repository;
+            changed
+        };
+        if changed {
+            self.status.lock().await.mode = config.mode;
+            *self.latest.lock().await = None;
+            self.wake.notify_one();
         }
     }
 
@@ -193,10 +223,8 @@ impl Updater {
     }
 
     async fn fetch_latest(&self) -> Result<Release> {
-        let url = format!(
-            "{}/repos/{}/releases/latest",
-            self.api_base, self.repository
-        );
+        let repository = self.repository.lock().unwrap().clone();
+        let url = format!("{}/repos/{}/releases/latest", self.api_base, repository);
         let gh: GhRelease = self
             .client
             .get(&url)
@@ -420,42 +448,53 @@ pub fn restart() -> ! {
     }
 }
 
-/// Daily checks; in auto mode, installs while no game is running.
+/// Daily checks; in auto mode, installs while no game is running. The loop
+/// runs in every mode so a config change (see `reconfigure`) can turn checks
+/// on without a restart.
 pub fn spawn_background(updater: Arc<Updater>, processes: ProcessManager) {
-    if updater.mode == UpdateMode::Off {
-        return;
-    }
     tokio::spawn(async move {
         tokio::time::sleep(FIRST_CHECK_DELAY).await;
         loop {
-            let status = updater.check().await;
-            if let Some(e) = &status.last_error {
-                warn!("update check failed: {}", e);
-            } else if status.update_available {
-                let latest = status.latest_version.clone().unwrap_or_default();
-                match (updater.mode, &status.install_blocker) {
-                    (UpdateMode::Auto, None) => {
-                        wait_for_no_games(&processes).await;
-                        match updater.install().await {
-                            Ok(_) => {
-                                // A game may have started during the download.
-                                wait_for_no_games(&processes).await;
-                                restart();
-                            }
-                            Err(e) => warn!("installing rommd {} failed: {:#}", latest, e),
-                        }
-                    }
-                    (_, Some(blocker)) => info!("rommd {} is available, but {}", latest, blocker),
-                    _ => info!(
-                        "rommd {} is available: {}",
-                        latest,
-                        status.release_url.unwrap_or_default()
-                    ),
-                }
+            if updater.mode() != UpdateMode::Off {
+                check_and_apply(&updater, &processes).await;
             }
-            tokio::time::sleep(CHECK_INTERVAL).await;
+            tokio::select! {
+                _ = tokio::time::sleep(CHECK_INTERVAL) => {}
+                _ = updater.wake.notified() => {}
+            }
         }
     });
+}
+
+async fn check_and_apply(updater: &Updater, processes: &ProcessManager) {
+    let status = updater.check().await;
+    if let Some(e) = &status.last_error {
+        warn!("update check failed: {}", e);
+        return;
+    }
+    if !status.update_available {
+        return;
+    }
+    let latest = status.latest_version.clone().unwrap_or_default();
+    match (updater.mode(), &status.install_blocker) {
+        (UpdateMode::Auto, None) => {
+            wait_for_no_games(processes).await;
+            match updater.install().await {
+                Ok(_) => {
+                    // A game may have started during the download.
+                    wait_for_no_games(processes).await;
+                    restart();
+                }
+                Err(e) => warn!("installing rommd {} failed: {:#}", latest, e),
+            }
+        }
+        (_, Some(blocker)) => info!("rommd {} is available, but {}", latest, blocker),
+        _ => info!(
+            "rommd {} is available: {}",
+            latest,
+            status.release_url.unwrap_or_default()
+        ),
+    }
 }
 
 async fn wait_for_no_games(processes: &ProcessManager) {

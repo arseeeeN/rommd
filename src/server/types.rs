@@ -87,6 +87,9 @@ pub struct HealthResponse {
     pub status: &'static str,
     pub version: &'static str,
     pub emulators: Vec<EmulatorInfo>,
+    /// Set when the config file on disk has an error: rommd keeps running with
+    /// the last config that loaded until the file is fixed.
+    pub config_error: Option<String>,
 }
 
 // ── /emulators ────────────────────────────────────────────────────────────────

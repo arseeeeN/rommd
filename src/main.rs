@@ -2,6 +2,7 @@ mod config;
 mod emulator;
 mod error;
 mod ini;
+mod live;
 mod n3ds;
 mod process;
 mod profile;
@@ -29,7 +30,6 @@ use emulator::{
     ryujinx::Ryujinx,
 };
 use process::ProcessManager;
-use romm::RommClient;
 use server::state::AppState;
 
 /// Local daemon bridging RomM with emulators. Without a command it runs the
@@ -151,21 +151,6 @@ async fn run_daemon(background: bool) -> Result<()> {
     info!("config loaded from {}", Config::path().display());
     info!("roms_dir: {}", config.roms_dir().display());
 
-    let romm = config.romm.as_ref().map(|c| Arc::new(RommClient::new(c)));
-    match (&romm, &config.romm) {
-        (Some(client), Some(romm_config)) => {
-            let client = client.clone();
-            let url = romm_config.base_url.clone();
-            tokio::spawn(async move {
-                match client.check().await {
-                    Ok(version) => info!("connected to RomM {} at {}", version, url),
-                    Err(e) => warn!("RomM: {:#}", e),
-                }
-            });
-        }
-        _ => warn!("no [romm] section in the config: games can only launch with local_path"),
-    }
-
     let mut emulators: HashMap<String, Arc<dyn Emulator>> = HashMap::new();
     // Use id() as the registry key so the trait and the map stay in sync.
     let ds = DuckStation;
@@ -181,7 +166,88 @@ async fn run_daemon(background: bool) -> Result<()> {
     let azahar = Azahar;
     emulators.insert(azahar.id().to_owned(), Arc::new(azahar));
 
+    check_emulators(&emulators, &config, None);
+    let live = Arc::new(live::Live::new(Config::path(), config));
+    check_romm(&live.get());
+
+    let updater = Arc::new(update::Updater::new(&live.config().updates));
+    live::watch(live.clone(), {
+        let (updater, emulators) = (updater.clone(), emulators.clone());
+        move |snapshot, changes| apply_changes(snapshot, changes, &updater, &emulators)
+    });
+    let state = Arc::new(AppState {
+        updater: updater.clone(),
+        live,
+        processes: ProcessManager::new(),
+        emulators,
+        sync_store: Arc::new(sync::SyncStore::load(sync::SyncStore::default_path())),
+    });
+
+    let port = state.config().server.port;
+    let addr = format!("127.0.0.1:{}", port);
+    let listener = bind(&addr).await?;
+    info!("rommd listening on http://{}", addr);
+    // The previous version has released the port, so it has exited.
+    update::remove_replaced_binary();
+    update::spawn_background(updater, state.processes.clone());
+
+    axum::serve(listener, server::router(state))
+        .await
+        .context("server error")
+}
+
+/// React to a reloaded config beyond what the next request picks up anyway.
+fn apply_changes(
+    snapshot: &live::Snapshot,
+    changes: &[live::Change],
+    updater: &Arc<update::Updater>,
+    emulators: &HashMap<String, Arc<dyn Emulator>>,
+) {
+    for change in changes {
+        match change {
+            live::Change::Romm => check_romm(snapshot),
+            live::Change::Updates => {
+                let (updater, config) = (updater.clone(), snapshot.config.updates.clone());
+                tokio::spawn(async move { updater.reconfigure(&config).await });
+            }
+            live::Change::Emulators(ids) => check_emulators(emulators, &snapshot.config, Some(ids)),
+            live::Change::Port => warn!(
+                "the new port {} takes effect after a restart (rommd service restart)",
+                snapshot.config.server.port
+            ),
+            _ => {}
+        }
+    }
+}
+
+/// Log whether RomM is reachable with the configured credentials.
+fn check_romm(snapshot: &live::Snapshot) {
+    match (&snapshot.romm, &snapshot.config.romm) {
+        (Some(client), Some(romm_config)) => {
+            let client = client.clone();
+            let url = romm_config.base_url.clone();
+            tokio::spawn(async move {
+                match client.check().await {
+                    Ok(version) => info!("connected to RomM {} at {}", version, url),
+                    Err(e) => warn!("RomM: {:#}", e),
+                }
+            });
+        }
+        _ => warn!("no [romm] section in the config: games can only launch with local_path"),
+    }
+}
+
+/// Warn about emulator entries that won't work; `only` limits the check to
+/// the entries a reload touched.
+fn check_emulators(
+    emulators: &HashMap<String, Arc<dyn Emulator>>,
+    config: &Config,
+    only: Option<&[String]>,
+) {
     for (id, emu_config) in &config.emulators {
+        if only.is_some_and(|ids| !ids.contains(id)) {
+            continue;
+        }
         match emulators.get(id) {
             Some(emu) => {
                 if let Some(problem) = emulator::config_dir_problem(emu.as_ref(), emu_config) {
@@ -199,28 +265,6 @@ async fn run_daemon(background: bool) -> Result<()> {
             }
         }
     }
-
-    let updater = Arc::new(update::Updater::new(&config.updates));
-    let state = Arc::new(AppState {
-        updater: updater.clone(),
-        config,
-        processes: ProcessManager::new(),
-        romm,
-        emulators,
-        sync_store: Arc::new(sync::SyncStore::load(sync::SyncStore::default_path())),
-    });
-
-    let port = state.config.server.port;
-    let addr = format!("127.0.0.1:{}", port);
-    let listener = bind(&addr).await?;
-    info!("rommd listening on http://{}", addr);
-    // The previous version has released the port, so it has exited.
-    update::remove_replaced_binary();
-    update::spawn_background(updater, state.processes.clone());
-
-    axum::serve(listener, server::router(state))
-        .await
-        .context("server error")
 }
 
 /// Bind the API port, retrying briefly: after an update the new version starts

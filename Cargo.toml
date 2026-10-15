@@ -30,6 +30,7 @@ utoipa = { version = "5", features = ["indexmap"] }
 clap = { version = "4", features = ["derive"] }
 semver = "1"
 minisign-verify = "0.2"
+notify = "8"
 
 [dev-dependencies]
 axum = { version = "0.8", features = ["multipart"] }

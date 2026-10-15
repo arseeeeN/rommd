@@ -124,9 +124,11 @@ emulator splits its settings into a separate folder (Dolphin, Eden and Azahar
 on Linux), rommd finds them on its own. At startup rommd warns in its log when
 a `config_dir` does not look like that emulator's folder and says where it
 usually is. The generated config file has examples for each platform.
-Restart rommd after editing the config with `rommd service restart`. It
-checks the config for errors first and refuses while a game is running, so
-that game's saves still sync when it closes.
+Changes to the config file apply as soon as you save it, without a restart
+(only a new `port` needs `rommd service restart`). A game that is already
+running keeps the settings it started with. If the file has an error, rommd
+keeps using the last version that worked and reports the error in its log
+and in `GET /health`.
 
 ## Running
 

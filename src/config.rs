@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::info;
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default)]
     pub server: ServerConfig,
@@ -24,7 +24,7 @@ pub struct Config {
 ///
 /// The `type` field selects the variant. Machine-specific details (MAC address,
 /// VID/PID, device expressions) stay local and are never sent to RomM.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ControllerConfig {
     /// Generic Bluetooth gamepad identified by MAC address.
@@ -66,7 +66,7 @@ impl ControllerConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct ServerConfig {
     #[serde(default = "default_port")]
     pub port: u16,
@@ -89,7 +89,7 @@ impl Default for ServerConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct RommConfig {
     pub base_url: String,
     /// API token (recommended). Create one in RomM → Settings → API Tokens.
@@ -99,7 +99,7 @@ pub struct RommConfig {
     pub password: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct EmulatorConfig {
     /// Path to the emulator binary. Supports ~ expansion.
     pub binary: PathBuf,
@@ -113,9 +113,7 @@ impl Config {
     pub fn load_or_create() -> Result<Self> {
         let path = Self::path();
         if path.exists() {
-            let content = std::fs::read_to_string(&path)
-                .with_context(|| format!("reading config from {}", path.display()))?;
-            return Self::parse(&content, &path);
+            return Self::read(&path);
         }
 
         if let Some(parent) = path.parent() {
@@ -129,7 +127,14 @@ impl Config {
         Ok(Self::default())
     }
 
-    fn parse(content: &str, path: &Path) -> Result<Self> {
+    /// Read and parse an existing config file.
+    pub fn read(path: &Path) -> Result<Self> {
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("reading config from {}", path.display()))?;
+        Self::parse(&content, path)
+    }
+
+    pub fn parse(content: &str, path: &Path) -> Result<Self> {
         let config: Self = toml::from_str(content).map_err(|e| {
             // The usual cause: a Windows path in double quotes.
             let hint = if e.message().contains("escape") {

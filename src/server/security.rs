@@ -23,6 +23,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::warn;
 
 use crate::config::Config;
+use crate::live::Live;
 
 /// Origins allowed to call the API from a browser, normalised to
 /// `scheme://host[:port]`.
@@ -40,19 +41,19 @@ pub fn allowed_origins(config: &Config) -> Vec<String> {
         .collect()
 }
 
-pub fn cors_layer(origins: &[String]) -> CorsLayer {
-    let values: Vec<HeaderValue> = origins.iter().filter_map(|o| o.parse().ok()).collect();
+/// CORS for the origins in the current config; follows config reloads.
+pub fn cors_layer(live: Arc<Live>) -> CorsLayer {
     CorsLayer::new()
-        .allow_origin(AllowOrigin::list(values))
+        .allow_origin(AllowOrigin::predicate(move |origin: &HeaderValue, _| {
+            origin
+                .to_str()
+                .is_ok_and(|o| live.get().origins.iter().any(|a| a == o))
+        }))
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
 }
 
-pub struct Guard {
-    pub origins: Vec<String>,
-}
-
-pub async fn check_request(State(guard): State<Arc<Guard>>, req: Request, next: Next) -> Response {
+pub async fn check_request(State(live): State<Arc<Live>>, req: Request, next: Next) -> Response {
     if !host_is_local(req.headers().get(header::HOST)) {
         return (
             StatusCode::FORBIDDEN,
@@ -63,7 +64,7 @@ pub async fn check_request(State(guard): State<Arc<Guard>>, req: Request, next: 
     if let Some(origin) = req.headers().get(header::ORIGIN) {
         let allowed = origin
             .to_str()
-            .is_ok_and(|o| guard.origins.iter().any(|a| a == o));
+            .is_ok_and(|o| live.get().origins.iter().any(|a| a == o));
         if !allowed {
             warn!("rejected request from origin {:?}", origin);
             return (
