@@ -183,3 +183,26 @@ field, so it would go into the file name (tags like `[Dolphin 2606]` would
 need to survive `local_file_name`) or the `emulator` field, or RomM gains a
 field. Then check the other emulators: DuckStation, mGBA and Azahar states
 may each have their own version rules.
+
+## Emulator auto-detection
+
+Find installed emulators and fill in `[emulators.*]` on first start, and
+offer the same scan as an endpoint returning suggestions. Look where each
+platform installs them: Linux packages (`/usr/bin`), Flatpak (exports and
+`~/.var/app/<app id>/` for the data dir), AppImages (`~/Applications`); macOS
+`/Applications/*.app`; Windows Program Files, `%LOCALAPPDATA%`, Scoop, winget.
+Each emulator's `config_dir` has to be found the same way, and differs for
+Flatpak installs (e.g. `~/.var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu`).
+
+## Editing the config through the API (postponed)
+
+Endpoints to add or change emulators (`PUT /config/emulators/{id}` with
+`binary` and `config_dir`) would let frontends offer a settings UI, writing
+`config.toml` with `toml_edit` so comments survive and hot reload applies it.
+Postponed for security: choosing `binary` means choosing which program rommd
+runs, so anything that gains script access to an allowed origin (an XSS bug in
+RomM, say) could make rommd run any program on the machine. If revisited,
+allow such writes only from local tools (no browser `Origin`), or from a
+browser only after an explicit opt-in such as
+`server.allow_config_from_browser = true`. Auto-detection covers most of the
+need without this risk.
