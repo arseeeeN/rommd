@@ -17,22 +17,60 @@ appears can interrupt its write to `imkvdb.arc`, which indexes every game's
 saves. And some games only create their save at the title screen or after a
 prompt, so the watch could wait indefinitely.
 
-**Proposed: create the slot the way Ryujinx does.**
-- Allocate a new save data ID and create `bis/user/save/<id>/0/` and `1/`.
-- Write `ExtraData0` / `ExtraData1` (SaveDataAttribute: program ID u64 at 0x00,
-  user ID at 0x08, type u8 at 0x20 — 1 Account, 3 Device — plus owner ID, sizes).
-- Add the entry to the save index `bis/system/save/8000000000000000/0/imkvdb.arc`
-  (LibHac KVDB: `IMKV` header, `IMEN` entries keyed by the 0x40-byte
-  SaveDataAttribute, value = SaveDataIndexerValue with the save data ID).
-- Find out how the last published save data ID is persisted so new IDs don't
-  collide.
-- Pick the user ID from Ryujinx's active profile (`system/Profiles.json`) for
-  Account saves.
+**Proposed: create the slot the way Ryujinx does.** The formats below were
+read from a real install (2026-10-18): a slot Ryujinx had just created and its
+save index, before and after a launch.
 
-**Needs.** Real Ryujinx files to build and verify against, e.g. a copy of
-`bis/system/save/8000000000000000/` and one `bis/user/save/<slot>/` from an
-existing install. Back up `imkvdb.arc` before every write, and refuse to write
-if its format isn't the one we recognise. Keep the post-exit fallback.
+- **Save index**: `bis/system/save/8000000000000000/{0,1}/imkvdb.arc` (itself
+  a two-phase system save; both copies were identical). Header: `IMKV`, u32
+  reserved (0), u32 entry count. Then per entry: `IMEN`, u32 key size (0x40),
+  u32 value size (0x40), the key, the value — 140 bytes each.
+  - Key (SaveDataAttribute): program ID u64 at 0x00, user ID at 0x08 (two
+    u64, the first 16 hex digits of the profile ID first), system save ID u64
+    at 0x18, type u8 at 0x20 (0 System, 1 Account, 2 BCAT, 3 Device).
+  - Value: save data ID u64 at 0x00 (the slot folder name), space u8 at 0x18
+    (1 = user). Everything else was zero.
+  - Entries were in slot order, which also matches LibHac's attribute order
+    (program, type, user). Insert new entries at their sorted position so both
+    readings hold.
+- **Next ID**: `lastPublishedId` next to `imkvdb.arc` (in `0/` and `1/`), a
+  u64 holding the last slot ID handed out. New slot = value + 1; write it back.
+- **Slot**: `bis/user/save/<id:016x>/` with `0/`, `1/`, an empty `.lock`, and
+  `ExtraData0` = `ExtraData1` (0x200 bytes): the 0x40-byte key, then owner ID
+  u64 at 0x40 (the program ID), timestamp u64 at 0x48 (0), flags u32 at 0x50
+  (0), data size i64 at 0x58, journal size i64 at 0x60, a random commit ID u64
+  at 0x68, zeros after.
+- **User ID**: `last_opened` in `system/Profiles.json`.
+- **Only while Ryujinx is closed.** Ryujinx rewrote the index on a launch that
+  created no slot, so a write while any Ryujinx instance runs (even another
+  game) would be lost or clobber it.
+
+**Test reference: Super Mario Odyssey** (`0100000000010000`) from that install.
+Index entry for its Account save, slot 1, default profile
+`00000000000000010000000000000000` (all bytes not listed are zero):
+- key: `0x02`=01, `0x07`=01 (program ID), `0x08`=01 (user), `0x20`=01 (Account)
+- value: `0x00`=01 (slot 1), `0x18`=01 (user space)
+
+Its `ExtraData0`: the same key, owner `0x0100000000010000`, data size
+`0x1000000` (16 MiB), journal size `0x300000` (3 MiB), commit ID
+`0x4FFE9263665134B4`. The writer's output must match these bytes except the
+commit ID. (Slot 2 of the same game is its BCAT save, type 2; rommd only
+creates Account and Device saves.)
+
+**Open: the save sizes.** They differ per game and come from the game's NACP,
+in the control NCA; reading that needs decryption with prod.keys (more than
+`switch.rs` does today). Before deciding whether to read them, test what
+Ryujinx does with a slot whose sizes are wrong, using Super Mario Odyssey on a
+scratch copy of the Ryujinx data dir (never the real one): create its slot by
+hand with data and journal size 0, and again with sizes smaller than 16 MiB /
+3 MiB, boot the game, and check whether it boots and saves, and whether
+Ryujinx rewrites `ExtraData0` with the NACP sizes. If Ryujinx grows or
+ignores the sizes, writing 0 is enough; otherwise the NACP has to be read.
+
+**Safety.** Back up `imkvdb.arc` and `lastPublishedId` before every write,
+refuse to write if the header, key/value sizes or file length don't match the
+format above, write the working copy (`1/`) before the committed one (`0/`),
+and keep the post-exit fallback.
 
 ## Register rommd as a RomM device
 
