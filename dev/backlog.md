@@ -41,8 +41,8 @@ save index, before and after a launch.
   (0), data size i64 at 0x58, journal size i64 at 0x60, a random commit ID u64
   at 0x68, zeros after.
 - **User ID**: `last_opened` in `system/Profiles.json`.
-- **Only while Ryujinx is closed.** Ryujinx rewrote the index on a launch that
-  created no slot, so a write while any Ryujinx instance runs (even another
+- **Only while Ryujinx is closed.** Ryujinx rewrites the index whenever it
+  starts, so a write while any Ryujinx instance runs (even another
   game) would be lost or clobber it.
 
 **Test reference: Super Mario Odyssey** (`0100000000010000`) from that install.
@@ -57,15 +57,21 @@ Its `ExtraData0`: the same key, owner `0x0100000000010000`, data size
 commit ID. (Slot 2 of the same game is its BCAT save, type 2; rommd only
 creates Account and Device saves.)
 
-**Open: the save sizes.** They differ per game and come from the game's NACP,
-in the control NCA; reading that needs decryption with prod.keys (more than
-`switch.rs` does today). Before deciding whether to read them, test what
-Ryujinx does with a slot whose sizes are wrong, using Super Mario Odyssey on a
-scratch copy of the Ryujinx data dir (never the real one): create its slot by
-hand with data and journal size 0, and again with sizes smaller than 16 MiB /
-3 MiB, boot the game, and check whether it boots and saves, and whether
-Ryujinx rewrites `ExtraData0` with the NACP sizes. If Ryujinx grows or
-ignores the sizes, writing 0 is enough; otherwise the NACP has to be read.
+**Save sizes: tested, Ryujinx ignores them** (Ryujinx 1.3.3, 2026-10-18). On
+a scratch copy of the data dir (`Ryujinx --root-data-dir <dir> <rom>`), Super
+Mario Odyssey's slot was replaced by a hand-made one (new ID from
+`lastPublishedId`, sorted index entry, data and journal size 0, the real save
+files copied in). The game loaded the save and saved into it; Ryujinx rewrote
+both `ExtraData` files on that commit (new commit ID) but left the sizes at 0,
+and kept the index entry. So writing 0 works. The real sizes are the game's
+NACP (`control.nacp` in the control NCA's RomFS), which would need title-key
+and section decryption on top of today's header decryption (ticket title key
+or key area, AES-CTR, RomFS lookup). Write 0 for now and read the NACP if a
+Ryujinx version starts checking the sizes; until then, only create slots on
+Ryujinx versions tested this way.
+
+Ryujinx also rewrites `imkvdb.arc` (same content) every time it starts, even
+without a game, which is why slots may only be created while it is closed.
 
 **Safety.** Back up `imkvdb.arc` and `lastPublishedId` before every write,
 refuse to write if the header, key/value sizes or file length don't match the
