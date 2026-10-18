@@ -3,6 +3,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// A game's saves and save states. `None` for either means that kind is not
 /// synced for this game (unsupported, or the location can't be determined).
@@ -58,6 +59,20 @@ pub struct GameSaveDir {
     /// A Wii title folder gets `content/title.tmd` on first boot, before the
     /// game has saved anything to `data/`.
     pub required_subdir: Option<&'static str>,
+    /// Makes `dir` exist before a save is restored into it, for emulators
+    /// where a save location is more than a folder (a Ryujinx slot must also
+    /// be registered in its save index). Only called when `dir` is missing.
+    pub create: Option<CreateDir>,
+}
+
+/// See `GameSaveDir::create`.
+#[derive(Clone)]
+pub struct CreateDir(pub Arc<dyn Fn() -> anyhow::Result<()> + Send + Sync>);
+
+impl std::fmt::Debug for CreateDir {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CreateDir")
+    }
 }
 
 /// The files in one directory (not recursive) that belong to a game.

@@ -17,7 +17,7 @@ pub mod decide;
 mod scenarios;
 pub mod state;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -589,6 +589,11 @@ fn apply_download(
             std::fs::rename(&staged, dest)?;
         }
         Local::Dir(save) => {
+            if let Some(create) = &save.create
+                && !save.dir.exists()
+            {
+                (create.0)().with_context(|| format!("creating {}", save.dir.display()))?;
+            }
             let mut primary = vec![save.dir.clone()];
             primary.extend(save.mirrors.iter().cloned());
             let mut roots = vec![(save.archive_root.clone(), primary)];
@@ -879,7 +884,7 @@ fn backup_dir(ctx: &SyncCtx<'_>) -> PathBuf {
         )
 }
 
-fn prune_backups(dir: &Path) {
+pub(crate) fn prune_backups(dir: &Path) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };

@@ -236,6 +236,7 @@ fn wii_save_dir(config: &EmulatorConfig, ini: Option<&IniFile>, game_id: &str) -
         extra_roots: Vec::new(),
         mirrors: Vec::new(),
         required_subdir: Some("data"),
+        create: None,
     }
 }
 

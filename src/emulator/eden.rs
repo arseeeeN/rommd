@@ -118,6 +118,7 @@ fn game_save_dir(config: &EmulatorConfig, game_id: &str) -> Option<GameSaveDir> 
         extra_roots: Vec::new(),
         mirrors: Vec::new(),
         required_subdir: None,
+        create: None,
     })
 }
 

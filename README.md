@@ -39,9 +39,11 @@ launch requests. Things to know:
 
 - **Switch:** only the active user's saves are synced. rommd identifies a game
   by its title ID, read from the NSP or XCI. Most NSPs work as they are; XCIs
-  and NSPs without a ticket need `prod.keys` in the emulator's keys folder. Ryujinx only creates
-  a game's save folder the first time it boots the game, so on a fresh install
-  your RomM save is restored from the second launch on.
+  and NSPs without a ticket need `prod.keys` in the emulator's keys folder.
+  When Ryujinx has never booted a game, rommd creates its save folder so your
+  RomM save is there on the first launch. It only does this while Ryujinx is
+  closed; if Ryujinx is open (even with another game), the save is restored
+  after you quit and appears from the next launch.
 - **GameCube:** memory card slot A must be a GCI folder (Dolphin's default).
   A raw memory card image holds every game's saves in one file and is not
   synced.

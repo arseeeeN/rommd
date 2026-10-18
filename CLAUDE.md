@@ -166,11 +166,20 @@ first; with no local save, `switch::DEVICE_SAVE_TITLES` decides.
 - **Ryujinx:** slot `bis/user/save/<slot>/` found via `ExtraData0` (save type
   u8 at 0x20: 1 = Account, 3 = Device). `0/` is the
   committed save and `1/` the working copy of the two-phase commit — **not user
-  profiles**. `0/` is read; restores write both. A slot exists only after
-  Ryujinx has booted the game once (it must be in `imkvdb`), so a fresh install
-  cannot receive a save until then. Post-exit re-resolves the slot; a save
+  profiles**. `0/` is read; restores write both. A slot must also be
+  registered in the save index (`bis/system/save/8000000000000000/{0,1}/`:
+  `imkvdb.arc` and `lastPublishedId`). Without a slot the layout points at the
+  next ID with a `GameSaveDir::create` hook, which the sync runs only to
+  restore a save: it creates the slot and index entry as Ryujinx would (sizes
+  0 — Ryujinx doesn't check them, so the NACP isn't decrypted), and refuses
+  while a Ryujinx process runs (it rewrites the index from memory on start
+  and on save creation), when `0/` and `1/` differ, when the format is not
+  exactly the known one, or when the index changed since the layout was made.
+  The index is backed up to `ryujinx-index-backups/` in the data dir first.
+  The format and tests come from Ryujinx 1.3.3 (see the module comment). If
+  creation is refused, post-exit re-resolves the slot Ryujinx made; a save
   created that session is a fresh start and never wins a conflict, so an
-  existing RomM save is restored into the new slot (the fresh one is backed up).
+  existing RomM save is restored into it (the fresh one is backed up).
 
 **Dolphin:** `config_dir` is the user dir (`~/.local/share/dolphin-emu` on
 Linux). `Dolphin.ini` is read from `config_dir/Config/` (macOS, Windows,
@@ -250,7 +259,7 @@ devices. Write endpoints and `/controllers/scan` are explicitly deferred.
 
 See `dev/controller-design.md` for the full design rationale.
 
-Deferred work (Ryujinx slot creation, RomM device registration, state hashes,
+Deferred work (RomM device registration, state hashes,
 named save histories) is tracked in `dev/backlog.md`.
 
 ## RomM API

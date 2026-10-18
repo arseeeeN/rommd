@@ -82,6 +82,7 @@ impl Emulator for Azahar {
                 )],
                 mirrors: Vec::new(),
                 required_subdir: None,
+                create: None,
             })),
             states: FileSet::stem(config.config_dir.join("states"), format!("{:016X}", id)),
         }

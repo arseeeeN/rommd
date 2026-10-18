@@ -4,10 +4,12 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use super::*;
-use crate::emulator::{FileSet, GameSaveDir, SaveLayout, SaveSet};
+use crate::emulator::{CreateDir, FileSet, GameSaveDir, SaveLayout, SaveSet};
 use crate::testing::fake_romm::{FakeRomm, content_hash};
 use crate::testing::{TempDir, TestEmulator, age, write, zip_bytes};
 
@@ -88,6 +90,7 @@ impl Device {
                 extra_roots: vec![],
                 mirrors: vec![],
                 required_subdir: None,
+                create: None,
             })),
             states: None,
         }
@@ -265,6 +268,7 @@ async fn a_folder_without_its_required_data_is_not_a_save() {
             extra_roots: vec![],
             mirrors: vec![],
             required_subdir: Some("data"),
+            create: None,
         })),
         states: None,
     };
@@ -275,6 +279,81 @@ async fn a_folder_without_its_required_data_is_not_a_save() {
     assert_eq!(
         zip_names(&fake.saves(ROM)[0].data),
         ["524d3845/content/title.tmd", "524d3845/data/save.bin"]
+    );
+}
+
+/// A Ryujinx-like layout whose save folder has to be created by a hook, which
+/// counts its calls and fails when `refuse` is set.
+fn slot_layout(d: &Device, calls: &Arc<AtomicUsize>, refuse: bool) -> SaveLayout {
+    let (slot, calls) = (d.path("slot"), calls.clone());
+    let create = CreateDir(Arc::new(move || {
+        calls.fetch_add(1, Ordering::SeqCst);
+        anyhow::ensure!(!refuse, "Ryujinx is running");
+        std::fs::create_dir_all(slot.join("0"))?;
+        std::fs::create_dir_all(slot.join("1"))?;
+        Ok(())
+    }));
+    SaveLayout {
+        saves: Some(SaveSet::Dir(GameSaveDir {
+            dir: d.path("slot/0"),
+            archive_root: TITLE.into(),
+            extra_roots: vec![],
+            mirrors: vec![d.path("slot/1")],
+            required_subdir: None,
+            create: Some(create),
+        })),
+        states: None,
+    }
+}
+
+#[tokio::test]
+async fn a_missing_save_folder_is_created_only_to_restore_into() {
+    let fake = FakeRomm::start().await;
+    let calls = Arc::new(AtomicUsize::new(0));
+
+    let fresh = Device::new("slot-none");
+    fresh
+        .sync(&fake, &RYUJINX, &slot_layout(&fresh, &calls, false), None)
+        .await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "nothing to restore, nothing created"
+    );
+    assert!(!fresh.path("slot").exists());
+
+    let eden = Device::new("slot-eden");
+    write(&eden.path("save/File1.bin"), b"from eden");
+    eden.sync(&fake, &EDEN, &eden.switch(), None).await;
+
+    let refused = Device::new("slot-refused");
+    let present = refused
+        .sync(&fake, &RYUJINX, &slot_layout(&refused, &calls, true), None)
+        .await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(present.is_empty());
+    assert!(
+        !refused.path("slot").exists(),
+        "a refused slot leaves nothing behind"
+    );
+
+    let ryujinx = Device::new("slot-ryujinx");
+    let layout = slot_layout(&ryujinx, &calls, false);
+    let present = ryujinx.sync(&fake, &RYUJINX, &layout, None).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        present.len(),
+        1,
+        "the restored save counts as present at launch"
+    );
+    assert_eq!(read(ryujinx.path("slot/0/File1.bin")), b"from eden");
+    assert_eq!(read(ryujinx.path("slot/1/File1.bin")), b"from eden");
+
+    ryujinx.sync(&fake, &RYUJINX, &layout, Some(&present)).await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "an existing folder is not created again"
     );
 }
 
@@ -511,6 +590,7 @@ async fn a_3ds_save_carries_title_data_and_extdata_separately() {
             extra_roots: vec![("extdata".into(), d.path("extdata/00001744"))],
             mirrors: vec![],
             required_subdir: None,
+            create: None,
         })),
         states: None,
     };
