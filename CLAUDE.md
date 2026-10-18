@@ -17,7 +17,7 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 - **`src/romm/`** — RomM HTTP client (ROM download, save/state upload/download)
 - **`src/config.rs`** — config file parsing, controller registry
 - **`src/live.rs`** — the running config, reloaded when its file changes
-- **`src/switch.rs`** — Switch NSP title ID extraction (ticket + NCA header decryption)
+- **`src/switch.rs`** — Switch title ID extraction from NSP and XCI (ticket + NCA header decryption)
 - **`src/n3ds.rs`** — 3DS title ID extraction (NCSD / NCCH headers, CIA TMD; no keys)
 - **`src/sync/`** — save/state sync engine, three-way decision, persistent sync state
 - **`src/save_archive.rs`** — zip/restore and RomM-compatible hashing of directory saves
@@ -226,6 +226,13 @@ map to the base title, since saves belong to the base application. Tiers:
    Requires `header_key` (64 hex chars) in prod.keys (Ryujinx `system/`, Eden `keys/`).
    Nintendo uses non-standard XTS: sector number goes **big-endian into bytes 8–15**
    of the 128-bit tweak (not little-endian into bytes 0–7 like IEEE P1619).
+**XCI** (game card images) carry no ticket, so only tier 2 applies: the card
+header (`HEAD` at 0x100, root HFS0 offset u64 at 0x130) leads to the `secure`
+HFS0 partition, whose `.cnmt.nca` headers are decrypted as above. The `update`
+partition holds system update metadata and is skipped; with several content
+meta NCAs (bundled update or DLC) the base application ID (low 13 bits zero)
+wins.
+
 There is deliberately no filename fallback (e.g. `Game[0100000000010000].nsp`):
 game IDs must never depend on file names. NSPs where both tiers fail get no
 save sync.

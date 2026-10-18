@@ -73,33 +73,12 @@ pub fn title_id_for_rom(rom_path: &Path, prod_keys: &Path) -> Option<String> {
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-    if ext != "nsp" {
-        warn!(
-            "cannot read title ID from .{} files — only NSP is supported; \
-             save scoping unavailable for {}",
-            ext,
-            rom_path.display()
-        );
-        return None;
-    }
-
-    let id = match read_title_id_from_ticket(rom_path) {
-        Ok(id) => id,
-        Err(e) => {
-            debug!(
-                "ticket read failed for {} ({}), trying NCA header",
-                rom_path.display(),
-                e
-            );
-            if !prod_keys.exists() {
-                warn!(
-                    "prod.keys not found at {} — title ID unavailable for {}",
-                    prod_keys.display(),
-                    rom_path.display()
-                );
-                return None;
-            }
-            match read_title_id_from_nsp(rom_path, prod_keys) {
+    let id = match ext.as_str() {
+        "nsp" => title_id_from_nsp(rom_path, prod_keys)?,
+        "xci" => {
+            // Game card images carry no ticket; the NCA header is the only source.
+            require_keys(rom_path, prod_keys)?;
+            match read_title_id_from_xci(rom_path, prod_keys) {
                 Ok(id) => id,
                 Err(e) => {
                     warn!(
@@ -111,8 +90,54 @@ pub fn title_id_for_rom(rom_path: &Path, prod_keys: &Path) -> Option<String> {
                 }
             }
         }
+        _ => {
+            warn!(
+                "cannot read title ID from .{} files (supported: nsp, xci); \
+                 save scoping unavailable for {}",
+                ext,
+                rom_path.display()
+            );
+            return None;
+        }
     };
     Some(format!("{:016x}", base_title_id(id)))
+}
+
+fn title_id_from_nsp(rom_path: &Path, prod_keys: &Path) -> Option<u64> {
+    match read_title_id_from_ticket(rom_path) {
+        Ok(id) => Some(id),
+        Err(e) => {
+            debug!(
+                "ticket read failed for {} ({}), trying NCA header",
+                rom_path.display(),
+                e
+            );
+            require_keys(rom_path, prod_keys)?;
+            match read_title_id_from_nsp(rom_path, prod_keys) {
+                Ok(id) => Some(id),
+                Err(e) => {
+                    warn!(
+                        "could not read title ID from {}: {:#}",
+                        rom_path.display(),
+                        e
+                    );
+                    None
+                }
+            }
+        }
+    }
+}
+
+fn require_keys(rom_path: &Path, prod_keys: &Path) -> Option<()> {
+    if prod_keys.exists() {
+        return Some(());
+    }
+    warn!(
+        "prod.keys not found at {} — title ID unavailable for {}",
+        prod_keys.display(),
+        rom_path.display()
+    );
+    None
 }
 
 fn base_title_id(id: u64) -> u64 {
@@ -188,6 +213,94 @@ pub fn read_title_id_from_nsp(nsp_path: &Path, prod_keys_path: &Path) -> Result<
     let nca_header = extract_cnmt_nca_header(nsp_path)
         .with_context(|| format!("locating .cnmt.nca in {}", nsp_path.display()))?;
     title_id_from_nca_header(&nca_header, &header_key)
+}
+
+/// Extract the title ID from an XCI (game card image) via its content meta NCA.
+///
+/// The card header (magic `HEAD` at 0x100) points at a root HFS0 partition
+/// table (offset u64 LE at 0x130) listing `update`, `normal`, `secure` and
+/// `logo`. The game's NCAs, its `.cnmt.nca` included, are in `secure`;
+/// `update` carries system update data and is ignored. Cards that bundle an
+/// update or DLC hold several content meta NCAs, so the base application's
+/// ID is preferred.
+pub fn read_title_id_from_xci(xci_path: &Path, prod_keys_path: &Path) -> Result<u64> {
+    let header_key = parse_header_key(prod_keys_path)
+        .with_context(|| format!("reading header_key from {}", prod_keys_path.display()))?;
+    let mut f =
+        std::fs::File::open(xci_path).with_context(|| format!("opening {}", xci_path.display()))?;
+    let mut ids = Vec::new();
+    for (offset, size) in xci_cnmt_ncas(&mut f)? {
+        let mut nca = vec![0u8; size.min(0x400) as usize];
+        f.seek(SeekFrom::Start(offset))?;
+        f.read_exact(&mut nca)?;
+        ids.push(base_title_id(title_id_from_nca_header(&nca, &header_key)?));
+    }
+    // Base applications are aligned to 0x2000; DLC IDs are not.
+    ids.iter()
+        .find(|id| *id & 0x1FFF == 0)
+        .or(ids.first())
+        .copied()
+        .context("no content meta NCA in the card's secure partition")
+}
+
+/// (absolute offset, size) of each `.cnmt.nca` in an XCI's secure partition.
+fn xci_cnmt_ncas(f: &mut std::fs::File) -> Result<Vec<(u64, u64)>> {
+    let mut magic = [0u8; 4];
+    f.seek(SeekFrom::Start(0x100))?;
+    f.read_exact(&mut magic)?;
+    anyhow::ensure!(&magic == b"HEAD", "not an XCI (no HEAD magic)");
+    f.seek(SeekFrom::Start(0x130))?;
+    let root = read_u64_le(f)?;
+    let (_, secure, _) = read_hfs0(f, root)?
+        .into_iter()
+        .find(|(name, _, _)| name == "secure")
+        .context("XCI has no secure partition")?;
+    Ok(read_hfs0(f, secure)?
+        .into_iter()
+        .filter(|(name, _, _)| name.ends_with(".cnmt.nca"))
+        .map(|(_, offset, size)| (offset, size))
+        .collect())
+}
+
+/// Entries of the HFS0 at `offset` as (name, absolute offset, size). Layout:
+/// magic, file count u32, string table size u32, reserved u32, then 0x40-byte
+/// entries (data offset u64 relative to the end of the header, size u64,
+/// name offset u32, ...), then the string table; data follows.
+fn read_hfs0(f: &mut std::fs::File, offset: u64) -> Result<Vec<(String, u64, u64)>> {
+    let mut magic = [0u8; 4];
+    f.seek(SeekFrom::Start(offset))?;
+    f.read_exact(&mut magic)?;
+    anyhow::ensure!(&magic == b"HFS0", "no HFS0 partition at {:#x}", offset);
+    let count = read_u32_le(f)? as u64;
+    let strings_len = read_u32_le(f)? as u64;
+    anyhow::ensure!(
+        count <= 4096 && strings_len <= 1 << 20,
+        "implausible HFS0 header at {:#x}",
+        offset
+    );
+    let _reserved = read_u32_le(f)?;
+    let mut raw = Vec::new();
+    for _ in 0..count {
+        let data_offset = read_u64_le(f)?;
+        let size = read_u64_le(f)?;
+        let name_offset = read_u32_le(f)?;
+        let mut rest = [0u8; 0x40 - 20];
+        f.read_exact(&mut rest)?;
+        raw.push((data_offset, size, name_offset));
+    }
+    let mut strings = vec![0u8; strings_len as usize];
+    f.read_exact(&mut strings)?;
+    let data_base = offset + 16 + count * 0x40 + strings_len;
+    Ok(raw
+        .into_iter()
+        .map(|(data_offset, size, name_offset)| {
+            (
+                cstr_at(&strings, name_offset as usize).to_owned(),
+                data_base + data_offset,
+                size,
+            )
+        })
+        .collect())
 }
 
 /// Parse the `header_key` entry from a prod.keys file (plain `key = hex` format).
@@ -375,5 +488,64 @@ mod tests {
         assert_eq!(base_title_id(0x0100000000010800), 0x0100000000010000);
         assert_eq!(base_title_id(0x0100000000010000), 0x0100000000010000);
         assert_eq!(base_title_id(0x0100000000011001), 0x0100000000011001);
+    }
+
+    /// An HFS0 holding the given (name, contents) files.
+    fn hfs0(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut strings = Vec::new();
+        let mut offsets = Vec::new();
+        for (name, _) in files {
+            offsets.push(strings.len() as u32);
+            strings.extend_from_slice(name.as_bytes());
+            strings.push(0);
+        }
+        let mut out = b"HFS0".to_vec();
+        out.extend((files.len() as u32).to_le_bytes());
+        out.extend((strings.len() as u32).to_le_bytes());
+        out.extend(0u32.to_le_bytes());
+        let mut data_offset = 0u64;
+        for ((_, data), name_offset) in files.iter().zip(&offsets) {
+            out.extend(data_offset.to_le_bytes());
+            out.extend((data.len() as u64).to_le_bytes());
+            out.extend(name_offset.to_le_bytes());
+            out.extend([0u8; 0x40 - 20]);
+            data_offset += data.len() as u64;
+        }
+        out.extend(&strings);
+        for (_, data) in files {
+            out.extend_from_slice(data);
+        }
+        out
+    }
+
+    #[test]
+    fn finds_the_content_meta_nca_in_the_secure_partition_only() {
+        let secure = hfs0(&[("game.nca", b"program"), ("abcd.cnmt.nca", b"secure meta")]);
+        let update = hfs0(&[("sysupdate.cnmt.nca", b"system update meta")]);
+        let root = hfs0(&[
+            ("update", &update),
+            ("normal", &hfs0(&[])),
+            ("secure", &secure),
+        ]);
+        let mut xci = vec![0u8; 0x200];
+        xci[0x100..0x104].copy_from_slice(b"HEAD");
+        xci[0x130..0x138].copy_from_slice(&0x200u64.to_le_bytes());
+        xci.extend(&root);
+
+        let dir = crate::testing::TempDir::new("xci");
+        let path = dir.path().join("game.xci");
+        crate::testing::write(&path, &xci);
+        let mut f = std::fs::File::open(&path).unwrap();
+        let found = xci_cnmt_ncas(&mut f).unwrap();
+        assert_eq!(found.len(), 1);
+        let (offset, size) = found[0];
+        let mut data = vec![0u8; size as usize];
+        f.seek(SeekFrom::Start(offset)).unwrap();
+        f.read_exact(&mut data).unwrap();
+        assert_eq!(data, b"secure meta");
+
+        crate::testing::write(&path, &vec![0u8; 0x200]);
+        let mut f = std::fs::File::open(&path).unwrap();
+        assert!(xci_cnmt_ncas(&mut f).is_err(), "no HEAD magic");
     }
 }

@@ -38,8 +38,8 @@ The ID is the emulator's name in the config file (`[emulators.<id>]`) and in
 launch requests. Things to know:
 
 - **Switch:** only the active user's saves are synced. rommd identifies a game
-  by its title ID, read from the NSP. Most NSPs work as they are; ones without
-  a ticket need `prod.keys` in the emulator's keys folder. Ryujinx only creates
+  by its title ID, read from the NSP or XCI. Most NSPs work as they are; XCIs
+  and NSPs without a ticket need `prod.keys` in the emulator's keys folder. Ryujinx only creates
   a game's save folder the first time it boots the game, so on a fresh install
   your RomM save is restored from the second launch on.
 - **GameCube:** memory card slot A must be a GCI folder (Dolphin's default).
