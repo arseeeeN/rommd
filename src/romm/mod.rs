@@ -8,7 +8,7 @@ use tracing::debug;
 
 use crate::config::RommConfig;
 use auth::TokenManager;
-use types::{RomDetail, SaveSchema, StateSchema};
+use types::{PlatformSchema, RomDetail, RomPage, SaveSchema, StateSchema};
 
 pub struct RommClient {
     base_url: String,
@@ -99,6 +99,48 @@ impl RommClient {
             .json::<RomDetail>()
             .await
             .context("parsing ROM response")
+    }
+
+    pub async fn platforms(&self) -> Result<Vec<PlatformSchema>> {
+        let token = self.tokens.get_token().await?;
+        self.client
+            .get(format!("{}/api/platforms", self.base_url))
+            .bearer_auth(token)
+            .send()
+            .await
+            .context("GET /api/platforms")?
+            .error_for_status()
+            .context("listing platforms")?
+            .json()
+            .await
+            .context("parsing platforms")
+    }
+
+    /// ROMs whose name or file name contains `term`, on `platforms` if any,
+    /// sorted by name.
+    pub async fn search_roms(&self, term: &str, platforms: &[i64], limit: u32) -> Result<RomPage> {
+        let token = self.tokens.get_token().await?;
+        let mut query: Vec<(&str, String)> = vec![
+            ("search_term", term.to_owned()),
+            ("limit", limit.to_string()),
+            ("order_by", "name".into()),
+            ("order_dir", "asc".into()),
+            ("with_char_index", "false".into()),
+            ("with_filter_values", "false".into()),
+        ];
+        query.extend(platforms.iter().map(|id| ("platform_ids", id.to_string())));
+        self.client
+            .get(format!("{}/api/roms", self.base_url))
+            .bearer_auth(token)
+            .query(&query)
+            .send()
+            .await
+            .context("GET /api/roms")?
+            .error_for_status()
+            .context("searching ROMs")?
+            .json()
+            .await
+            .context("parsing ROM search results")
     }
 
     /// Ensure the ROM is present in `roms_dir/{platform_fs_slug}/` and return

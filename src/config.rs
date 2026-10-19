@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -12,8 +13,14 @@ pub struct Config {
     /// Root directory for locally cached ROMs. Platform subdirectories (psx/, switch/, …)
     /// are created inside it automatically. Supports ~ expansion.
     pub roms_dir: Option<PathBuf>,
+    /// In file order: when several emulators run a platform, the first one is
+    /// used unless `platforms` names one.
     #[serde(default)]
-    pub emulators: HashMap<String, EmulatorConfig>,
+    pub emulators: IndexMap<String, EmulatorConfig>,
+    /// RomM platform slug → emulator ID, for platforms several configured
+    /// emulators can run.
+    #[serde(default)]
+    pub platforms: IndexMap<String, String>,
     #[serde(default)]
     pub controllers: HashMap<String, ControllerConfig>,
     #[serde(default)]
@@ -255,6 +262,8 @@ mode = "auto"
 
 # ── Emulators ─────────────────────────────────────────────────────────────────
 # Add one [emulators.<id>] block per emulator. The id is used in API calls.
+# When several emulators run the same platform (Eden and Ryujinx), the one
+# listed first is used unless [platforms] below picks another.
 #
 # macOS
 # -----
@@ -322,6 +331,12 @@ mode = "auto"
 # [emulators.ryujinx]
 # binary     = "/usr/bin/Ryujinx"
 # config_dir = "~/.config/Ryujinx"
+
+# ── Platforms ─────────────────────────────────────────────────────────────────
+# Which emulator runs a platform's games when several can, by RomM platform
+# slug (switch, ngc, wii, 3ds, psx, gba, ...; `rommd search` shows them):
+# [platforms]
+# switch = "eden"
 
 # ── Controllers ───────────────────────────────────────────────────────────────
 # Register physical controllers here. The id (e.g. "dualshock_mine") is what

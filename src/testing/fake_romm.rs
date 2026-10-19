@@ -16,6 +16,11 @@
 //!
 //! A virtual clock advances one second per stored upload, so version order and
 //! the timestamps in names are deterministic.
+//!
+//! For game search it serves seeded platforms (`GET /api/platforms`) and ROMs:
+//! `GET /api/roms/{id}`, and `GET /api/roms` filtered like RomM 5.2.0 by
+//! `search_term` (case-insensitive substring of the name or file name) and
+//! `platform_ids`, sorted by name, paged by `limit`.
 
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::StatusCode;
@@ -42,6 +47,22 @@ pub struct Entry {
     pub content_hash: String,
 }
 
+#[derive(Clone)]
+struct FakePlatform {
+    id: i64,
+    slug: String,
+    fs_slug: String,
+    name: String,
+}
+
+#[derive(Clone)]
+struct FakeRom {
+    id: i64,
+    name: String,
+    fs_name: String,
+    platform_id: i64,
+}
+
 #[derive(Default)]
 struct Store {
     next_id: i64,
@@ -49,6 +70,8 @@ struct Store {
     saves: Vec<Entry>,
     states: Vec<Entry>,
     fail_listing: bool,
+    platforms: Vec<FakePlatform>,
+    roms: Vec<FakeRom>,
     /// "METHOD path" of every write, for asserting what a sync did.
     writes: Vec<String>,
 }
@@ -87,6 +110,9 @@ impl FakeRomm {
             .route("/api/states", get(list_states).post(add_state))
             .route("/api/states/{id}", put(update_state))
             .route("/api/states/{id}/content", get(state_content))
+            .route("/api/platforms", get(list_platforms))
+            .route("/api/roms", get(search_roms))
+            .route("/api/roms/{id}", get(get_rom))
             .with_state(store.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -104,6 +130,24 @@ impl FakeRomm {
             username: None,
             password: None,
         })
+    }
+
+    pub fn seed_platform(&self, id: i64, slug: &str, fs_slug: &str, name: &str) {
+        self.store.lock().unwrap().platforms.push(FakePlatform {
+            id,
+            slug: slug.into(),
+            fs_slug: fs_slug.into(),
+            name: name.into(),
+        });
+    }
+
+    pub fn seed_rom(&self, id: i64, name: &str, platform_id: i64) {
+        self.store.lock().unwrap().roms.push(FakeRom {
+            id,
+            name: name.into(),
+            fs_name: format!("{name}.bin"),
+            platform_id,
+        });
     }
 
     /// Saves of a ROM, oldest first.
@@ -439,4 +483,89 @@ async fn state_content(State(s): State<Shared>, Path(id): Path<i64>) -> Response
         Some(e) => e.data.clone().into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+// ── Platforms and ROMs ────────────────────────────────────────────────────────
+
+fn platform_json(p: &FakePlatform) -> serde_json::Value {
+    serde_json::json!({
+        "id": p.id, "slug": p.slug, "fs_slug": p.fs_slug, "name": p.name,
+        "custom_name": "", "display_name": p.name,
+    })
+}
+
+fn rom_json(store: &Store, r: &FakeRom) -> serde_json::Value {
+    let p = store
+        .platforms
+        .iter()
+        .find(|p| p.id == r.platform_id)
+        .unwrap();
+    serde_json::json!({
+        "id": r.id, "name": r.name, "fs_name": r.fs_name, "files": [],
+        "platform_id": p.id, "platform_slug": p.slug, "platform_fs_slug": p.fs_slug,
+        "platform_display_name": p.name,
+    })
+}
+
+async fn list_platforms(State(store): State<Shared>) -> Json<serde_json::Value> {
+    let store = store.lock().unwrap();
+    Json(store.platforms.iter().map(platform_json).collect())
+}
+
+async fn get_rom(State(store): State<Shared>, Path(id): Path<i64>) -> Response {
+    let store = store.lock().unwrap();
+    match store.roms.iter().find(|r| r.id == id) {
+        Some(r) => Json(rom_json(&store, r)).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// `platform_ids` repeats, which axum's `Query` can't collect, so the query
+/// string is parsed by hand.
+async fn search_roms(
+    State(store): State<Shared>,
+    axum::extract::RawQuery(raw): axum::extract::RawQuery,
+) -> Json<serde_json::Value> {
+    let params: Vec<(String, String)> = raw
+        .unwrap_or_default()
+        .split('&')
+        .filter_map(|kv| kv.split_once('='))
+        .map(|(k, v)| {
+            let v = urlencoding::decode(&v.replace('+', " "))
+                .unwrap()
+                .into_owned();
+            (k.to_owned(), v)
+        })
+        .collect();
+    let param = |key: &str| {
+        params
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+    };
+    let term = param("search_term").unwrap_or_default().to_lowercase();
+    let platform_ids: Vec<i64> = params
+        .iter()
+        .filter(|(k, _)| k == "platform_ids")
+        .map(|(_, v)| v.parse().unwrap())
+        .collect();
+    let limit: usize = param("limit").map_or(50, |l| l.parse().unwrap());
+    let store = store.lock().unwrap();
+    let mut found: Vec<&FakeRom> = store
+        .roms
+        .iter()
+        .filter(|r| {
+            r.name.to_lowercase().contains(&term) || r.fs_name.to_lowercase().contains(&term)
+        })
+        .filter(|r| platform_ids.is_empty() || platform_ids.contains(&r.platform_id))
+        .collect();
+    found.sort_by_key(|r| r.name.to_lowercase());
+    let items: Vec<_> = found
+        .iter()
+        .take(limit)
+        .map(|r| rom_json(&store, r))
+        .collect();
+    Json(serde_json::json!({
+        "items": items, "total": found.len(), "limit": limit, "offset": 0,
+    }))
 }

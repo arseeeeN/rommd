@@ -24,6 +24,7 @@ use types::*;
         handlers::health,
         handlers::list_emulators,
         handlers::launch,
+        handlers::games,
         handlers::status,
         handlers::stop,
         handlers::snapshot,
@@ -37,6 +38,8 @@ use types::*;
         EmulatorInfo,
         LaunchRequest,
         LaunchResponse,
+        GamesResponse,
+        GameMatch,
         ControllerSlot,
         StatusResponse,
         RunningGameInfo,
@@ -61,6 +64,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/health", get(handlers::health))
         .route("/emulators", get(handlers::list_emulators))
         .route("/launch", post(handlers::launch))
+        .route("/games", get(handlers::games))
         .route("/status", get(handlers::status))
         .route("/stop", post(handlers::stop))
         .route("/snapshot", post(handlers::snapshot))

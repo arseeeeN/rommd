@@ -55,62 +55,16 @@ Azahar keeps per-game settings in `~/.config/azahar-emu/custom/<TITLE ID>.ini`
 (`launch` overlay, `snapshot`) would hook in, as Dolphin's GameSettings do.
 
 
-## Search and launch games from the CLI
+## Key the local ROM cache on the platform slug
 
-A fallback to the RomM userscript, and handy for testing: find a game and start
-it from a terminal.
-
-```sh
-rommd search xenoblade platform:switch
-rommd play "Mario Odyssey"              # one match: launch; several: pick one
-rommd play --first mario platform:switch
-rommd play 199                          # a bare number is a ROM ID
-```
-
-- **Thin client.** The CLI calls the running daemon: `play` goes through
-  `POST /launch`, so launching, process tracking and the post-exit sync stay
-  in one place. Search is a new daemon endpoint (e.g. `GET /games?q=`) using
-  rommd's RomM client and credentials, shared with the MCP `search_games` tool
-  below and usable by the userscript.
-- **Ambiguity.** `play` launches only when exactly one game matches. With
-  several, it lists them numbered and asks on a terminal, otherwise exits with
-  the list; `--first` takes the top hit. Not the default: a vague query must
-  not start the wrong game. Not `rommd start`, which reads like starting the
-  daemon (`rommd service start`).
-- **Query language.** Free text plus `key:value` filters (booru/GitHub style),
-  quoting values with spaces:
-  - `platform:<slug>` — RomM's platform slug or fs slug (`switch`, `ngc`, …).
-  - `emulator:<id>` — which emulator to launch with when a platform has
-    several (Eden and Ryujinx).
-  - `library:romm` — the game library to search. Not "provider", which in
-    RomM means metadata providers (IGDB etc.). Only `romm` is accepted until a
-    second library (Gaseous) exists; see the `LibraryService` note in
-    CLAUDE.md.
-- **Needs a platform → emulator mapping** in the daemon, the same one the MCP
-  `launch_game` needs (today it only exists in the userscript). When several
-  configured emulators handle a platform (Eden and Ryujinx), the first of
-  these decides:
-  1. The request names one: `emulator:` in the query, the userscript, later
-     an emulator choice in RomM's UI.
-  2. An optional per-platform default in the config, `[platforms] switch =
-     "eden"`.
-  3. The first one in the config file. `Config::emulators` is a `HashMap`
-     today, so it must become an `IndexMap` to keep the file's order.
-
-  `rommd play` says which emulator it picked and why ("using ryujinx, first
-  configured for switch; set `[platforms] switch` to change"), since config
-  order alone is invisible. Key the mapping on RomM's canonical platform
-  `slug` (`ngc`), never on `fs_slug` (the server folder name, which can be
-  renamed, e.g. to `gc` with a `config.yml` platform binding) or a custom
-  display name. `platform:` in queries may match all three, resolved through
-  `GET /api/platforms`.
-- **Related:** the local ROM cache is `roms/<fs_slug>/`, so renaming a
-  platform folder on the server re-downloads its games into a new folder and
-  orphans the old one. Keying it on `slug` would avoid that, at the cost of
-  moving existing caches once. Check how RomM's custom folder structure
-  support (next release) reports `slug` and `fs_slug` before deciding.
-- **To check:** RomM's search parameters (`GET /api/roms` with a search term
-  and platform IDs; platform slugs resolved through `GET /api/platforms`).
+The local ROM cache is `roms/<platform_fs_slug>/`, but `fs_slug` is the
+platform's folder name on the RomM server, which can be renamed (e.g. `ngc` to
+`gc`, with a `config.yml` platform binding keeping the slug `ngc`). A rename
+re-downloads that platform's games into a new folder and orphans the old one.
+Keying the cache on the canonical `slug` avoids that, at the cost of moving
+existing caches once. Check how RomM's custom folder structure support (the
+release after 5.2) reports `slug` and `fs_slug` before deciding. Emulator
+choice already uses `slug` (`Emulator::platforms`).
 
 ## MCP server for assistants
 
@@ -127,10 +81,10 @@ the routes one-to-one, but:
   for a model to choose, and `/update` must stay a user action.
 
 **Proposed: a small set of tools written for the job.**
-- `search_games(query, platform?)` — through rommd's RomM client, returning
-  title, platform and `rom_id`.
-- `launch_game(rom_id, emulator?)` — without `emulator`, rommd picks a
-  configured one for the ROM's platform (worth having in the daemon anyway).
+- `search_games(query)` — `games::find_games` (`GET /games`), which already
+  returns title, platform, `rom_id` and the emulator a launch would use.
+- `launch_game(rom_id, emulator?)` — `POST /launch`, which picks the
+  platform's emulator when none is given.
 - `status`, `stop_game`, `list_save_conflicts` — map onto existing routes.
 
 **Transport.** A `rommd mcp` stdio subcommand that calls the running daemon on

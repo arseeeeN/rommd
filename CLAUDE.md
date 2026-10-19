@@ -10,7 +10,9 @@ and bidirectional save/state sync with RomM.
 RomM (remote) ←→ rommd daemon ←→ local emulators
 ```
 
-- **`src/main.rs`** — CLI (`rommd`, `rommd service install|start|stop|restart|uninstall`), startup, emulator registry
+- **`src/main.rs`** — CLI (`rommd`, `rommd search|play`, `rommd service install|start|stop|restart|uninstall`), startup, emulator registry
+- **`src/games.rs`** — game search (`GET /games`): query language (words + `platform:`/`emulator:`/`library:`/`id:`), platform matching, emulator choice
+- **`src/cli.rs`** — `rommd search` / `rommd play`, a client of the running daemon (`/games`, `/launch`)
 - **`src/server/`** — axum HTTP handlers, OpenAPI spec (utoipa), request/response types
 - **`src/process.rs`** — process tracking (a game is its whole process tree: Unix process group, Windows job object), stop, post-exit sync trigger
 - **`src/emulator/`** — one file per emulator, all implement the `Emulator` trait
@@ -89,6 +91,12 @@ Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
   game. `Stem` matches `<stem>` followed by `.`/`_` or nothing (never `Game
   Plus.sav` for "Game"); build it with `FileSet::stem`, which refuses an empty
   stem. `Gci` matches `.gci` files by the game ID in their header
+- `platforms` — RomM platform slugs (canonical `slug`, never the renamable
+  `fs_slug` or a display name) the emulator runs. Picks the emulator when a
+  launch or search doesn't name one (`games::choose_emulator`): the requested
+  one, else `[platforms] <slug>` in the config, else the first configured in
+  file order (`Config::emulators` is an `IndexMap`). A requested or default
+  emulator that can't run the platform is an error, never skipped
 - `save_family` — emulator IDs whose RomM saves this emulator can restore
   (Switch emulators share `switch::SAVE_COMPATIBLE_EMULATORS`)
 - `game_id_for_rom` — sync; returns the emulator's stable game identifier.
@@ -265,7 +273,8 @@ named save histories) is tracked in `dev/backlog.md`.
 ## RomM API
 
 Base URL and credentials are in config. The client is `src/romm/mod.rs`.
-Endpoints used: `GET /api/roms/{id}`, `GET /api/roms/{id}/content/{name}`,
+Endpoints used: `GET /api/roms` (search: `search_term`, repeated `platform_ids`),
+`GET /api/platforms`, `GET /api/roms/{id}`, `GET /api/roms/{id}/content/{name}`,
 `GET /api/saves`, `POST /api/saves`, `PUT /api/saves/{id}`, `GET /api/saves/{id}/content`,
 `GET /api/states`, `POST /api/states`, `GET /api/states/{id}/content`.
 
@@ -279,7 +288,8 @@ data dir.
 
 - **`src/testing/fake_romm.rs`** — in-process fake of RomM 5.2.0's save and
   state API (slotted uploads tagged and versioned, `overwrite`, `autocleanup`
-  per ROM and slot, PUT in place, `content_hash` scheme). Its behaviour is
+  per ROM and slot, PUT in place, `content_hash` scheme), plus seeded
+  platforms and ROM search for `games`. Its behaviour is
   taken from RomM's `endpoints/saves.py` / `states.py`; re-check them when
   targeting a newer RomM. A virtual clock starts an hour in the past and ticks
   per upload.

@@ -23,6 +23,10 @@ impl Emulator for Dolphin {
         "Dolphin"
     }
 
+    fn platforms(&self) -> &'static [&'static str] {
+        &["ngc", "wii"]
+    }
+
     fn config_dir_markers(&self) -> &'static [&'static str] {
         &["GC", "Wii", "StateSaves"]
     }

@@ -33,6 +33,10 @@ impl Emulator for Azahar {
         "Azahar"
     }
 
+    fn platforms(&self) -> &'static [&'static str] {
+        &["3ds"]
+    }
+
     fn config_dir_markers(&self) -> &'static [&'static str] {
         &["sdmc", "nand"]
     }

@@ -10,8 +10,9 @@ use crate::profile::ProfileBlob;
 pub struct LaunchRequest {
     /// RomM ROM ID to download and launch.
     pub rom_id: i64,
-    /// Emulator ID (e.g. `"duckstation"`, `"ryujinx"`).
-    pub emulator: String,
+    /// Emulator ID (e.g. `"duckstation"`, `"ryujinx"`). Without one, rommd
+    /// picks the emulator for the ROM's platform (see `GET /games`).
+    pub emulator: Option<String>,
     /// Optional settings overlay to apply before launch.
     pub profile: Option<ProfileBlob>,
     /// Skip RomM download and use this local path directly.
@@ -37,6 +38,42 @@ pub struct ControllerSlot {
 pub struct LaunchResponse {
     /// PID of the spawned emulator process.
     pub pid: u32,
+    /// The emulator that was started.
+    pub emulator: String,
+}
+
+// ── /games ────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct GamesQuery {
+    /// Words to search for in game names, plus `key:value` filters:
+    /// `platform:` (RomM platform slug, folder name or name), `emulator:`,
+    /// `library:romm`, `id:` (a ROM ID). Quote values with spaces.
+    pub q: String,
+    /// Most games to return (default 20).
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct GamesResponse {
+    /// Best matches first: exact name, then names starting with the search.
+    pub games: Vec<GameMatch>,
+    /// How many games match in all, beyond `limit`.
+    pub total: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct GameMatch {
+    pub rom_id: i64,
+    pub name: String,
+    /// RomM platform slug.
+    pub platform: String,
+    pub platform_name: String,
+    /// The emulator a launch would use; `None` when none is configured for
+    /// the platform.
+    pub emulator: Option<String>,
+    /// Why that emulator, or why none.
+    pub emulator_reason: String,
 }
 
 // ── /status ───────────────────────────────────────────────────────────────────

@@ -132,6 +132,16 @@ running keeps the settings it started with. If the file has an error, rommd
 keeps using the last version that worked and reports the error in its log
 and in `GET /health`.
 
+When several configured emulators run the same platform (Eden and Ryujinx
+for Switch), the one listed first in the config file starts its games. To
+pick another, name it per platform by RomM's platform slug (`rommd search`
+shows them):
+
+```toml
+[platforms]
+switch = "eden"
+```
+
 ## Running
 
 `rommd service install` starts rommd at login: a systemd user service on
@@ -159,6 +169,30 @@ mode = "auto"    # auto | notify | off
 
 Every release binary is signed. rommd only installs an update whose signature
 matches the key built into it, for exactly that version and platform.
+
+## From the command line
+
+With rommd running, you can find and start games from a terminal:
+
+```sh
+rommd search mario kart                  # list matching games
+rommd play xenoblade                     # start it if only one game matches
+rommd play mario platform:switch         # several matches: pick from a list
+rommd play --first mario kart            # start the best match without asking
+rommd play id:199                        # start a ROM by its RomM ID
+```
+
+A query is words from the game's name plus filters:
+
+| Filter | |
+|---|---|
+| `platform:switch` | RomM platform slug, folder name or name (`platform:"Nintendo GameCube"`) |
+| `emulator:eden` | Start with this emulator, and only list games it runs |
+| `id:199` | One ROM by its ID (from the game's URL in RomM) |
+| `library:romm` | The game library to search; RomM is the only one so far |
+
+`search` shows the emulator each game would start with. Without `emulator:`,
+`play` uses the one configured for the game's platform (see Configure).
 
 ## Launch button in RomM (temporary)
 
@@ -190,14 +224,15 @@ rommd listens on `http://localhost:7497`. The full API is described by
 
 | Endpoint | |
 |---|---|
-| `POST /launch` | Download (if needed), sync, and launch `{rom_id, emulator}` |
+| `GET /games?q=…` | Search the library with the query language above; each game comes with the emulator a launch would use |
+| `POST /launch` | Download (if needed), sync, and launch `{rom_id, emulator}`; without `emulator`, the platform's configured one |
 | `GET /status` | Running games |
 | `POST /stop` | Stop a game (`{pid}`) or all games |
 | `GET /emulators` | Known emulators and whether they are configured |
 | `GET /saves/conflicts` | Recent save conflicts and where the other version was kept |
 | `GET /update`, `POST /update` | Update status (`?check=true` checks now); install the latest release |
 
-To launch a game by hand, take its ID from the game's URL in RomM
+To launch a game without the CLI, take its ID from the game's URL in RomM
 (`…/rom/123`):
 
 ```sh

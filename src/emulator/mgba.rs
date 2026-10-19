@@ -22,6 +22,10 @@ impl Emulator for MGba {
         "mGBA"
     }
 
+    fn platforms(&self) -> &'static [&'static str] {
+        &["gb", "gbc", "gba"]
+    }
+
     fn config_dir_markers(&self) -> &'static [&'static str] {
         &["config.ini"]
     }

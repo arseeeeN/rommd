@@ -70,34 +70,54 @@ pub async fn launch(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LaunchRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let emulator = state
-        .emulators
-        .get(&req.emulator)
-        .ok_or_else(|| anyhow::anyhow!("emulator '{}' is not configured", req.emulator))?;
-
     // One config and RomM client for the whole launch, even if the config
     // file is reloaded meanwhile; the session keeps them until it ends.
     let config = state.config();
     let romm_client = state.romm();
+
+    let rom = match &req.local_path {
+        Some(_) => None,
+        None => {
+            let romm = romm_client
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("RomM is not configured; provide local_path"))?;
+            Some(romm.get_rom(req.rom_id).await?)
+        }
+    };
+    let emulator_id = match (&req.emulator, &rom) {
+        (Some(id), _) => id.clone(),
+        (None, Some(rom)) => {
+            let choice =
+                crate::games::choose_emulator(&rom.platform_slug, None, &config, &state.emulators)?;
+            info!(
+                "using {} for rom {}: {}",
+                choice.id, req.rom_id, choice.reason
+            );
+            choice.id
+        }
+        (None, None) => {
+            return Err(anyhow::anyhow!("a launch with local_path needs an emulator").into());
+        }
+    };
+    let emulator = state
+        .emulators
+        .get(&emulator_id)
+        .ok_or_else(|| anyhow::anyhow!("emulator '{}' is not configured", emulator_id))?;
     let emu_config = config
         .emulators
-        .get(&req.emulator)
-        .ok_or_else(|| anyhow::anyhow!("no config entry for emulator '{}'", req.emulator))?;
+        .get(&emulator_id)
+        .ok_or_else(|| anyhow::anyhow!("no config entry for emulator '{}'", emulator_id))?;
 
-    let rom_path: PathBuf = if let Some(local) = &req.local_path {
-        PathBuf::from(local)
-    } else {
-        let romm = romm_client
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("RomM is not configured; provide local_path"))?;
-
-        let rom = romm.get_rom(req.rom_id).await?;
-        let roms_dir = config.roms_dir();
-        romm.download_rom_to_dir(&rom, &roms_dir).await?
+    let rom_path: PathBuf = match (&rom, &req.local_path) {
+        (Some(rom), _) => {
+            let romm = romm_client.as_ref().expect("checked above");
+            romm.download_rom_to_dir(rom, &config.roms_dir()).await?
+        }
+        (None, local) => PathBuf::from(local.as_deref().unwrap_or_default()),
     };
 
     if let Some(problem) = crate::emulator::config_dir_problem(emulator.as_ref(), emu_config) {
-        tracing::warn!("[emulators.{}] {}", req.emulator, problem);
+        tracing::warn!("[emulators.{}] {}", emulator_id, problem);
     }
     let game_id = emulator.game_id_for_rom(emu_config, &rom_path);
 
@@ -133,10 +153,7 @@ pub async fn launch(
         .id()
         .ok_or_else(|| anyhow::anyhow!("process exited immediately"))?;
     let started_at = SystemTime::now();
-    info!(
-        "launched {} pid={} rom_id={}",
-        req.emulator, pid, req.rom_id
-    );
+    info!("launched {} pid={} rom_id={}", emulator_id, pid, req.rom_id);
 
     state
         .processes
@@ -144,7 +161,7 @@ pub async fn launch(
             pid,
             GameProcess {
                 rom_id: req.rom_id,
-                emulator: req.emulator.clone(),
+                emulator: emulator_id.clone(),
                 game_id,
                 rom_path,
                 started_at,
@@ -166,7 +183,13 @@ pub async fn launch(
         state.sync_store.clone(),
     );
 
-    Ok((StatusCode::CREATED, Json(LaunchResponse { pid })))
+    Ok((
+        StatusCode::CREATED,
+        Json(LaunchResponse {
+            pid,
+            emulator: emulator_id,
+        }),
+    ))
 }
 
 #[utoipa::path(
@@ -295,6 +318,35 @@ pub async fn snapshot(
 
     let profile = emulator.snapshot(emu_config, &game_id).await?;
     Ok(Json(SnapshotResponse { game_id, profile }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/games",
+    params(GamesQuery),
+    responses(
+        (status = 200, description = "Games in the RomM library matching the query, \
+            with the emulator a launch without one would use", body = GamesResponse),
+        (status = 500, description = "Invalid query, or RomM is unavailable")
+    )
+)]
+pub async fn games(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<GamesQuery>,
+) -> Result<Json<GamesResponse>, AppError> {
+    let config = state.config();
+    let romm = state
+        .romm()
+        .ok_or_else(|| anyhow::anyhow!("RomM is not configured"))?;
+    let found = crate::games::find_games(
+        &romm,
+        &config,
+        &state.emulators,
+        &query.q,
+        query.limit.unwrap_or(20).clamp(1, 100),
+    )
+    .await?;
+    Ok(Json(found))
 }
 
 #[utoipa::path(

@@ -72,6 +72,11 @@ pub trait Emulator: Send + Sync {
         game_id: Option<&str>,
     ) -> SaveLayout;
 
+    /// RomM platform slugs (the canonical `slug`, not the renamable `fs_slug`)
+    /// whose games this emulator runs. Picks the emulator when a launch or
+    /// search doesn't name one.
+    fn platforms(&self) -> &'static [&'static str];
+
     /// Emulator IDs whose RomM saves can be restored by this emulator. Empty
     /// means only saves tagged with this emulator's own `id()`.
     fn save_family(&self) -> &'static [&'static str] {

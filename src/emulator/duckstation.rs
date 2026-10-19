@@ -22,6 +22,10 @@ impl Emulator for DuckStation {
         "DuckStation"
     }
 
+    fn platforms(&self) -> &'static [&'static str] {
+        &["psx"]
+    }
+
     fn config_dir_markers(&self) -> &'static [&'static str] {
         &["settings.ini"]
     }

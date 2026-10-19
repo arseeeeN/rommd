@@ -30,6 +30,10 @@ impl Emulator for TestEmulator {
         self.id
     }
 
+    fn platforms(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     async fn launch(
         &self,
         _config: &EmulatorConfig,

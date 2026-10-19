@@ -21,6 +21,10 @@ impl Emulator for Ryujinx {
         "Ryujinx"
     }
 
+    fn platforms(&self) -> &'static [&'static str] {
+        &["switch"]
+    }
+
     fn config_dir_markers(&self) -> &'static [&'static str] {
         &["Config.json", "bis", "system"]
     }

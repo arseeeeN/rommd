@@ -1,6 +1,8 @@
+mod cli;
 mod config;
 mod emulator;
 mod error;
+mod games;
 mod ini;
 mod live;
 mod n3ds;
@@ -47,6 +49,25 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Find games in your RomM library. The query is words from the name plus
+    /// filters: platform:switch, emulator:eden, id:199 (quote values with
+    /// spaces). Needs rommd running.
+    Search {
+        /// Most games to list.
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+        #[arg(required = true, num_args = 1.., value_name = "QUERY")]
+        query: Vec<String>,
+    },
+    /// Start a game found by a query, as for `search`. With several matches
+    /// it asks which one, or takes the best match with --first.
+    Play {
+        /// Play the best match without asking.
+        #[arg(long)]
+        first: bool,
+        #[arg(required = true, num_args = 1.., value_name = "QUERY")]
+        query: Vec<String>,
+    },
     /// Run rommd in the background from login, and start, stop or restart it.
     Service {
         #[command(subcommand)]
@@ -73,6 +94,12 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let control = |action| tokio::runtime::Runtime::new()?.block_on(service::control(action));
     match cli.command {
+        Some(Command::Search { limit, query }) => {
+            tokio::runtime::Runtime::new()?.block_on(cli::search(&query, limit))
+        }
+        Some(Command::Play { first, query }) => {
+            tokio::runtime::Runtime::new()?.block_on(cli::play(&query, first))
+        }
         Some(Command::Service { action }) => match action {
             ServiceAction::Install => service::install(),
             ServiceAction::Start => control(service::Control::Start),
