@@ -20,7 +20,8 @@
 //! For game search it serves seeded platforms (`GET /api/platforms`) and ROMs:
 //! `GET /api/roms/{id}`, and `GET /api/roms` filtered like RomM 5.2.0 by
 //! `search_term` (case-insensitive substring of the name or file name) and
-//! `platform_ids`, sorted by name, paged by `limit`.
+//! `platform_ids`, sorted by name, paged by `limit`. A ROM's content sends
+//! one chunk and then stalls, like a large download in progress.
 
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::StatusCode;
@@ -113,6 +114,7 @@ impl FakeRomm {
             .route("/api/platforms", get(list_platforms))
             .route("/api/roms", get(search_roms))
             .route("/api/roms/{id}", get(get_rom))
+            .route("/api/roms/{id}/content/{name}", get(stalling_rom_content))
             .with_state(store.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -121,6 +123,10 @@ impl FakeRomm {
             base_url: format!("http://{}", addr),
             store,
         }
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 
     pub fn client(&self) -> RommClient {
@@ -568,4 +574,14 @@ async fn search_roms(
     Json(serde_json::json!({
         "items": items, "total": found.len(), "limit": limit, "offset": 0,
     }))
+}
+
+async fn stalling_rom_content() -> axum::body::Body {
+    use tokio::io::AsyncWriteExt;
+    let (mut tx, rx) = tokio::io::duplex(64);
+    tokio::spawn(async move {
+        let _ = tx.write_all(b"first chunk").await;
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    });
+    axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(rx))
 }

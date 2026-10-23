@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::config::Config;
 use crate::emulator::Emulator;
+use crate::launches::Launches;
 use crate::live::Live;
 use crate::process::ProcessManager;
 use crate::romm::RommClient;
@@ -16,6 +17,7 @@ pub struct AppState {
     pub emulators: HashMap<String, Arc<dyn Emulator>>,
     pub sync_store: Arc<SyncStore>,
     pub updater: Arc<Updater>,
+    pub launches: Arc<Launches>,
 }
 
 impl AppState {

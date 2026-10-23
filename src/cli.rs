@@ -7,6 +7,7 @@ use std::io::{BufRead, IsTerminal, Write};
 use std::time::Duration;
 
 use crate::config::{Config, ServerConfig};
+use crate::launches::{LaunchInfo, LaunchState};
 use crate::server::types::{GameMatch, GamesResponse};
 
 const PLAY_CHOICES: u32 = 10;
@@ -48,9 +49,123 @@ pub async fn play(words: &[String], first: bool) -> Result<()> {
         "Starting {} ({}) with {}: {}.",
         game.name, game.platform_name, emulator, game.emulator_reason
     );
-    let pid = daemon.launch(game.rom_id, emulator).await?;
+    let pid = launch_showing_progress(&daemon, game, emulator).await?;
     println!("Running (pid {pid}). Saves sync when the game exits.");
     Ok(())
+}
+
+/// Start the game and wait until it runs. When the ROM has to be downloaded
+/// first, the daemon answers at once and the download is followed here;
+/// Ctrl+C then cancels it. Otherwise the game is already starting, and Ctrl+C
+/// only stops waiting.
+async fn launch_showing_progress(daemon: &Daemon, game: &GameMatch, emulator: &str) -> Result<u64> {
+    tokio::select! {
+        launched = daemon.launch(game.rom_id, emulator) => match launched? {
+            Launched::Started(pid) => Ok(pid),
+            Launched::Downloading(id) => follow(daemon, id).await,
+        },
+        _ = tokio::signal::ctrl_c() => {
+            eprintln!("Stopped waiting; rommd still starts the game.");
+            std::process::exit(130);
+        }
+    }
+}
+
+async fn follow(daemon: &Daemon, id: u64) -> Result<u64> {
+    let mut ticker = tokio::time::interval(Duration::from_millis(500));
+    let mut progress = ProgressLine::new();
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                progress.finish();
+                match daemon.cancel(id).await {
+                    Ok(true) => eprintln!("Download cancelled."),
+                    Ok(false) => eprintln!("The download had just finished; rommd is starting the game."),
+                    Err(e) => eprintln!("Could not cancel the download: {e:#}"),
+                }
+                std::process::exit(130);
+            }
+            _ = ticker.tick() => {
+                let launch = daemon.launch_info(id).await?;
+                match launch.state {
+                    LaunchState::Preparing => {}
+                    LaunchState::Downloading { downloaded_bytes, total_bytes } => {
+                        progress.show(&download_line(&launch.name, downloaded_bytes, total_bytes));
+                    }
+                    LaunchState::Starting => progress.finish(),
+                    LaunchState::Started { pid } => {
+                        progress.finish();
+                        return Ok(pid.into());
+                    }
+                    LaunchState::Failed { error } => {
+                        progress.finish();
+                        anyhow::bail!("{error}");
+                    }
+                    LaunchState::Cancelled => {
+                        progress.finish();
+                        anyhow::bail!("the download was cancelled");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A download's progress on stderr: one line rewritten in place on a
+/// terminal, a single notice otherwise.
+struct ProgressLine {
+    terminal: bool,
+    shown: bool,
+}
+
+impl ProgressLine {
+    fn new() -> Self {
+        Self {
+            terminal: std::io::stderr().is_terminal(),
+            shown: false,
+        }
+    }
+
+    fn show(&mut self, line: &str) {
+        if self.terminal {
+            eprint!("\r{line:<70}");
+        } else if !self.shown {
+            eprintln!("{line}");
+        }
+        self.shown = true;
+    }
+
+    fn finish(&mut self) {
+        if self.terminal && self.shown {
+            eprintln!();
+        }
+        self.shown = false;
+    }
+}
+
+fn download_line(name: &str, done: u64, total: Option<u64>) -> String {
+    match total {
+        Some(total) if total > 0 => format!(
+            "Downloading {name}: {} of {} ({}%)",
+            size(done),
+            size(total),
+            done * 100 / total
+        ),
+        _ => format!("Downloading {name}: {}", size(done)),
+    }
+}
+
+fn size(bytes: u64) -> String {
+    match bytes {
+        b if b >= 1_000_000_000 => format!("{:.1} GB", b as f64 / 1e9),
+        b if b >= 1_000_000 => format!("{:.0} MB", b as f64 / 1e6),
+        b => format!("{} kB", b / 1000),
+    }
+}
+
+enum Launched {
+    Started(u64),
+    Downloading(u64),
 }
 
 enum Pick<'a> {
@@ -182,15 +297,50 @@ impl Daemon {
 
     /// Returns the emulator's PID. Not time-limited: the daemon downloads the
     /// ROM first, which can take minutes.
-    async fn launch(&self, rom_id: i64, emulator: &str) -> Result<u64> {
+    /// Not time-limited: for a ROM that is already here the daemon answers
+    /// once the saves are synced and the emulator started.
+    async fn launch(&self, rom_id: i64, emulator: &str) -> Result<Launched> {
         let request = self
             .client
             .post(format!("{}/launch", self.base))
             .json(&serde_json::json!({ "rom_id": rom_id, "emulator": emulator }));
-        let response: serde_json::Value = self.send(request).await?.json().await?;
-        response["pid"]
-            .as_u64()
-            .ok_or_else(|| anyhow::anyhow!("unexpected launch response: {response}"))
+        let response = self.send(request).await?;
+        let accepted = response.status() == reqwest::StatusCode::ACCEPTED;
+        let body: serde_json::Value = response.json().await?;
+        let field = |name: &str| {
+            body[name]
+                .as_u64()
+                .ok_or_else(|| anyhow::anyhow!("unexpected launch response: {body}"))
+        };
+        Ok(if accepted {
+            Launched::Downloading(field("launch_id")?)
+        } else {
+            Launched::Started(field("pid")?)
+        })
+    }
+
+    async fn launch_info(&self, id: u64) -> Result<LaunchInfo> {
+        let request = self
+            .client
+            .get(format!("{}/launches/{id}", self.base))
+            .timeout(Duration::from_secs(5));
+        Ok(self.send(request).await?.json().await?)
+    }
+
+    /// False when it was too late: the download had finished.
+    async fn cancel(&self, id: u64) -> Result<bool> {
+        let response = self
+            .client
+            .delete(format!("{}/launches/{id}", self.base))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+            .context("talking to rommd")?;
+        match response.status() {
+            reqwest::StatusCode::NO_CONTENT => Ok(true),
+            reqwest::StatusCode::CONFLICT => Ok(false),
+            status => anyhow::bail!("rommd answered {status}"),
+        }
     }
 
     async fn send(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
@@ -229,6 +379,18 @@ mod tests {
         let parsed = crate::games::parse_query(&query_string(&words)).unwrap();
         assert_eq!(parsed.text, "Mario Odyssey");
         assert_eq!(parsed.platform.as_deref(), Some("Nintendo Switch"));
+    }
+
+    #[test]
+    fn download_lines() {
+        assert_eq!(
+            download_line("Xenoblade", 5_200_000_000, Some(14_000_000_000)),
+            "Downloading Xenoblade: 5.2 GB of 14.0 GB (37%)"
+        );
+        assert_eq!(
+            download_line("Xenoblade", 42_000_000, None),
+            "Downloading Xenoblade: 42 MB"
+        );
     }
 
     fn game(id: i64, emulator: Option<&str>) -> GameMatch {

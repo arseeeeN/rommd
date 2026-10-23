@@ -192,7 +192,10 @@ A query is words from the game's name plus filters:
 | `library:romm` | The game library to search; RomM is the only one so far |
 
 `search` shows the emulator each game would start with. Without `emulator:`,
-`play` uses the one configured for the game's platform (see Configure).
+`play` uses the one configured for the game's platform (see Configure). When
+the game isn't downloaded yet, `play` shows the download's progress; Ctrl+C
+cancels it and removes the partial file. Once the download is done, the game
+starts even if you stop waiting.
 
 ## Launch button in RomM (temporary)
 
@@ -211,8 +214,11 @@ will be replaced once RomM supports launching through local apps.
 3. Change the `@match` line to your RomM address, e.g.
    `https://romm.mydomain.net/*`. It must be the same address as
    `romm.base_url` in rommd's config, or rommd refuses the browser's requests.
-4. Check the `EMULATORS` table near the top: it maps RomM platforms to
-   rommd's emulator IDs. Point each platform at an emulator you configured.
+4. rommd starts each game with the emulator configured for its platform
+   (see Configure for choosing between several).
+
+While rommd downloads a game, the button shows the progress; click it to
+cancel the download. The download keeps going if you leave the page.
 
 The script finds the button bar by its button labels, so a RomM update that
 renames them can make the button disappear until the script is adjusted.
@@ -225,8 +231,9 @@ rommd listens on `http://localhost:7497`. The full API is described by
 | Endpoint | |
 |---|---|
 | `GET /games?q=…` | Search the library with the query language above; each game comes with the emulator a launch would use |
-| `POST /launch` | Download (if needed), sync, and launch `{rom_id, emulator}`; without `emulator`, the platform's configured one |
-| `GET /status` | Running games |
+| `POST /launch` | Sync and launch `{rom_id, emulator}`; without `emulator`, the platform's configured one. Answers `201` with the PID, or `202` at once when the ROM has to be downloaded first |
+| `GET /launches/{id}`, `DELETE /launches/{id}` | Follow a launch (download progress, then started or failed); cancel its download |
+| `GET /status` | Running games, and launches in progress or finished in the last minutes |
 | `POST /stop` | Stop a game (`{pid}`) or all games |
 | `GET /emulators` | Known emulators and whether they are configured |
 | `GET /saves/conflicts` | Recent save conflicts and where the other version was kept |

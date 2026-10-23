@@ -3,7 +3,10 @@ pub mod types;
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio_util::io::ReaderStream;
+use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 use crate::config::RommConfig;
@@ -18,7 +21,13 @@ pub struct RommClient {
 
 impl RommClient {
     pub fn new(config: &RommConfig) -> Self {
-        let client = reqwest::Client::new();
+        // No overall timeout, which would cut off a large ROM download; a
+        // read timeout instead catches a server that stops sending.
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(15))
+            .read_timeout(Duration::from_secs(60))
+            .build()
+            .expect("building the HTTP client");
         Self {
             base_url: config.base_url.trim_end_matches('/').to_owned(),
             tokens: TokenManager::new(
@@ -150,7 +159,15 @@ impl RommClient {
     /// - `fs_name` is a zip, `files.len() <= 1` → download the zip as-is, extract.
     /// - `fs_name` is a zip, `files.len() > 1`  → bundle all files via RomM's
     ///   `file_ids` endpoint, extract (handles multi-disc / .cue+.bin sets).
-    pub async fn download_rom_to_dir(&self, rom: &RomDetail, roms_dir: &Path) -> Result<PathBuf> {
+    ///
+    /// `transfer` reports progress and can cancel the download; extracting a
+    /// finished download is not cancelled.
+    pub async fn download_rom_to_dir(
+        &self,
+        rom: &RomDetail,
+        roms_dir: &Path,
+        transfer: &Transfer,
+    ) -> Result<PathBuf> {
         let platform_dir = roms_dir.join(local_file_name(&rom.platform_fs_slug));
         let local_name = local_file_name(&rom.fs_name);
 
@@ -191,7 +208,7 @@ impl RommClient {
                 .map(|f| f.id.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            self.download_content(rom.id, &rom.fs_name, Some(&file_ids), &zip_dest)
+            self.download_content(rom.id, &rom.fs_name, Some(&file_ids), &zip_dest, transfer)
                 .await?;
 
             extract_zip(&zip_dest, &rom_dir).await?;
@@ -221,7 +238,7 @@ impl RommClient {
                 return Ok(launch);
             }
             tokio::fs::create_dir_all(&platform_dir).await?;
-            self.download_content(rom.id, &rom.fs_name, None, &dest)
+            self.download_content(rom.id, &rom.fs_name, None, &dest, transfer)
                 .await?;
             return Ok(dest);
         }
@@ -252,11 +269,11 @@ impl RommClient {
                 .map(|f| f.id.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            self.download_content(rom.id, &rom.fs_name, Some(&file_ids), &zip_dest)
+            self.download_content(rom.id, &rom.fs_name, Some(&file_ids), &zip_dest, transfer)
                 .await?;
         } else {
             // Single ROM stored in a zip — download fs_name directly.
-            self.download_content(rom.id, &rom.fs_name, None, &zip_dest)
+            self.download_content(rom.id, &rom.fs_name, None, &zip_dest, transfer)
                 .await?;
         }
 
@@ -524,6 +541,7 @@ impl RommClient {
         output_name: &str,
         file_ids: Option<&str>,
         dest: &Path,
+        transfer: &Transfer,
     ) -> Result<()> {
         let token = self.tokens.get_token().await?;
         let encoded = urlencoding::encode(output_name);
@@ -535,13 +553,15 @@ impl RommClient {
         }
 
         debug!("downloading ROM content from {}", url);
-        let response = req
-            .send()
-            .await
+        let response = tokio::select! {
+            _ = transfer.cancel.cancelled() => anyhow::bail!("download cancelled"),
+            response = req.send() => response,
+        };
+        let response = response
             .context("GET rom content")?
             .error_for_status()
             .context("ROM content download failed")?;
-        write_response(response, dest).await
+        write_response(response, dest, transfer).await
     }
 
     async fn authed_get(&self, url: &str) -> Result<reqwest::Response> {
@@ -554,6 +574,61 @@ impl RommClient {
             .with_context(|| format!("GET {}", url))?
             .error_for_status()
             .with_context(|| format!("error response from {}", url))
+    }
+}
+
+/// A ROM download as it runs: bytes so far, the size when the server sends
+/// one, and a token that cancels it. Only the transfer itself is cancelled; a
+/// finished download is always extracted.
+#[derive(Clone)]
+pub struct Transfer {
+    pub cancel: CancellationToken,
+    progress: Arc<Mutex<Progress>>,
+    started: Arc<tokio::sync::watch::Sender<bool>>,
+}
+
+impl Default for Transfer {
+    fn default() -> Self {
+        Self {
+            cancel: CancellationToken::new(),
+            progress: Default::default(),
+            started: Arc::new(tokio::sync::watch::Sender::new(false)),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Progress {
+    /// Whether bytes are being transferred; false while only the cache is
+    /// checked.
+    pub started: bool,
+    pub done: u64,
+    pub total: Option<u64>,
+}
+
+impl Transfer {
+    pub fn progress(&self) -> Progress {
+        *self.progress.lock().unwrap()
+    }
+
+    /// Resolves once bytes are being transferred: never for a ROM that is
+    /// already downloaded.
+    pub async fn wait_started(&self) {
+        let mut rx = self.started.subscribe();
+        let _ = rx.wait_for(|started| *started).await;
+    }
+
+    fn begin(&self, total: Option<u64>) {
+        {
+            let mut p = self.progress.lock().unwrap();
+            p.started = true;
+            p.total = total;
+        }
+        self.started.send_replace(true);
+    }
+
+    fn add(&self, bytes: u64) {
+        self.progress.lock().unwrap().done += bytes;
     }
 }
 
@@ -607,9 +682,16 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 /// Stream a download to `dest` through `<dest>.part`, so it never sits in
 /// memory whole (Switch ROMs run to tens of GB) and an interrupted download
 /// never leaves a truncated file that looks complete.
-async fn write_response(mut response: reqwest::Response, dest: &Path) -> Result<()> {
+/// Stream to `dest` through `dest.part`, so `dest` only ever appears whole; the
+/// part file is removed when the download fails or is cancelled.
+async fn write_response(
+    mut response: reqwest::Response,
+    dest: &Path,
+    transfer: &Transfer,
+) -> Result<()> {
     use tokio::io::AsyncWriteExt;
     let part = with_suffix(dest, ".part");
+    transfer.begin(response.content_length());
     let result = async {
         if let Some(parent) = dest.parent() {
             tokio::fs::create_dir_all(parent).await?;
@@ -617,10 +699,16 @@ async fn write_response(mut response: reqwest::Response, dest: &Path) -> Result<
         let mut file = tokio::fs::File::create(&part)
             .await
             .with_context(|| format!("creating {}", part.display()))?;
-        while let Some(chunk) = response.chunk().await.context("downloading")? {
+        loop {
+            let chunk = tokio::select! {
+                _ = transfer.cancel.cancelled() => anyhow::bail!("download cancelled"),
+                chunk = response.chunk() => chunk.context("downloading")?,
+            };
+            let Some(chunk) = chunk else { break };
             file.write_all(&chunk)
                 .await
                 .with_context(|| format!("writing {}", part.display()))?;
+            transfer.add(chunk.len() as u64);
         }
         file.flush().await?;
         drop(file);
@@ -871,7 +959,7 @@ mod tests {
         let failing = serve(500, b"").await;
         assert!(
             failing
-                .download_content(1, "game.gba", None, &dest)
+                .download_content(1, "game.gba", None, &dest, &Transfer::default())
                 .await
                 .is_err()
         );
@@ -879,10 +967,58 @@ mod tests {
         assert!(!with_suffix(&dest, ".part").exists());
 
         let ok = serve(200, b"rom bytes").await;
-        ok.download_content(1, "game.gba", None, &dest)
+        ok.download_content(1, "game.gba", None, &dest, &Transfer::default())
             .await
             .unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), b"rom bytes");
         assert!(!with_suffix(&dest, ".part").exists());
+    }
+
+    /// Serves a ROM that sends one chunk and then stalls, like a big
+    /// download still in progress.
+    async fn serve_stalling() -> RommClient {
+        use axum::{Router, body::Body, routing::get};
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route(
+            "/api/roms/{id}/content/{name}",
+            get(|| async {
+                let (mut tx, rx) = tokio::io::duplex(64);
+                tokio::spawn(async move {
+                    tx.write_all(b"first chunk").await.unwrap();
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                });
+                Body::from_stream(ReaderStream::new(rx))
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        client(base, "token")
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_download_leaves_nothing_behind() {
+        let dir = TempDir::new("rom-cancel");
+        let dest = dir.path().join("switch/game.nsp");
+        let romm = serve_stalling().await;
+        let transfer = Transfer::default();
+        let download = {
+            let (dest, transfer) = (dest.clone(), transfer.clone());
+            tokio::spawn(async move {
+                romm.download_content(1, "game.nsp", None, &dest, &transfer)
+                    .await
+            })
+        };
+        while transfer.progress().done == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(transfer.progress().started);
+        assert!(with_suffix(&dest, ".part").exists());
+
+        transfer.cancel.cancel();
+        let err = download.await.unwrap().unwrap_err();
+        assert!(format!("{err:#}").contains("cancelled"), "{err:#}");
+        assert!(!with_suffix(&dest, ".part").exists());
+        assert!(!dest.exists());
     }
 }

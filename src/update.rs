@@ -451,12 +451,16 @@ pub fn restart() -> ! {
 /// Daily checks; in auto mode, installs while no game is running. The loop
 /// runs in every mode so a config change (see `reconfigure`) can turn checks
 /// on without a restart.
-pub fn spawn_background(updater: Arc<Updater>, processes: ProcessManager) {
+pub fn spawn_background(
+    updater: Arc<Updater>,
+    processes: ProcessManager,
+    launches: Arc<crate::launches::Launches>,
+) {
     tokio::spawn(async move {
         tokio::time::sleep(FIRST_CHECK_DELAY).await;
         loop {
             if updater.mode() != UpdateMode::Off {
-                check_and_apply(&updater, &processes).await;
+                check_and_apply(&updater, &processes, &launches).await;
             }
             tokio::select! {
                 _ = tokio::time::sleep(CHECK_INTERVAL) => {}
@@ -466,7 +470,11 @@ pub fn spawn_background(updater: Arc<Updater>, processes: ProcessManager) {
     });
 }
 
-async fn check_and_apply(updater: &Updater, processes: &ProcessManager) {
+async fn check_and_apply(
+    updater: &Updater,
+    processes: &ProcessManager,
+    launches: &crate::launches::Launches,
+) {
     let status = updater.check().await;
     if let Some(e) = &status.last_error {
         warn!("update check failed: {}", e);
@@ -478,11 +486,11 @@ async fn check_and_apply(updater: &Updater, processes: &ProcessManager) {
     let latest = status.latest_version.clone().unwrap_or_default();
     match (updater.mode(), &status.install_blocker) {
         (UpdateMode::Auto, None) => {
-            wait_for_no_games(processes).await;
+            wait_until_idle(processes, launches).await;
             match updater.install().await {
                 Ok(_) => {
                     // A game may have started during the download.
-                    wait_for_no_games(processes).await;
+                    wait_until_idle(processes, launches).await;
                     restart();
                 }
                 Err(e) => warn!("installing rommd {} failed: {:#}", latest, e),
@@ -497,8 +505,10 @@ async fn check_and_apply(updater: &Updater, processes: &ProcessManager) {
     }
 }
 
-async fn wait_for_no_games(processes: &ProcessManager) {
-    while !processes.list().await.is_empty() {
+/// Until no game runs and no launch is downloading or starting, which a
+/// restart would cut off.
+async fn wait_until_idle(processes: &ProcessManager, launches: &crate::launches::Launches) {
+    while !processes.list().await.is_empty() || launches.busy() {
         tokio::time::sleep(GAME_POLL).await;
     }
 }

@@ -12,7 +12,20 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 
 - **`src/main.rs`** — CLI (`rommd`, `rommd search|play`, `rommd service install|start|stop|restart|uninstall`), startup, emulator registry
 - **`src/games.rs`** — game search (`GET /games`): query language (words + `platform:`/`emulator:`/`library:`/`id:`), platform matching, emulator choice
-- **`src/cli.rs`** — `rommd search` / `rommd play`, a client of the running daemon (`/games`, `/launch`)
+- **`src/cli.rs`** — `rommd search` / `rommd play`, a client of the running daemon (`/games`, `/launch`, `/launches/{id}`)
+- **`src/launches.rs`** — launches in progress and recently finished; download progress and cancellation
+
+`POST /launch` runs the launch in its own task (`handlers::Launch`), tracked
+in `launches.rs`. A ROM already on disk answers `201` with the PID once the
+game started. When the ROM must be downloaded, it answers `202` as soon as the
+transfer begins, since browsers abort a request after a few minutes (Firefox:
+300 s); clients follow `GET /launches/{id}`. Disconnecting never cancels
+anything; `DELETE /launches/{id}` cancels only while the ROM is fetched
+(`romm::Transfer`, whose `.part` file is removed), so a game is never started
+untracked. One launch per ROM at a time: a second gets the first's ID. The
+updater and `rommd service stop/restart` wait while a launch is in progress.
+The RomM client has connect and read timeouts but no total timeout, which
+would cut off large downloads.
 - **`src/server/`** — axum HTTP handlers, OpenAPI spec (utoipa), request/response types
 - **`src/process.rs`** — process tracking (a game is its whole process tree: Unix process group, Windows job object), stop, post-exit sync trigger
 - **`src/emulator/`** — one file per emulator, all implement the `Emulator` trait
@@ -28,7 +41,7 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 - **`src/update.rs`** — signed self-update from GitHub Releases, `GET/POST /update`
 - **`src/service.rs`** — start at login: systemd user unit, launchd agent, Windows per-user logon task (XML, `--background`)
 - **`install/`, `.github/workflows/`** — install scripts, CI, release pipeline (`dev/releasing.md`)
-- **`contrib/rommd-button.user.js`** — temporary userscript adding a Launch button next to Play on RomM game pages (anchored on the buttons' aria-labels); keep it ASCII-only
+- **`contrib/rommd-button.user.js`** — temporary userscript adding a Launch button next to Play on RomM game pages (anchored on the buttons' aria-labels); rommd picks the emulator, and the button follows `202` launches (progress, click to cancel); keep it ASCII-only
 
 ## API access
 

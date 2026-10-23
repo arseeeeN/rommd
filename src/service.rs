@@ -122,6 +122,23 @@ impl Daemon {
             "a game is running: {}. Close it first so its saves sync, then try again.",
             games.join(", ")
         );
+        let launching: Vec<&str> = status["launches"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|l| {
+                matches!(
+                    l["state"].as_str(),
+                    Some("preparing" | "downloading" | "starting")
+                )
+            })
+            .map(|l| l["name"].as_str().unwrap_or("?"))
+            .collect();
+        anyhow::ensure!(
+            launching.is_empty(),
+            "{} is downloading or starting. Cancel it or wait until it runs, then try again.",
+            launching.join(", ")
+        );
         Ok(())
     }
 

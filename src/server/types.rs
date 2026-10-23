@@ -36,9 +36,12 @@ pub struct ControllerSlot {
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LaunchResponse {
-    /// PID of the spawned emulator process.
-    pub pid: u32,
-    /// The emulator that was started.
+    /// Follow it with `GET /launches/{id}`, cancel it with
+    /// `DELETE /launches/{id}`.
+    pub launch_id: u64,
+    /// The emulator's PID once it started (201). Absent while the ROM
+    /// downloads (202); the game starts when the download completes.
+    pub pid: Option<u32>,
     pub emulator: String,
 }
 
@@ -81,6 +84,9 @@ pub struct GameMatch {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct StatusResponse {
     pub running: Vec<RunningGameInfo>,
+    /// Launches in progress (with download progress) and those that
+    /// finished in the last few minutes.
+    pub launches: Vec<crate::launches::LaunchInfo>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

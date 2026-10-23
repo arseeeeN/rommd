@@ -4,6 +4,7 @@ mod emulator;
 mod error;
 mod games;
 mod ini;
+mod launches;
 mod live;
 mod n3ds;
 mod process;
@@ -208,6 +209,7 @@ async fn run_daemon(background: bool) -> Result<()> {
         processes: ProcessManager::new(),
         emulators,
         sync_store: Arc::new(sync::SyncStore::load(sync::SyncStore::default_path())),
+        launches: Default::default(),
     });
 
     let port = state.config().server.port;
@@ -216,7 +218,7 @@ async fn run_daemon(background: bool) -> Result<()> {
     info!("rommd listening on http://{}", addr);
     // The previous version has released the port, so it has exited.
     update::remove_replaced_binary();
-    update::spawn_background(updater, state.processes.clone());
+    update::spawn_background(updater, state.processes.clone(), state.launches.clone());
 
     axum::serve(listener, server::router(state))
         .await
