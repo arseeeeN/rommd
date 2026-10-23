@@ -521,6 +521,33 @@ mod tests {
 
     const TARGET: &str = "x86_64-unknown-linux-musl";
 
+    #[tokio::test(start_paused = true)]
+    async fn installing_waits_for_a_rom_download_to_end() {
+        let processes = ProcessManager::new();
+        let launches = Arc::new(crate::launches::Launches::default());
+        let transfer = crate::romm::Transfer::default();
+        let id = launches
+            .begin(199, "Xenoblade", "ryujinx", &transfer)
+            .unwrap();
+        let wait = tokio::spawn({
+            let (processes, launches) = (processes.clone(), launches.clone());
+            async move { wait_until_idle(&processes, &launches).await }
+        });
+
+        tokio::time::sleep(GAME_POLL * 3).await;
+        assert!(!wait.is_finished(), "a download is in progress");
+        assert!(launches.to_starting(id));
+        tokio::time::sleep(GAME_POLL * 3).await;
+        assert!(!wait.is_finished(), "the game is being started");
+
+        launches.finish(id, crate::launches::LaunchState::Started { pid: 42 });
+        tokio::time::sleep(GAME_POLL * 2).await;
+        assert!(
+            wait.is_finished(),
+            "no game runs and no launch is in progress"
+        );
+    }
+
     struct Signer {
         pk: minisign::PublicKey,
         sk: minisign::SecretKey,
