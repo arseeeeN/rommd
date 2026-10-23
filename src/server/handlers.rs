@@ -674,14 +674,22 @@ mod tests {
         assert_eq!(body["emulator"], "ryujinx", "picked for the platform");
         assert!(body["pid"].is_null());
 
-        let info = get(&http, format!("{base}/launches/{id}")).await;
+        // 202 comes as soon as RomM starts answering; the first bytes follow.
+        let part = dir.path().join("roms/switch/Xenoblade.bin.part");
+        let mut info = Value::Null;
+        for _ in 0..50 {
+            info = get(&http, format!("{base}/launches/{id}")).await;
+            if info["downloaded_bytes"].as_u64() > Some(0) && part.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
         assert_eq!(info["state"], "downloading", "{info}");
-        assert!(info["downloaded_bytes"].as_u64().unwrap() > 0);
+        assert!(info["downloaded_bytes"].as_u64() > Some(0), "{info}");
+        assert!(part.exists());
         let again: Value = launch().await.unwrap().json().await.unwrap();
         assert_eq!(again["launch_id"], id, "a second launch follows the first");
 
-        let part = dir.path().join("roms/switch/Xenoblade.bin.part");
-        assert!(part.exists());
         let cancel = http
             .delete(format!("{base}/launches/{id}"))
             .send()
