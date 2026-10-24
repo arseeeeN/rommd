@@ -41,6 +41,14 @@ impl Emulator for Dolphin {
         }
     }
 
+    fn mac_app(&self) -> Option<crate::detect::MacApp> {
+        Some(crate::detect::MacApp {
+            bundle_id: "org.dolphin-emu.dolphin",
+            executable: None,
+            data_dir: "Library/Application Support/Dolphin",
+        })
+    }
+
     fn game_id_for_rom(&self, _config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         read_disc(rom_path).map(|(id, _)| id)
     }

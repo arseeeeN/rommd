@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod detect;
 mod emulator;
 mod error;
 mod games;
@@ -60,6 +61,9 @@ enum Command {
         #[arg(required = true, num_args = 1.., value_name = "QUERY")]
         query: Vec<String>,
     },
+    /// List the emulators installed on this computer and where their data
+    /// is, next to what the config says. Doesn't need rommd running.
+    Detect,
     /// Start a game found by a query, as for `search`. With several matches
     /// it asks which one, or takes the best match with --first.
     Play {
@@ -98,6 +102,7 @@ fn main() -> Result<()> {
         Some(Command::Search { limit, query }) => {
             tokio::runtime::Runtime::new()?.block_on(cli::search(&query, limit))
         }
+        Some(Command::Detect) => cli::detect(&all_emulators()),
         Some(Command::Play { first, query }) => {
             tokio::runtime::Runtime::new()?.block_on(cli::play(&query, first))
         }
@@ -179,20 +184,10 @@ async fn run_daemon(background: bool) -> Result<()> {
     info!("config loaded from {}", Config::path().display());
     info!("roms_dir: {}", config.roms_dir().display());
 
-    let mut emulators: HashMap<String, Arc<dyn Emulator>> = HashMap::new();
-    // Use id() as the registry key so the trait and the map stay in sync.
-    let ds = DuckStation;
-    emulators.insert(ds.id().to_owned(), Arc::new(ds));
-    let mgba = MGba;
-    emulators.insert(mgba.id().to_owned(), Arc::new(mgba));
-    let dolphin = Dolphin;
-    emulators.insert(dolphin.id().to_owned(), Arc::new(dolphin));
-    let ryujinx = Ryujinx;
-    emulators.insert(ryujinx.id().to_owned(), Arc::new(ryujinx));
-    let eden = Eden;
-    emulators.insert(eden.id().to_owned(), Arc::new(eden));
-    let azahar = Azahar;
-    emulators.insert(azahar.id().to_owned(), Arc::new(azahar));
+    let emulators: HashMap<String, Arc<dyn Emulator>> = all_emulators()
+        .into_iter()
+        .map(|e| (e.id().to_owned(), e))
+        .collect();
 
     check_emulators(&emulators, &config, None);
     let live = Arc::new(live::Live::new(Config::path(), config));
@@ -264,6 +259,19 @@ fn check_romm(snapshot: &live::Snapshot) {
         }
         _ => warn!("no [romm] section in the config: games can only launch with local_path"),
     }
+}
+
+/// Every supported emulator. To add one, implement `Emulator` in
+/// `src/emulator/` and list it here.
+fn all_emulators() -> Vec<Arc<dyn Emulator>> {
+    vec![
+        Arc::new(DuckStation),
+        Arc::new(MGba),
+        Arc::new(Dolphin),
+        Arc::new(Ryujinx),
+        Arc::new(Eden),
+        Arc::new(Azahar),
+    ]
 }
 
 /// Warn about emulator entries that won't work; `only` limits the check to

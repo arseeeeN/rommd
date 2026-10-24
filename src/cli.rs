@@ -4,9 +4,11 @@
 
 use anyhow::{Context, Result};
 use std::io::{BufRead, IsTerminal, Write};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::{Config, ServerConfig};
+use crate::emulator::Emulator;
 use crate::launches::{LaunchInfo, LaunchState};
 use crate::server::types::{GameMatch, GamesResponse};
 
@@ -160,6 +162,73 @@ fn size(bytes: u64) -> String {
         b if b >= 1_000_000_000 => format!("{:.1} GB", b as f64 / 1e9),
         b if b >= 1_000_000 => format!("{:.0} MB", b as f64 / 1e6),
         b => format!("{} kB", b / 1000),
+    }
+}
+
+/// `rommd detect`: the emulators installed here, next to what the config
+/// says about them.
+pub fn detect(emulators: &[Arc<dyn Emulator>]) -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        println!("Emulator detection only covers macOS so far.");
+        return Ok(());
+    }
+    let config = Config::read(&Config::path()).ok();
+    let detection = crate::detect::detect(emulators);
+    if detection.found.is_empty() {
+        println!("No supported emulator found in /Applications or ~/Applications.");
+    }
+    for found in &detection.found {
+        let configured = config
+            .as_ref()
+            .and_then(|c| c.emulators.get(found.emulator));
+        let state = match configured {
+            Some(c) if c.binary == found.binary && c.config_dir == found.config_dir => {
+                "in your config"
+            }
+            Some(_) => "in your config with other paths",
+            None => "not in your config",
+        };
+        println!("{} ({state})", found.emulator);
+        println!("  binary      {}", home_relative(&found.binary));
+        let unused = if found.config_dir_in_use {
+            ""
+        } else {
+            "  (not created yet: run the emulator once)"
+        };
+        println!("  config_dir  {}{unused}", home_relative(&found.config_dir));
+        if let Some(c) = configured.filter(|c| c.binary != found.binary) {
+            println!("  your config: binary = {}", home_relative(&c.binary));
+        }
+        if let Some(c) = configured.filter(|c| c.config_dir != found.config_dir) {
+            println!(
+                "  your config: config_dir = {}",
+                home_relative(&c.config_dir)
+            );
+        }
+    }
+    for other in &detection.also {
+        println!(
+            "Also installed, not used: {} at {}",
+            other.emulator,
+            home_relative(&other.install)
+        );
+    }
+    let undetectable: Vec<&str> = emulators
+        .iter()
+        .filter(|e| e.mac_app().is_none())
+        .map(|e| e.id())
+        .collect();
+    if !undetectable.is_empty() {
+        println!("Not detected on macOS yet: {}", undetectable.join(", "));
+    }
+    Ok(())
+}
+
+/// `~/…` for paths in the home folder.
+fn home_relative(path: &std::path::Path) -> String {
+    match dirs::home_dir().and_then(|h| path.strip_prefix(h).ok().map(|p| p.to_owned())) {
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
     }
 }
 

@@ -121,6 +121,11 @@ binary     = 'C:\Program Files\Dolphin\Dolphin.exe'
 config_dir = '%APPDATA%\Dolphin Emulator'
 ```
 
+On macOS, `rommd detect` lists the supported emulators installed in
+`/Applications` or `~/Applications`, with the `binary` and `config_dir` to use
+for each and whether your config already has them (Eden is not detected
+yet).
+
 `config_dir` is the folder where the emulator keeps its saves. Where an
 emulator splits its settings into a separate folder (Dolphin, Eden and Azahar
 on Linux), rommd finds them on its own. At startup rommd warns in its log when

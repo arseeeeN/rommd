@@ -40,6 +40,14 @@ impl Emulator for DuckStation {
         }
     }
 
+    fn mac_app(&self) -> Option<crate::detect::MacApp> {
+        Some(crate::detect::MacApp {
+            bundle_id: "com.github.stenzek.duckstation",
+            executable: None,
+            data_dir: "Library/Application Support/DuckStation",
+        })
+    }
+
     async fn launch(
         &self,
         config: &EmulatorConfig,

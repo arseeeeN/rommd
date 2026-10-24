@@ -13,6 +13,7 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 - **`src/main.rs`** — CLI (`rommd`, `rommd search|play`, `rommd service install|start|stop|restart|uninstall`), startup, emulator registry
 - **`src/games.rs`** — game search (`GET /games`): query language (words + `platform:`/`emulator:`/`library:`/`id:`), platform matching, emulator choice
 - **`src/cli.rs`** — `rommd search` / `rommd play`, a client of the running daemon (`/games`, `/launch`, `/launches/{id}`)
+- **`src/detect.rs`** — finding installed emulators (`rommd detect`; macOS so far), from files only, never by running them
 - **`src/launches.rs`** — launches in progress and recently finished; download progress and cancellation
 
 `POST /launch` runs the launch in its own task (`handlers::Launch`), tracked
@@ -110,6 +111,12 @@ Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
   one, else `[platforms] <slug>` in the config, else the first configured in
   file order (`Config::emulators` is an `IndexMap`). A requested or default
   emulator that can't run the platform is an error, never skipped
+- `mac_app` — how `detect` recognises the macOS app: bundle ID (plus
+  executable name for a fork that kept its parent's ID) and data folder
+  relative to home. `None` = not detected. Identity comes from the bundle's
+  `Info.plist`, never from running the binary, so the same check can vet a
+  path a client suggests. Supported emulators are listed in `main.rs`
+  (`all_emulators`)
 - `save_family` — emulator IDs whose RomM saves this emulator can restore
   (Switch emulators share `switch::SAVE_COMPATIBLE_EMULATORS`)
 - `game_id_for_rom` — sync; returns the emulator's stable game identifier.
@@ -118,7 +125,7 @@ Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
 - `snapshot` / `launch` — profile overlay and process spawn
 
 Adding a new emulator: create `src/emulator/<name>.rs`, implement the trait,
-add `pub mod <name>` to `mod.rs`, register in `main.rs`.
+add `pub mod <name>` to `mod.rs`, list it in `all_emulators` in `main.rs`.
 
 ## Save sync (`src/sync/`)
 

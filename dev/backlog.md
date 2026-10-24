@@ -166,7 +166,27 @@ may each have their own version rules.
 ## Emulator auto-detection
 
 Find installed emulators and fill in `[emulators.*]`, so a new install works
-without hand-written paths. In progress: macOS first.
+without hand-written paths.
+
+**Done:** the macOS scan (`src/detect.rs`) and `rommd detect`, which prints
+what it finds next to the config, for Dolphin, DuckStation, Ryujinx, mGBA and
+Azahar (`Emulator::mac_app`). Not yet detected on macOS: Eden (bundle ID
+`com.yuzu-emu.yuzu`, yuzu's, so also require the executable `eden`; data in
+`~/.local/share/eden`, XDG paths even on macOS). Next: the config editor,
+`rommd detect --save`, and filling in detected emulators on first run.
+
+**How far to look** (decided): known install locations; the OS's own index
+where it identifies apps (macOS Spotlight by bundle ID, ~30 ms a query); a
+path the user names (`rommd detect <path>`, the same hint-and-verify check as
+the config API); never a full-disk scan (slow, wakes external drives, privacy
+prompts). Every candidate, however found, passes the same file check. Looking
+outside the usual install folders stays on the CLI or a user-triggered UI: on
+macOS a background daemon reading `~/Desktop` or `~/Downloads` makes the
+system ask the user for access out of nowhere. An app found outside the
+install folders gets a hint to move it there, since it is easily deleted or
+moved and the config then breaks. Windows and Linux have no index by
+identity: look shallowly in Desktop, Downloads and Documents, plus `PATH`,
+Flatpak and the registry's install entries.
 
 **Parts, one code path for all uses:**
 - A detection scan returning suggestions (`binary`, `config_dir`, how the

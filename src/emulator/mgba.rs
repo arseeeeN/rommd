@@ -34,10 +34,18 @@ impl Emulator for MGba {
         if cfg!(windows) {
             r"%APPDATA%\mGBA (mGBA's install folder when it holds portable.ini)"
         } else if cfg!(target_os = "macos") {
-            ""
+            "~/.config/mgba"
         } else {
             "~/.config/mgba ($XDG_CONFIG_HOME/mgba when XDG_CONFIG_HOME is set)"
         }
+    }
+
+    fn mac_app(&self) -> Option<crate::detect::MacApp> {
+        Some(crate::detect::MacApp {
+            bundle_id: "com.endrift.mgba-qt",
+            executable: None,
+            data_dir: ".config/mgba",
+        })
     }
 
     fn game_id_for_rom(&self, _config: &EmulatorConfig, rom_path: &Path) -> Option<String> {

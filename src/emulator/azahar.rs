@@ -45,10 +45,18 @@ impl Emulator for Azahar {
         if cfg!(windows) {
             r"%APPDATA%\Azahar (the user folder next to azahar.exe for portable installs)"
         } else if cfg!(target_os = "macos") {
-            ""
+            "~/Library/Application Support/Azahar"
         } else {
             "~/.local/share/azahar-emu"
         }
+    }
+
+    fn mac_app(&self) -> Option<crate::detect::MacApp> {
+        Some(crate::detect::MacApp {
+            bundle_id: "org.azahar-emu.azahar",
+            executable: None,
+            data_dir: "Library/Application Support/Azahar",
+        })
     }
 
     fn game_id_for_rom(&self, _config: &EmulatorConfig, rom_path: &Path) -> Option<String> {

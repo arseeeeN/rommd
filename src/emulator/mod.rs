@@ -101,6 +101,12 @@ pub trait Emulator: Send + Sync {
     fn config_dir_hint(&self) -> &'static str {
         ""
     }
+
+    /// How `rommd detect` recognises this emulator's macOS app; `None` means
+    /// it isn't detected there.
+    fn mac_app(&self) -> Option<crate::detect::MacApp> {
+        None
+    }
 }
 
 /// Why `config_dir` does not look like this emulator's folder, if it doesn't.

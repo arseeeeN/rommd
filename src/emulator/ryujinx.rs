@@ -39,6 +39,14 @@ impl Emulator for Ryujinx {
         }
     }
 
+    fn mac_app(&self) -> Option<crate::detect::MacApp> {
+        Some(crate::detect::MacApp {
+            bundle_id: "org.ryujinx.Ryujinx",
+            executable: None,
+            data_dir: "Library/Application Support/Ryujinx",
+        })
+    }
+
     fn game_id_for_rom(&self, config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         crate::switch::title_id_for_rom(
             rom_path,
