@@ -163,6 +163,59 @@ need to survive `local_file_name`) or the `emulator` field, or RomM gains a
 field. Then check the other emulators: DuckStation, mGBA and Azahar states
 may each have their own version rules.
 
+## Steam Deck: Game Mode launches and downloads that survive sleep
+
+The Deck is the hardest target: Game Mode has no browser or terminal for the
+userscript, it suspends constantly, and its storage is small. In order:
+
+**1. Resumable, per-file ROM downloads.** Verified against RomM 5.2: the
+per-file endpoint `GET /api/roms/{file id}/files/content/{name}` answers range
+requests (`206`), while the bundled `GET /api/roms/{id}/content/{name}?file_ids=…`
+(zipped on the fly) ignores them. Downloading a multi-file ROM file by file
+makes every download resumable and stops needing twice the space (today a
+15 GB game arrives as a 15 GB zip that is then extracted). The bundle's
+exact `Content-Length` suggests it is streamed by nginx's `mod_zip`, which can
+serve ranges only when every file's CRC-32 is known; RomM leaves `crc_hash`
+empty for large files (Xenoblade's), so a RomM PR adding them might make the
+bundle resumable (unconfirmed). Per-file downloads are still better here: no
+extraction, no wait on RomM. What the bundle adds is RomM's generated `.m3u`;
+rommd needs one only for multi-disc games (write it from the disc files) and
+picks the base game among several files by each file's `category` (`game`,
+`update`, `dlc`); `file_path` gives each file's place in the folder. Keep the `.part`
+on network errors (delete it only on cancel), retry with backoff (the network
+needs seconds after waking), continue from the `.part` size, and check the
+size against RomM's `file_size_bytes`. A daemon restart mid-download then
+resumes on the next launch too.
+
+**2. No idle sleep while downloading.** Hold an idle-only inhibitor while a
+launch fetches its ROM: `systemd-inhibit --what=idle`, `caffeinate -i` on
+macOS, `SetThreadExecutionState` on Windows. Idle only: a deliberate suspend
+(power button) must still work. To verify on a Deck: whether Game Mode's own
+auto-suspend timer respects logind's idle inhibitors.
+
+**3. Attached launches for gamescope.** As far as known, gamescope shows and
+focuses the windows of the process tree Steam launched; an emulator started
+by rommd's background service is outside it (likely hidden behind Steam's UI,
+without controller focus) and misses Steam's environment (Steam Input's
+controller mapping, gamescope's display and audio). To verify on a Deck. The
+fix: `rommd play --attach id:N` as a Steam shortcut (by full path; Game Mode's
+`PATH` may lack `~/.local/bin`). The daemon downloads and syncs as now but
+hands back the emulator command (program, arguments, environment) instead of
+spawning it; the CLI starts it as its own child, waits for it to exit, and
+tells the daemon, which runs the post-exit sync. Steam shows "Playing" until
+then. When Steam's "Exit game" kills the CLI and the emulator together, the
+daemon sees the session drop, confirms the emulator is gone, and syncs
+anyway. `Emulator::launch` becomes "build the command" so either side can run
+it.
+
+**Launchers.** A browser or PWA can't start processes, so in Game Mode it is
+stuck with the daemon starting the emulator. An Electron launcher can run
+`rommd play --attach` as a child (or use the same prepare-and-hand-back API);
+if it is the Steam shortcut itself, it must stay alive (hidden) while the
+game runs. Cheapest in Game Mode is no launcher process at all: per-game Steam
+shortcuts that call rommd directly, created by rommd or by a Steam ROM Manager
+parser listing the RomM library (an idea, not decided).
+
 ## Emulator auto-detection
 
 Find installed emulators and fill in `[emulators.*]`, so a new install works
