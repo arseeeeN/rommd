@@ -13,7 +13,7 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 - **`src/main.rs`** — CLI (`rommd`, `rommd search|play`, `rommd service install|start|stop|restart|uninstall`), startup, emulator registry
 - **`src/games.rs`** — game search (`GET /games`): query language (words + `platform:`/`emulator:`/`library:`/`id:`), platform matching, emulator choice
 - **`src/cli.rs`** — `rommd search` / `rommd play`, a client of the running daemon (`/games`, `/launch`, `/launches/{id}`)
-- **`src/detect.rs`** — finding installed emulators (`rommd detect`; macOS so far), from files only, never by running them
+- **`src/detect.rs`** — finding installed emulators (`rommd detect [path]`; macOS so far): candidates from the install folders, then Spotlight (`mdfind` by bundle ID), or a path the user names; each verified from its files only, never by running it
 - **`src/launches.rs`** — launches in progress and recently finished; download progress and cancellation
 
 `POST /launch` runs the launch in its own task (`handlers::Launch`), tracked

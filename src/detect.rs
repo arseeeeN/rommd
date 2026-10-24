@@ -32,6 +32,9 @@ pub struct Found {
     /// Whether `config_dir` holds the emulator's files; false until it has
     /// run once.
     pub config_dir_in_use: bool,
+    /// False for an app found elsewhere (Desktop, Downloads, another drive),
+    /// where it is easily moved or deleted, breaking the config.
+    pub in_install_folder: bool,
 }
 
 #[derive(Debug, Default)]
@@ -43,33 +46,86 @@ pub struct Detection {
     pub also: Vec<Found>,
 }
 
-/// Look in the places this OS installs apps. Only macOS is covered so far.
+/// Look in the places this OS installs apps, then wherever the OS's own index
+/// knows an emulator's app to be. Only macOS is covered so far.
 pub fn detect(emulators: &[Arc<dyn Emulator>]) -> Detection {
     let Some(home) = dirs::home_dir() else {
         return Detection::default();
     };
-    if cfg!(target_os = "macos") {
-        scan_mac(
-            &[PathBuf::from("/Applications"), home.join("Applications")],
-            &home,
-            emulators,
-        )
-    } else {
-        Detection::default()
+    if !cfg!(target_os = "macos") {
+        return Detection::default();
     }
+    let install_dirs = mac_install_dirs(&home);
+    let ids: Vec<&str> = emulators
+        .iter()
+        .filter_map(|e| e.mac_app())
+        .map(|a| a.bundle_id)
+        .collect();
+    let mut candidates: Vec<PathBuf> = install_dirs.iter().flat_map(|d| app_bundles(d)).collect();
+    for bundle in spotlight(&ids) {
+        if !candidates.contains(&bundle) {
+            candidates.push(bundle);
+        }
+    }
+    scan_mac(&candidates, &install_dirs, &home, emulators)
 }
 
-/// `.app` bundles in `app_dirs` and one folder level below (people group
-/// emulators in e.g. `/Applications/Emulators`). Earlier dirs win when an
-/// emulator is installed twice.
-pub fn scan_mac(app_dirs: &[PathBuf], home: &Path, emulators: &[Arc<dyn Emulator>]) -> Detection {
+/// Emulators at `path`, which the user named: an `.app`, a file inside one
+/// (its executable), or a folder holding apps.
+pub fn detect_at(path: &Path, emulators: &[Arc<dyn Emulator>]) -> Detection {
+    let Some(home) = dirs::home_dir() else {
+        return Detection::default();
+    };
+    let candidates = match path.ancestors().find(|p| is_app(p)) {
+        Some(bundle) => vec![bundle.to_owned()],
+        None => app_bundles(path),
+    };
+    scan_mac(&candidates, &mac_install_dirs(&home), &home, emulators)
+}
+
+fn mac_install_dirs(home: &Path) -> Vec<PathBuf> {
+    vec![PathBuf::from("/Applications"), home.join("Applications")]
+}
+
+/// Apps Spotlight knows by these bundle IDs, wherever they are. A missing or
+/// disabled index just finds nothing; every result is still checked like any
+/// other candidate.
+fn spotlight(bundle_ids: &[&str]) -> Vec<PathBuf> {
+    if bundle_ids.is_empty() {
+        return Vec::new();
+    }
+    let query = bundle_ids
+        .iter()
+        .map(|id| format!("kMDItemCFBundleIdentifier == '{id}'"))
+        .collect::<Vec<_>>()
+        .join(" || ");
+    let Ok(out) = std::process::Command::new("mdfind").arg(&query).output() else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(PathBuf::from)
+        .filter(|p| is_app(p) && !p.components().any(|c| c.as_os_str() == ".Trash"))
+        .collect();
+    found.sort();
+    found
+}
+
+/// Check each candidate bundle against every emulator. Earlier candidates win
+/// when an emulator is installed twice, so list install folders first.
+pub fn scan_mac(
+    candidates: &[PathBuf],
+    install_dirs: &[PathBuf],
+    home: &Path,
+    emulators: &[Arc<dyn Emulator>],
+) -> Detection {
     let mut detection = Detection::default();
-    for bundle in app_dirs.iter().flat_map(|d| app_bundles(d)) {
+    for bundle in candidates {
         for emulator in emulators {
             let Some(app) = emulator.mac_app() else {
                 continue;
             };
-            let Some(binary) = identify_mac_app(&bundle, &app) else {
+            let Some(binary) = identify_mac_app(bundle, &app) else {
                 continue;
             };
             let config_dir = home.join(app.data_dir);
@@ -78,6 +134,7 @@ pub fn scan_mac(app_dirs: &[PathBuf], home: &Path, emulators: &[Arc<dyn Emulator
                 emulator: emulator.id(),
                 config_dir_in_use: config_dir.is_dir()
                     && (markers.is_empty() || markers.iter().any(|m| config_dir.join(m).exists())),
+                in_install_folder: install_dirs.iter().any(|d| bundle.starts_with(d)),
                 install: bundle.clone(),
                 binary,
                 config_dir,
@@ -92,8 +149,13 @@ pub fn scan_mac(app_dirs: &[PathBuf], home: &Path, emulators: &[Arc<dyn Emulator
     detection
 }
 
+fn is_app(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "app")
+}
+
+/// `.app` bundles in `dir` and one folder level below (people group
+/// emulators in e.g. `/Applications/Emulators`).
 fn app_bundles(dir: &Path) -> Vec<PathBuf> {
-    let is_app = |p: &Path| p.extension().is_some_and(|e| e == "app");
     let mut bundles = Vec::new();
     for entry in sorted_dirs(dir) {
         if is_app(&entry) {
@@ -203,7 +265,9 @@ mod tests {
             b"{}",
         );
 
-        let found = scan_mac(&[apps.clone(), user_apps.clone()], &home, &emulators());
+        let install_dirs = [apps.clone(), user_apps.clone()];
+        let candidates: Vec<PathBuf> = install_dirs.iter().flat_map(|d| app_bundles(d)).collect();
+        let found = scan_mac(&candidates, &install_dirs, &home, &emulators());
         let ids: Vec<_> = found.found.iter().map(|f| f.emulator).collect();
         assert_eq!(ids, vec!["dolphin", "ryujinx"]);
 
@@ -225,8 +289,41 @@ mod tests {
             "/Applications wins"
         );
         assert!(ryujinx.config_dir_in_use);
+        assert!(found.found.iter().all(|f| f.in_install_folder));
         assert_eq!(found.also.len(), 1);
         assert_eq!(found.also[0].install, user_apps.join("Ryujinx.app"));
+    }
+
+    #[test]
+    fn a_named_path_finds_the_app_from_its_folder_bundle_or_executable() {
+        let root = TempDir::new("detect-at");
+        let desktop = root.path().join("Desktop");
+        let app = bundle(
+            &desktop.join("Dolphin"),
+            "Dolphin.app",
+            "org.dolphin-emu.dolphin",
+            "Dolphin",
+        );
+        let emulators = emulators();
+        for named in [
+            desktop.clone(),
+            desktop.join("Dolphin"),
+            app.clone(),
+            app.join("Contents/MacOS/Dolphin"),
+        ] {
+            let found = detect_at(&named, &emulators).found;
+            assert_eq!(found.len(), 1, "{}", named.display());
+            assert_eq!(found[0].install, app);
+            assert!(
+                !found[0].in_install_folder,
+                "the Desktop is no install folder"
+            );
+        }
+        assert!(
+            detect_at(&root.path().join("nothing"), &emulators)
+                .found
+                .is_empty()
+        );
     }
 
     #[test]

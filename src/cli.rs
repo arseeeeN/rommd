@@ -167,15 +167,27 @@ fn size(bytes: u64) -> String {
 
 /// `rommd detect`: the emulators installed here, next to what the config
 /// says about them.
-pub fn detect(emulators: &[Arc<dyn Emulator>]) -> Result<()> {
+pub fn detect(emulators: &[Arc<dyn Emulator>], path: Option<&std::path::Path>) -> Result<()> {
     if !cfg!(target_os = "macos") {
         println!("Emulator detection only covers macOS so far.");
         return Ok(());
     }
     let config = Config::read(&Config::path()).ok();
-    let detection = crate::detect::detect(emulators);
+    let detection = match path {
+        Some(path) => {
+            anyhow::ensure!(path.exists(), "{} does not exist", path.display());
+            crate::detect::detect_at(path, emulators)
+        }
+        None => crate::detect::detect(emulators),
+    };
     if detection.found.is_empty() {
-        println!("No supported emulator found in /Applications or ~/Applications.");
+        match path {
+            Some(path) => println!("No supported emulator found at {}.", path.display()),
+            None => println!(
+                "No supported emulator found. If one is somewhere unusual, name it: \
+                 rommd detect <path>"
+            ),
+        }
     }
     for found in &detection.found {
         let configured = config
@@ -205,6 +217,13 @@ pub fn detect(emulators: &[Arc<dyn Emulator>]) -> Result<()> {
                 home_relative(&c.config_dir)
             );
         }
+        if !found.in_install_folder {
+            println!(
+                "  note: {} is outside Applications; move it there first, or the config \
+                 breaks when it is moved or deleted",
+                home_relative(&found.install)
+            );
+        }
     }
     for other in &detection.also {
         println!(
@@ -218,7 +237,7 @@ pub fn detect(emulators: &[Arc<dyn Emulator>]) -> Result<()> {
         .filter(|e| e.mac_app().is_none())
         .map(|e| e.id())
         .collect();
-    if !undetectable.is_empty() {
+    if !undetectable.is_empty() && path.is_none() {
         println!("Not detected on macOS yet: {}", undetectable.join(", "));
     }
     Ok(())

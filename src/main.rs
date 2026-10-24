@@ -63,7 +63,11 @@ enum Command {
     },
     /// List the emulators installed on this computer and where their data
     /// is, next to what the config says. Doesn't need rommd running.
-    Detect,
+    Detect {
+        /// Look here instead: an app, or a folder holding one (e.g. an
+        /// emulator kept on the Desktop).
+        path: Option<std::path::PathBuf>,
+    },
     /// Start a game found by a query, as for `search`. With several matches
     /// it asks which one, or takes the best match with --first.
     Play {
@@ -102,7 +106,7 @@ fn main() -> Result<()> {
         Some(Command::Search { limit, query }) => {
             tokio::runtime::Runtime::new()?.block_on(cli::search(&query, limit))
         }
-        Some(Command::Detect) => cli::detect(&all_emulators()),
+        Some(Command::Detect { path }) => cli::detect(&all_emulators(), path.as_deref()),
         Some(Command::Play { first, query }) => {
             tokio::runtime::Runtime::new()?.block_on(cli::play(&query, first))
         }

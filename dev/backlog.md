@@ -168,9 +168,10 @@ may each have their own version rules.
 Find installed emulators and fill in `[emulators.*]`, so a new install works
 without hand-written paths.
 
-**Done:** the macOS scan (`src/detect.rs`) and `rommd detect`, which prints
-what it finds next to the config, for Dolphin, DuckStation, Ryujinx, mGBA and
-Azahar (`Emulator::mac_app`). Not yet detected on macOS: Eden (bundle ID
+**Done:** the macOS scan (`src/detect.rs`) and `rommd detect [path]`, which
+prints what it finds next to the config, for Dolphin, DuckStation, Ryujinx,
+mGBA and Azahar (`Emulator::mac_app`): install folders, then Spotlight, or a
+path the user names, with a hint to move apps found outside Applications. Not yet detected on macOS: Eden (bundle ID
 `com.yuzu-emu.yuzu`, yuzu's, so also require the executable `eden`; data in
 `~/.local/share/eden`, XDG paths even on macOS). Next: the config editor,
 `rommd detect --save`, and filling in detected emulators on first run.

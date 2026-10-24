@@ -121,10 +121,13 @@ binary     = 'C:\Program Files\Dolphin\Dolphin.exe'
 config_dir = '%APPDATA%\Dolphin Emulator'
 ```
 
-On macOS, `rommd detect` lists the supported emulators installed in
-`/Applications` or `~/Applications`, with the `binary` and `config_dir` to use
-for each and whether your config already has them (Eden is not detected
-yet).
+On macOS, `rommd detect` lists the supported emulators installed on your Mac
+(in `/Applications`, `~/Applications`, or anywhere Spotlight knows of), with
+the `binary` and `config_dir` to use for each and whether your config already
+has them (Eden is not detected yet). For an emulator somewhere unusual, name
+it: `rommd detect ~/Desktop/Dolphin`. Keep emulators in Applications: one on
+the Desktop or in Downloads is easily moved or deleted, and the config then
+points nowhere.
 
 `config_dir` is the folder where the emulator keeps its saves. Where an
 emulator splits its settings into a separate folder (Dolphin, Eden and Azahar
