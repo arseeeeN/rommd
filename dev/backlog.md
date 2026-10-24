@@ -165,23 +165,70 @@ may each have their own version rules.
 
 ## Emulator auto-detection
 
-Find installed emulators and fill in `[emulators.*]` on first start, and
-offer the same scan as an endpoint returning suggestions. Look where each
-platform installs them: Linux packages (`/usr/bin`), Flatpak (exports and
-`~/.var/app/<app id>/` for the data dir), AppImages (`~/Applications`); macOS
-`/Applications/*.app`; Windows Program Files, `%LOCALAPPDATA%`, Scoop, winget.
-Each emulator's `config_dir` has to be found the same way, and differs for
-Flatpak installs (e.g. `~/.var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu`).
+Find installed emulators and fill in `[emulators.*]`, so a new install works
+without hand-written paths. In progress: macOS first.
+
+**Parts, one code path for all uses:**
+- A detection scan returning suggestions (`binary`, `config_dir`, how the
+  install was found), with no side effects.
+- A config editor that adds an `[emulators.<id>]` table with `toml_edit`
+  (already pulled in by `toml`), which keeps every comment, blank line and the
+  order of everything it doesn't touch. New tables go after the last real
+  `[emulators.*]` table, else at the end of the file. Placing them "after the
+  emulators comment block" would mean matching comment text, which is fragile.
+- First run: generate the template for this OS only (other platforms'
+  examples are noise there; `dev/config.example.toml` keeps them all), then
+  add what was detected through the same editor and drop the commented
+  example of each emulator that was found.
+- `rommd detect` prints suggestions; `rommd detect --save` adds them.
+- Never edit an existing config in the background: the user may have it open,
+  and a silent write is how their work gets lost.
+
+**Writing the file:** re-read it right before editing and refuse if it doesn't
+parse (that is the user's to fix, not rommd's to "repair"); write via temp file
+and rename; never overwrite an existing emulator entry (suggest instead when its
+paths no longer exist); hot reload picks up rommd's own write. Write home paths
+as `~/…`, and Windows paths as single-quoted literal strings, since
+`toml_edit` escapes every backslash in a basic string.
+
+**Detection pitfalls:**
+- A wrong `config_dir` is the dangerous failure: saves sync from or into the
+  wrong place, silently, while a wrong `binary` fails loudly. Derive the data
+  dir from the install that was found (Flatpak: `~/.var/app/<app id>/…`,
+  native: `~/.local/share/…`, portable: next to the program, e.g. Ryujinx's
+  `portable/`, Dolphin's `portable.txt`) and check it with
+  `config_dir_markers`. An emulator that never ran has no data dir yet: write
+  the expected path and say so.
+- Several installs of one emulator (Flatpak and AppImage, Dolphin stable and
+  dev) share one ID: pick by a fixed rule (native before Flatpak) and list the
+  others.
+- Eden and Ryujinx both found: config order would silently decide Switch, so
+  write both plus a commented `# [platforms] switch = "…"` hint.
+- Flatpak has no single binary; the exported launcher
+  (`/var/lib/flatpak/exports/bin/<app id>`, `~/.local/share/flatpak/exports/bin`)
+  should work as `binary`. **Untested:** rommd has never run a Flatpak
+  emulator; process-group tracking and the post-exit sync through Flatpak's
+  sandbox launcher need checking (planned on a Steam Deck).
+
+**Where to look:** macOS `/Applications/*.app` and `~/Applications`,
+identified by the bundle identifier in `Contents/Info.plist`; Linux packages
+(`/usr/bin`), Flatpak exports, AppImages (`~/Applications`); Windows Program
+Files, `%LOCALAPPDATA%`, Scoop, winget.
 
 ## Editing the config through the API (postponed)
 
-Endpoints to add or change emulators (`PUT /config/emulators/{id}` with
-`binary` and `config_dir`) would let frontends offer a settings UI, writing
-`config.toml` with `toml_edit` so comments survive and hot reload applies it.
-Postponed for security: choosing `binary` means choosing which program rommd
-runs, so anything that gains script access to an allowed origin (an XSS bug in
-RomM, say) could make rommd run any program on the machine. If revisited,
-allow such writes only from local tools (no browser `Origin`), or from a
-browser only after an explicit opt-in such as
-`server.allow_config_from_browser = true`. Auto-detection covers most of the
-need without this risk.
+Endpoints to add or change emulators would let frontends (RomM, a launcher)
+offer a settings UI. Postponed for security: choosing `binary` means choosing
+which program rommd runs, so anything with script access to an allowed origin
+(an XSS bug in RomM, say) could make rommd run any program on the machine.
+
+**Way forward, built on auto-detection:** the request never sets a path to
+run. It can only hint ("there might be a Dolphin install at this path"), and
+rommd adds the entry only when its own checks find an actual install of that
+emulator there, through the same detection code and config editor. The checks
+must be static (bundle identifier, file layout, data dir markers) and must
+never execute the candidate: "run it with `--version` to see what it is" would
+run any file a page points at. Changing other settings through the API (ports,
+origins, update mode) has its own risks and is a separate decision; ROM and
+data paths would need similar checks.
+
