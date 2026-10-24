@@ -14,6 +14,7 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 - **`src/games.rs`** — game search (`GET /games`): query language (words + `platform:`/`emulator:`/`library:`/`id:`), platform matching, emulator choice
 - **`src/cli.rs`** — `rommd search` / `rommd play`, a client of the running daemon (`/games`, `/launch`, `/launches/{id}`)
 - **`src/detect.rs`** — finding installed emulators (`rommd detect [path]`; macOS so far): candidates from the install folders, then Spotlight (`mdfind` by bundle ID), or a path the user names; each verified from its files only, never by running it
+- **`src/config_edit.rs`** — edits to the user's `config.toml` (`toml_edit`, so comments and layout survive): adding an emulator after the last `[emulators.*]` (or at the very end, taking over trailing comments), never overwriting an entry or repairing a file that doesn't parse, written via temp file + rename. Only on request (`rommd detect --save`), never in the background
 - **`src/launches.rs`** — launches in progress and recently finished; download progress and cancellation
 
 `POST /launch` runs the launch in its own task (`handlers::Launch`), tracked

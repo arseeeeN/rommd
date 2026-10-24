@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod config_edit;
 mod detect;
 mod emulator;
 mod error;
@@ -67,6 +68,10 @@ enum Command {
         /// Look here instead: an app, or a folder holding one (e.g. an
         /// emulator kept on the Desktop).
         path: Option<std::path::PathBuf>,
+        /// Add the emulators found to the config. Entries already there are
+        /// never changed.
+        #[arg(long)]
+        save: bool,
     },
     /// Start a game found by a query, as for `search`. With several matches
     /// it asks which one, or takes the best match with --first.
@@ -106,7 +111,9 @@ fn main() -> Result<()> {
         Some(Command::Search { limit, query }) => {
             tokio::runtime::Runtime::new()?.block_on(cli::search(&query, limit))
         }
-        Some(Command::Detect { path }) => cli::detect(&all_emulators(), path.as_deref()),
+        Some(Command::Detect { path, save }) => {
+            cli::detect(&all_emulators(), path.as_deref(), save)
+        }
         Some(Command::Play { first, query }) => {
             tokio::runtime::Runtime::new()?.block_on(cli::play(&query, first))
         }

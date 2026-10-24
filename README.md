@@ -129,6 +129,11 @@ it: `rommd detect ~/Desktop/Dolphin`. Keep emulators in Applications: one on
 the Desktop or in Downloads is easily moved or deleted, and the config then
 points nowhere.
 
+`rommd detect --save` adds what it found to the config file, after your other
+emulators, leaving the rest of the file (comments included) as it was.
+Emulators already in the config are never changed, and an app outside
+Applications is only added when you name its path.
+
 `config_dir` is the folder where the emulator keeps its saves. Where an
 emulator splits its settings into a separate folder (Dolphin, Eden and Azahar
 on Linux), rommd finds them on its own. At startup rommd warns in its log when

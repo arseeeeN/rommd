@@ -167,7 +167,11 @@ fn size(bytes: u64) -> String {
 
 /// `rommd detect`: the emulators installed here, next to what the config
 /// says about them.
-pub fn detect(emulators: &[Arc<dyn Emulator>], path: Option<&std::path::Path>) -> Result<()> {
+pub fn detect(
+    emulators: &[Arc<dyn Emulator>],
+    path: Option<&std::path::Path>,
+    save: bool,
+) -> Result<()> {
     if !cfg!(target_os = "macos") {
         println!("Emulator detection only covers macOS so far.");
         return Ok(());
@@ -239,6 +243,52 @@ pub fn detect(emulators: &[Arc<dyn Emulator>], path: Option<&std::path::Path>) -
         .collect();
     if !undetectable.is_empty() && path.is_none() {
         println!("Not detected on macOS yet: {}", undetectable.join(", "));
+    }
+    if save {
+        save_detected(&detection, config.as_ref(), path.is_some())?;
+    } else if detection.found.iter().any(|f| {
+        f.in_install_folder
+            && config
+                .as_ref()
+                .is_none_or(|c| !c.emulators.contains_key(f.emulator))
+    }) {
+        println!("Add them to the config with: rommd detect --save");
+    }
+    Ok(())
+}
+
+/// Add what was found to the config. Entries already there are kept as they
+/// are, and an app outside Applications is only added when the user named its
+/// path, i.e. chose it knowingly.
+fn save_detected(
+    detection: &crate::detect::Detection,
+    config: Option<&Config>,
+    named: bool,
+) -> Result<()> {
+    let path = Config::path();
+    if !path.exists() {
+        Config::load_or_create()?;
+    }
+    println!();
+    let mut added = 0;
+    for found in &detection.found {
+        let id = found.emulator;
+        if config.is_some_and(|c| c.emulators.contains_key(id)) {
+            println!("Kept your entry for {id}.");
+        } else if !found.in_install_folder && !named {
+            println!(
+                "Skipped {id}: move it into Applications, then run this again (or name it: \
+                 rommd detect <path> --save)."
+            );
+        } else {
+            crate::config_edit::add_emulator(&path, id, &found.binary, &found.config_dir)
+                .with_context(|| format!("adding {id} to {}", path.display()))?;
+            println!("Added [emulators.{id}] to {}.", home_relative(&path));
+            added += 1;
+        }
+    }
+    if added > 0 {
+        println!("rommd picks up the change by itself if it is running.");
     }
     Ok(())
 }

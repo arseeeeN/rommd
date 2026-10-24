@@ -226,7 +226,7 @@ fn expand_percent_vars(s: &str) -> String {
 }
 
 // Written on first run when no config file exists yet.
-const DEFAULT_CONFIG_TEMPLATE: &str = r#"# rommd configuration — edit to match your setup.
+pub(crate) const DEFAULT_CONFIG_TEMPLATE: &str = r#"# rommd configuration — edit to match your setup.
 # Both ~ and %ENVVAR% are expanded in path fields.
 
 # ROMs are stored under roms_dir/<platform_slug>/<rom_file>.
