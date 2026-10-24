@@ -187,11 +187,15 @@ needs seconds after waking), continue from the `.part` size, and check the
 size against RomM's `file_size_bytes`. A daemon restart mid-download then
 resumes on the next launch too.
 
-**2. No idle sleep while downloading.** Hold an idle-only inhibitor while a
+**2. No idle sleep while downloading (done, `src/awake.rs`; verified on
+macOS, Linux and Windows untested).** Hold an idle-only inhibitor while a
 launch fetches its ROM: `systemd-inhibit --what=idle`, `caffeinate -i` on
 macOS, `SetThreadExecutionState` on Windows. Idle only: a deliberate suspend
 (power button) must still work. To verify on a Deck: whether Game Mode's own
-auto-suspend timer respects logind's idle inhibitors.
+auto-suspend timer respects logind's idle inhibitors, and whether polkit lets
+rommd's user service (not part of the login session) take one; desktops that
+manage idle sleep themselves (GNOME, KDE) may also need the session's
+`org.freedesktop.ScreenSaver.Inhibit`.
 
 **3. Attached launches for gamescope.** As far as known, gamescope shows and
 focuses the windows of the process tree Steam launched; an emulator started

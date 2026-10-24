@@ -218,6 +218,7 @@ impl Launch {
         let rom_path: PathBuf = match (&rom, &req.local_path) {
             (Some(rom), _) => {
                 let client = romm.as_ref().expect("checked by the handler");
+                let _awake = keep_awake_while_downloading(&transfer, rom);
                 client
                     .download_rom_to_dir(rom, &config.roms_dir(), &transfer)
                     .await?
@@ -297,6 +298,35 @@ impl Launch {
         );
         Ok(pid)
     }
+}
+
+/// Keep the computer from idle sleep once bytes flow, until the returned
+/// guard is dropped (the download ended). A ROM already on disk never starts
+/// a transfer, so nothing is held for it.
+fn keep_awake_while_downloading(
+    transfer: &Transfer,
+    rom: &crate::romm::types::RomDetail,
+) -> tokio_util::sync::DropGuard {
+    let done = tokio_util::sync::CancellationToken::new();
+    let (transfer, finished) = (transfer.clone(), done.clone());
+    let why = format!(
+        "downloading {}",
+        rom.name.as_deref().unwrap_or(&rom.fs_name)
+    );
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = transfer.wait_started() => {
+                let awake = tokio::task::spawn_blocking(move || crate::awake::KeepAwake::start(&why))
+                    .await
+                    .ok()
+                    .flatten();
+                finished.cancelled().await;
+                drop(awake);
+            }
+            _ = finished.cancelled() => {}
+        }
+    });
+    done.drop_guard()
 }
 
 #[utoipa::path(

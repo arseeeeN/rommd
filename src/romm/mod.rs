@@ -205,7 +205,12 @@ impl RommClient {
                 transfer.begin(Some(total));
                 transfer.add(done);
                 for (file, path) in missing {
-                    self.download_file(file, path, transfer).await?;
+                    if let Err(e) = self.download_file(file, path, transfer).await {
+                        // A cancelled or refused download leaves folders it
+                        // created empty; a `.part` kept for resuming isn't.
+                        remove_empty_dirs(&rom_dir);
+                        return Err(e);
+                    }
                 }
             }
             return launch_file(&rom_dir, &stem, &files).await;
@@ -982,6 +987,18 @@ async fn launch_file(
         .ok_or_else(|| anyhow::anyhow!("no launchable file found in {}", rom_dir.display()))
 }
 
+/// Remove `dir` and the folders in it that hold no files at all.
+fn remove_empty_dirs(dir: &Path) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                remove_empty_dirs(&entry.path());
+            }
+        }
+    }
+    let _ = std::fs::remove_dir(dir);
+}
+
 async fn find_launch_file(dir: &Path) -> Result<Option<PathBuf>> {
     let mut entries = tokio::fs::read_dir(dir).await?;
     let mut m3u: Option<PathBuf> = None;
@@ -1209,17 +1226,17 @@ mod tests {
         use tokio::io::AsyncWriteExt;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let app = Router::new().route(
-            "/api/roms/{id}/content/{name}",
-            get(|| async {
-                let (mut tx, rx) = tokio::io::duplex(64);
-                tokio::spawn(async move {
-                    tx.write_all(b"first chunk").await.unwrap();
-                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                });
-                Body::from_stream(ReaderStream::new(rx))
-            }),
-        );
+        let stall = || async {
+            let (mut tx, rx) = tokio::io::duplex(64);
+            tokio::spawn(async move {
+                tx.write_all(b"first chunk").await.unwrap();
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            });
+            Body::from_stream(ReaderStream::new(rx))
+        };
+        let app = Router::new()
+            .route("/api/roms/{id}/content/{name}", get(stall))
+            .route("/api/roms/{id}/files/content/{name}", get(stall));
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         client(base, "token")
     }
@@ -1505,5 +1522,30 @@ mod tests {
         assert_eq!(launch, dest);
         assert_eq!(std::fs::read(&dest).unwrap(), data);
         assert_eq!(files.log.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_multi_file_download_leaves_no_folders_behind() {
+        let romm = serve_stalling().await;
+        let rom = multi_file_rom(&[
+            (251, "Game.xci", "", 1000, "game"),
+            (252, "Update.nsp", "update", 10, "update"),
+        ]);
+        let dir = TempDir::new("rom-cancel-dirs");
+        let transfer = Transfer::default();
+        let download = {
+            let transfer = transfer.clone();
+            let roms = dir.path().to_owned();
+            tokio::spawn(async move { romm.download_rom_to_dir(&rom, &roms, &transfer).await })
+        };
+        while transfer.progress().done == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        transfer.cancel.cancel();
+        assert!(download.await.unwrap().is_err());
+        assert!(
+            !dir.path().join("switch/Game").exists(),
+            "no empty game folder"
+        );
     }
 }

@@ -15,6 +15,7 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 - **`src/cli.rs`** — `rommd search` / `rommd play`, a client of the running daemon (`/games`, `/launch`, `/launches/{id}`)
 - **`src/detect.rs`** — finding installed emulators (`rommd detect [path]`; macOS so far): candidates from the install folders, then Spotlight (`mdfind` by bundle ID), or a path the user names; each verified from its files only, never by running it
 - **`src/config_edit.rs`** — edits to the user's `config.toml` (`toml_edit`, so comments and layout survive): adding an emulator after the last `[emulators.*]` (or at the very end, taking over trailing comments), never overwriting an entry or repairing a file that doesn't parse, written via temp file + rename. Only on request (`rommd detect --save`), never in the background
+- **`src/awake.rs`** — keeps the computer from *idle* sleep while a ROM downloads (`systemd-inhibit --what=idle` on Linux, `caffeinate -i` on macOS, both helpers that end with rommd; `SetThreadExecutionState` on a thread of its own on Windows); deliberate sleep still works
 - **`src/launches.rs`** — launches in progress and recently finished; download progress and cancellation
 
 `POST /launch` runs the launch in its own task (`handlers::Launch`), tracked
@@ -38,7 +39,8 @@ cancel or a refused download removes the `.part`. Multi-file ROMs (other than
 real `.zip` ROMs) are fetched file by file through RomM's per-file endpoint
 (`/api/roms/{file id}/files/content/{name}`, which honours ranges; the zip
 bundle doesn't), each at its `file_path` relative to the ROM's `full_path`,
-so nothing is extracted and folders from older bundle downloads match. A game
+so nothing is extracted and folders from older bundle downloads match. A failed or
+cancelled download removes the folders it left empty. A game
 is complete when every file exists with RomM's size; a single-file ROM of the
 wrong size is downloaded again too (the old file stays until the new one is
 whole). Extracted `.zip` ROMs can't be size-checked; extraction is staged. Launch file: an `.m3u`

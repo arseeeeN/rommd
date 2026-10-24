@@ -1,3 +1,4 @@
+mod awake;
 mod cli;
 mod config;
 mod config_edit;
