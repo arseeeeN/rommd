@@ -48,6 +48,15 @@ impl Emulator for MGba {
         })
     }
 
+    fn linux_app(&self) -> Option<crate::detect::LinuxApp> {
+        Some(crate::detect::LinuxApp {
+            app_ids: &["io.mgba.mGBA"],
+            executables: &["mgba-qt"],
+            update_info: &[],
+            data_dir: crate::detect::XdgDir::Config("mgba"),
+        })
+    }
+
     fn game_id_for_rom(&self, _config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         rom_path
             .file_stem()

@@ -13,7 +13,7 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 - **`src/main.rs`** — CLI (`rommd`, `rommd search|play`, `rommd service install|start|stop|restart|uninstall`), startup, emulator registry
 - **`src/games.rs`** — game search (`GET /games`): query language (words + `platform:`/`emulator:`/`library:`/`id:`), platform matching, emulator choice
 - **`src/cli.rs`** — `rommd search` / `rommd play`, a client of the running daemon (`/games`, `/launch`, `/launches/{id}`)
-- **`src/detect.rs`** — finding installed emulators (`rommd detect [path]`; macOS so far): candidates from the install folders, then Spotlight (`mdfind` by bundle ID), or a path the user names; each verified from its files only, never by running it
+- **`src/detect/`** — finding installed emulators (`rommd detect [path]`; macOS and Linux), each verified from its files only, never by running it. macOS (`mac.rs`): `.app` bundles in the install folders, then Spotlight (`mdfind` by bundle ID). Linux (`linux.rs`): root-owned executables on `PATH` (packages), Flatpak installations (`exports/bin/<app id>` as binary, data in `~/.var/app/<id>`, and the sandbox's `filesystems` grants, so `detect` can warn when `roms_dir` is out of reach), and AppImages in `~/Applications`, `~/AppImages`, `~/.local/bin`, `~/bin` or launched by a desktop entry, recognised by the app ID their image declares (`appimage.rs` reads the squashfs root: `<id>.desktop` or icon) or, for DwarFS images, their `.upd_info`; the CLI also looks in Desktop, Downloads, Documents. Or a path the user names. Emulators are listed in `emulator::all()` order (so a new config's file order, which picks between Ryujinx and Eden, is fixed); of several installs of one emulator, one in an install folder wins, then one whose data dir is in use
 - **`src/config_edit.rs`** — edits to the user's `config.toml` (`toml_edit`, so comments and layout survive): adding an emulator after the last `[emulators.*]` (or at the very end, taking over trailing comments), never overwriting an entry or repairing a file that doesn't parse, written via temp file + rename. Only on request (`rommd detect --save`), never in the background
 - **`src/awake.rs`** — keeps the computer from *idle* sleep while a ROM downloads (`systemd-inhibit --what=idle` on Linux, `caffeinate -i` on macOS, both helpers that end with rommd; `SetThreadExecutionState` on a thread of its own on Windows); deliberate sleep still works
 - **`src/launches.rs`** — launches in progress and recently finished; download progress and cancellation
@@ -51,7 +51,7 @@ existing one, e.g. RomM's, is kept), else the one top-level file RomM's
 - **`src/process.rs`** — process tracking (a game is its whole process tree: Unix process group, Windows job object), stop, post-exit sync trigger
 - **`src/emulator/`** — one file per emulator, all implement the `Emulator` trait
 - **`src/romm/`** — RomM HTTP client (ROM download, save/state upload/download)
-- **`src/config.rs`** — config file parsing, controller registry; the config written on first run (`default_config`: this OS's examples, with the emulators detected in the install folders filled in; never Spotlight, since the daemon's first start is unattended)
+- **`src/config.rs`** — config file parsing, controller registry; the config written on first run (`default_config`: this OS's examples, with the emulators detected in the install folders filled in, and a note when two share a platform; never Spotlight or Downloads, since the daemon's first start is unattended)
 - **`src/live.rs`** — the running config, reloaded when its file changes
 - **`src/switch.rs`** — Switch title ID extraction from NSP and XCI (ticket + NCA header decryption)
 - **`src/n3ds.rs`** — 3DS title ID extraction (NCSD / NCCH headers, CIA TMD; no keys)
@@ -137,6 +137,11 @@ Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
   `Info.plist`, never from running the binary, so the same check can vet a
   path a client suggests. Supported emulators are listed in
   `emulator::all()`
+- `linux_app` — the same for Linux: app IDs (Flatpak, and what AppImages
+  name their root desktop file or icon), package executables, update
+  information markers for DwarFS AppImages, and the data folder as an
+  `XdgDir`, resolved per install (XDG variables, the AppImage's
+  `.home`/`.config` folders, Flatpak's `~/.var/app/<id>`)
 - `save_family` — emulator IDs whose RomM saves this emulator can restore
   (Switch emulators share `switch::SAVE_COMPATIBLE_EMULATORS`)
 - `game_id_for_rom` — sync; returns the emulator's stable game identifier.

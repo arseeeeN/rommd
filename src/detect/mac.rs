@@ -1,13 +1,10 @@
-//! Finding installed emulators. Each emulator declares how its install is
-//! recognised (`Emulator::mac_app`); this module looks for them.
-//!
-//! Nothing here runs a program: an install is recognised from its files
-//! alone, so the same check can vet a path that a client merely suggests (see
-//! the config API item in dev/backlog.md).
+//! macOS: apps are recognised by the bundle identifier in their
+//! `Contents/Info.plist`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use super::{Detection, Found, Kind, sorted_dirs};
 use crate::emulator::Emulator;
 
 /// How an emulator ships on macOS.
@@ -22,45 +19,12 @@ pub struct MacApp {
     pub data_dir: &'static str,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Found {
-    pub emulator: &'static str,
-    pub name: &'static str,
-    /// Where it was found, e.g. the `.app` bundle.
-    pub install: PathBuf,
-    pub binary: PathBuf,
-    pub config_dir: PathBuf,
-    /// Whether `config_dir` holds the emulator's files; false until it has
-    /// run once.
-    pub config_dir_in_use: bool,
-    /// False for an app found elsewhere (Desktop, Downloads, another drive),
-    /// where it is easily moved or deleted, breaking the config.
-    pub in_install_folder: bool,
-}
-
-#[derive(Debug, Default)]
-pub struct Detection {
-    /// At most one install per emulator.
-    pub found: Vec<Found>,
-    /// Further installs of an emulator in `found`, which a config can't hold
-    /// (it has one entry per emulator ID).
-    pub also: Vec<Found>,
-}
-
-/// Look in the places this OS installs apps, and with `everywhere` also
-/// wherever the OS's own index knows an emulator's app to be. Only macOS is
-/// covered so far.
-///
-/// `everywhere` is for the CLI: reading an app on the Desktop or in Downloads
-/// from the background daemon would make macOS ask the user, out of nowhere,
-/// to let rommd access that folder.
+/// The install folders, and with `everywhere` also wherever Spotlight knows
+/// an emulator's app to be.
 pub fn detect(emulators: &[Arc<dyn Emulator>], everywhere: bool) -> Detection {
     let Some(home) = dirs::home_dir() else {
         return Detection::default();
     };
-    if !cfg!(target_os = "macos") {
-        return Detection::default();
-    }
     let install_dirs = mac_install_dirs(&home);
     let ids: Vec<&str> = emulators
         .iter()
@@ -125,7 +89,7 @@ pub fn scan_mac(
     home: &Path,
     emulators: &[Arc<dyn Emulator>],
 ) -> Detection {
-    let mut detection = Detection::default();
+    let mut found = Vec::new();
     for bundle in candidates {
         for emulator in emulators {
             let Some(app) = emulator.mac_app() else {
@@ -134,26 +98,17 @@ pub fn scan_mac(
             let Some(binary) = identify_mac_app(bundle, &app) else {
                 continue;
             };
-            let config_dir = home.join(app.data_dir);
-            let markers = emulator.config_dir_markers();
-            let found = Found {
-                emulator: emulator.id(),
-                name: emulator.display_name(),
-                config_dir_in_use: config_dir.is_dir()
-                    && (markers.is_empty() || markers.iter().any(|m| config_dir.join(m).exists())),
-                in_install_folder: install_dirs.iter().any(|d| bundle.starts_with(d)),
-                install: bundle.clone(),
+            found.push(Found::new(
+                emulator.as_ref(),
+                Kind::App,
+                bundle.clone(),
                 binary,
-                config_dir,
-            };
-            if detection.found.iter().any(|f| f.emulator == found.emulator) {
-                detection.also.push(found);
-            } else {
-                detection.found.push(found);
-            }
+                home.join(app.data_dir),
+                install_dirs.iter().any(|d| bundle.starts_with(d)),
+            ));
         }
     }
-    detection
+    Detection::from_found(found)
 }
 
 fn is_app(path: &Path) -> bool {
@@ -172,18 +127,6 @@ fn app_bundles(dir: &Path) -> Vec<PathBuf> {
         }
     }
     bundles
-}
-
-fn sorted_dirs(dir: &Path) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_dir())
-        .collect();
-    dirs.sort();
-    dirs
 }
 
 /// The executable of `bundle` if it is an install of `app`.
@@ -296,7 +239,7 @@ mod tests {
             "/Applications wins"
         );
         assert!(ryujinx.config_dir_in_use);
-        assert!(found.found.iter().all(|f| f.in_install_folder));
+        assert!(found.found.iter().all(|f| f.installed));
         assert_eq!(found.also.len(), 1);
         assert_eq!(found.also[0].install, user_apps.join("Ryujinx.app"));
     }
@@ -321,10 +264,7 @@ mod tests {
             let found = detect_at(&named, &emulators).found;
             assert_eq!(found.len(), 1, "{}", named.display());
             assert_eq!(found[0].install, app);
-            assert!(
-                !found[0].in_install_folder,
-                "the Desktop is no install folder"
-            );
+            assert!(!found[0].installed, "the Desktop is no install folder");
         }
         assert!(
             detect_at(&root.path().join("nothing"), &emulators)

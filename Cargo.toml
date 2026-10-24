@@ -32,6 +32,8 @@ clap = { version = "4", features = ["derive"] }
 semver = "1"
 minisign-verify = "0.2"
 notify = "8"
+ruzstd = { version = "0.9", default-features = false, features = ["std"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [dev-dependencies]
 axum = { version = "0.8", features = ["multipart"] }

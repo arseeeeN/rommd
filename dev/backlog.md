@@ -233,7 +233,32 @@ path the user names, with a hint to move apps found outside Applications. Not ye
 `~/.local/share/eden`, XDG paths even on macOS). The config editor
 (`src/config_edit.rs`), `rommd detect --save`, and the first-run config (this
 OS's examples only, with the emulators found in the install folders filled in)
-are done too. Next: Linux and Windows detection.
+are done too.
+
+**Linux (done, `src/detect/linux.rs`, verified on CachyOS):** packages (root-owned
+executables on `PATH`), Flatpak installations, AppImages in `~/Applications`,
+`~/AppImages`, `~/.local/bin`, `~/bin` or launched by a desktop entry in
+`~/.local/share/applications` (AppImageLauncher, Gear Lever, EmuDeck); the CLI
+also looks in Desktop, Downloads, Documents and the user's own `PATH` dirs.
+AppImages are identified by the app ID their squashfs root declares
+(`<id>.desktop` or icon; gzip and zstd), uruntime's DwarFS images (Eden, which
+packs its names) by `.upd_info`. A scan of a typical home takes well under
+100 ms. Two emulators found for one platform (Eden and Ryujinx) get a
+`[platforms]` hint in the first-run config and in `rommd detect`.
+
+Not covered yet, roughly by likely demand:
+- Eden's *stable* AppImages: identified only if they carry `.upd_info`
+  pointing at `eden-emu.dev/` (the nightlies do); unchecked. A DwarFS image
+  without it can't be identified, not even by `rommd detect <path>`.
+- Ryujinx's tarball (`publish/Ryujinx`, used by older EmuDeck installs): no
+  file in it names the app.
+- RetroDECK: one Flatpak (`net.retrodeck.retrodeck`) running every emulator
+  inside, data in `~/retrodeck`; the config's `binary` can't express
+  `flatpak run --command=…`.
+- Snaps, Dolphin's legacy `~/.dolphin-emu`, portable installs next to an
+  extracted binary, xz/lzo squashfs.
+
+Next: Windows detection.
 
 **How far to look** (decided): known install locations; the OS's own index
 where it identifies apps (macOS Spotlight by bundle ID, ~30 ms a query); a
@@ -283,12 +308,20 @@ as `~/…`, and Windows paths as single-quoted literal strings, since
   dev) share one ID: pick by a fixed rule (native before Flatpak) and list the
   others.
 - Eden and Ryujinx both found: config order would silently decide Switch, so
-  write both plus a commented `# [platforms] switch = "…"` hint.
+  write both plus a comment naming the one used and the `[platforms]` line
+  that picks the other (done: `detect::shared_platforms`, in the first-run
+  config and `rommd detect`; `--save` appends without it). Detection lists
+  emulators in `emulator::all()` order, so Ryujinx is the default.
 - Flatpak has no single binary; the exported launcher
   (`/var/lib/flatpak/exports/bin/<app id>`, `~/.local/share/flatpak/exports/bin`)
-  should work as `binary`. **Untested:** rommd has never run a Flatpak
-  emulator; process-group tracking and the post-exit sync through Flatpak's
-  sandbox launcher need checking (planned on a Steam Deck).
+  is used as `binary`. Checked with a non-emulator Flatpak: `flatpak run` execs
+  `bwrap`, so the PID rommd spawns lives as long as the sandbox, the sandboxed
+  processes stay in rommd's process group, and stopping the group ends them.
+  **Untested:** an actual emulator Flatpak through launch and post-exit sync
+  (planned on a Steam Deck), and ROM access: the sandbox only sees what its
+  `filesystems` grant, so `rommd detect` prints the `flatpak override` that
+  opens `roms_dir`. A launch could check the same (`Sandbox::can_read`) and
+  say why the emulator found no ROM.
 
 **Where to look:** macOS `/Applications/*.app` and `~/Applications`,
 identified by the bundle identifier in `Contents/Info.plist`; Linux packages

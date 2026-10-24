@@ -47,6 +47,19 @@ impl Emulator for Ryujinx {
         })
     }
 
+    fn linux_app(&self) -> Option<crate::detect::LinuxApp> {
+        Some(crate::detect::LinuxApp {
+            app_ids: &[
+                "app.ryujinx.Ryujinx",
+                "io.github.ryubing.Ryujinx",
+                "org.ryujinx.Ryujinx",
+            ],
+            executables: &["ryujinx", "Ryujinx"],
+            update_info: &[],
+            data_dir: crate::detect::XdgDir::Config("Ryujinx"),
+        })
+    }
+
     fn game_id_for_rom(&self, config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         crate::switch::title_id_for_rom(
             rom_path,

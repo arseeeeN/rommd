@@ -48,6 +48,15 @@ impl Emulator for Eden {
         }
     }
 
+    fn linux_app(&self) -> Option<crate::detect::LinuxApp> {
+        Some(crate::detect::LinuxApp {
+            app_ids: &["dev.eden_emu.eden"],
+            executables: &["eden"],
+            update_info: &["eden-emu.dev/"],
+            data_dir: crate::detect::XdgDir::Data("eden"),
+        })
+    }
+
     fn game_id_for_rom(&self, config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         crate::switch::title_id_for_rom(rom_path, &config.config_dir.join("keys").join("prod.keys"))
     }

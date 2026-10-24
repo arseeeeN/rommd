@@ -121,6 +121,12 @@ pub trait Emulator: Send + Sync {
     fn mac_app(&self) -> Option<crate::detect::MacApp> {
         None
     }
+
+    /// How `rommd detect` recognises this emulator's packages, Flatpaks and
+    /// AppImages on Linux; `None` means it isn't detected there.
+    fn linux_app(&self) -> Option<crate::detect::LinuxApp> {
+        None
+    }
 }
 
 /// Why `config_dir` does not look like this emulator's folder, if it doesn't.

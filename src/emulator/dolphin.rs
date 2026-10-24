@@ -49,6 +49,15 @@ impl Emulator for Dolphin {
         })
     }
 
+    fn linux_app(&self) -> Option<crate::detect::LinuxApp> {
+        Some(crate::detect::LinuxApp {
+            app_ids: &["org.DolphinEmu.dolphin-emu"],
+            executables: &["dolphin-emu"],
+            update_info: &[],
+            data_dir: crate::detect::XdgDir::Data("dolphin-emu"),
+        })
+    }
+
     fn game_id_for_rom(&self, _config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         read_disc(rom_path).map(|(id, _)| id)
     }

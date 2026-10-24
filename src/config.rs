@@ -127,12 +127,13 @@ impl Config {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating config directory {}", parent.display()))?;
         }
-        // Only the install folders: looking further (Spotlight) could read
-        // an app on the Desktop, and the daemon's first start is unattended.
+        // Only the install folders: looking further (Spotlight, Downloads)
+        // could read an app on the Desktop, and the daemon's first start is
+        // unattended.
         let found: Vec<_> = crate::detect::detect(&crate::emulator::all(), false)
             .found
             .into_iter()
-            .filter(|f| f.in_install_folder)
+            .filter(|f| f.installed)
             .collect();
         let text = default_config(Os::current(), &found);
         std::fs::write(&path, &text)
@@ -466,6 +467,15 @@ pub fn default_config(os: Os, found: &[crate::detect::Found]) -> String {
         }
         doc.insert("emulators", toml_edit::Item::Table(emulators));
         text.push_str(&doc.to_string());
+        for (platform, ids) in crate::detect::shared_platforms(found) {
+            text.push_str(&format!(
+                "\n# {} all run {platform}: {} is used, being listed first. To use another,\n\
+                 # set it under [platforms] below, e.g. {platform} = \"{}\".\n",
+                ids.join(", "),
+                ids[0],
+                ids[1]
+            ));
+        }
     }
     let examples: Vec<_> = os
         .examples()
@@ -534,11 +544,13 @@ mod tests {
         crate::detect::Found {
             emulator,
             name: "Dolphin",
+            kind: crate::detect::Kind::App,
             install: PathBuf::from("/Applications/Dolphin.app"),
             binary: PathBuf::from("/Applications/Dolphin.app/Contents/MacOS/Dolphin"),
             config_dir: PathBuf::from("/Users/me/Library/Application Support/Dolphin"),
             config_dir_in_use: in_use,
-            in_install_folder: true,
+            installed: true,
+            sandbox: None,
         }
     }
 
@@ -615,6 +627,22 @@ mod tests {
                 < more[mgba_end..].find("# More examples").unwrap(),
             "detect --save adds to the same section"
         );
+    }
+
+    #[test]
+    fn the_generated_config_says_which_of_two_switch_emulators_runs() {
+        let text = default_config(Os::Linux, &[found("eden", true), found("ryujinx", true)]);
+        assert!(
+            text.contains(
+                "# eden, ryujinx all run switch: eden is used, being listed first. To use \
+                 another,\n# set it under [platforms] below, e.g. switch = \"ryujinx\"."
+            ),
+            "{text}"
+        );
+        let config = Config::parse(&text, Path::new("t")).unwrap();
+        assert!(config.platforms.is_empty(), "only a hint");
+        let one = default_config(Os::Linux, &[found("eden", true), found("dolphin", true)]);
+        assert!(!one.contains("all run"), "{one}");
     }
 
     #[test]

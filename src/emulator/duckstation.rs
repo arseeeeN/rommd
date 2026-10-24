@@ -48,6 +48,15 @@ impl Emulator for DuckStation {
         })
     }
 
+    fn linux_app(&self) -> Option<crate::detect::LinuxApp> {
+        Some(crate::detect::LinuxApp {
+            app_ids: &["org.duckstation.DuckStation"],
+            executables: &["duckstation-qt"],
+            update_info: &[],
+            data_dir: crate::detect::XdgDir::ConfigHomeElseData("duckstation"),
+        })
+    }
+
     async fn launch(
         &self,
         config: &EmulatorConfig,

@@ -172,8 +172,8 @@ pub fn detect(
     path: Option<&std::path::Path>,
     save: bool,
 ) -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        println!("Emulator detection only covers macOS so far.");
+    if !crate::detect::supported() {
+        println!("Emulator detection only covers macOS and Linux so far.");
         return Ok(());
     }
     let config = Config::read(&Config::path()).ok();
@@ -204,7 +204,7 @@ pub fn detect(
             Some(_) => "in your config with other paths",
             None => "not in your config",
         };
-        println!("{} ({state})", found.emulator);
+        println!("{} ({}, {state})", found.emulator, found.kind.label());
         println!("  binary      {}", home_relative(&found.binary));
         let unused = if found.config_dir_in_use {
             ""
@@ -221,33 +221,57 @@ pub fn detect(
                 home_relative(&c.config_dir)
             );
         }
-        if !found.in_install_folder {
+        if !found.installed {
             println!(
-                "  note: {} is outside Applications; move it there first, or the config \
-                 breaks when it is moved or deleted",
-                home_relative(&found.install)
+                "  note: {} is outside {}; move it there first, or the config breaks when \
+                 it is moved or deleted",
+                home_relative(&found.install),
+                install_folder()
             );
+        }
+        if let Some(sandbox) = &found.sandbox {
+            let roms = config
+                .as_ref()
+                .map(Config::roms_dir)
+                .unwrap_or_else(crate::config::default_roms_dir);
+            if !sandbox.can_read(&roms) {
+                println!(
+                    "  note: the Flatpak may not see your ROMs in {}; let it read them with\n    \
+                     flatpak override --user --filesystem={}:ro {}",
+                    home_relative(&roms),
+                    home_relative(&roms),
+                    sandbox.app_id
+                );
+            }
         }
     }
     for other in &detection.also {
         println!(
-            "Also installed, not used: {} at {}",
+            "Also installed, not used: {} ({}) at {}",
             other.emulator,
+            other.kind.label(),
             home_relative(&other.install)
+        );
+    }
+    for (platform, ids) in crate::detect::shared_platforms(&detection.found) {
+        println!(
+            "{} all run {platform}; [platforms] in the config picks one, e.g. {platform} = \"{}\"",
+            ids.join(", "),
+            ids[0]
         );
     }
     let undetectable: Vec<&str> = emulators
         .iter()
-        .filter(|e| e.mac_app().is_none())
+        .filter(|e| !crate::detect::detectable(e.as_ref()))
         .map(|e| e.id())
         .collect();
     if !undetectable.is_empty() && path.is_none() {
-        println!("Not detected on macOS yet: {}", undetectable.join(", "));
+        println!("Not detected here yet: {}", undetectable.join(", "));
     }
     if save {
         save_detected(&detection, config.as_ref(), path.is_some())?;
     } else if detection.found.iter().any(|f| {
-        f.in_install_folder
+        f.installed
             && config
                 .as_ref()
                 .is_none_or(|c| !c.emulators.contains_key(f.emulator))
@@ -258,7 +282,7 @@ pub fn detect(
 }
 
 /// Add what was found to the config. Entries already there are kept as they
-/// are, and an app outside Applications is only added when the user named its
+/// are, and an app outside the install folders is only added when the user named its
 /// path, i.e. chose it knowingly.
 fn save_detected(
     detection: &crate::detect::Detection,
@@ -275,10 +299,11 @@ fn save_detected(
         let id = found.emulator;
         if config.is_some_and(|c| c.emulators.contains_key(id)) {
             println!("Kept your entry for {id}.");
-        } else if !found.in_install_folder && !named {
+        } else if !found.installed && !named {
             println!(
-                "Skipped {id}: move it into Applications, then run this again (or name it: \
-                 rommd detect <path> --save)."
+                "Skipped {id}: move it into {}, then run this again (or name it: \
+                 rommd detect <path> --save).",
+                install_folder()
             );
         } else {
             crate::config_edit::add_emulator(&path, id, &found.binary, &found.config_dir)
@@ -291,6 +316,15 @@ fn save_detected(
         println!("rommd picks up the change by itself if it is running.");
     }
     Ok(())
+}
+
+/// Where `detect` expects apps to be installed.
+fn install_folder() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Applications"
+    } else {
+        "~/Applications (or add a desktop entry for it)"
+    }
 }
 
 /// `~/…` for paths in the home folder.

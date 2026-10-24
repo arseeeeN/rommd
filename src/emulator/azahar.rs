@@ -59,6 +59,15 @@ impl Emulator for Azahar {
         })
     }
 
+    fn linux_app(&self) -> Option<crate::detect::LinuxApp> {
+        Some(crate::detect::LinuxApp {
+            app_ids: &["org.azahar_emu.Azahar"],
+            executables: &["azahar"],
+            update_info: &[],
+            data_dir: crate::detect::XdgDir::Data("azahar-emu"),
+        })
+    }
+
     fn game_id_for_rom(&self, _config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         crate::n3ds::title_id_for_rom(rom_path)
     }
