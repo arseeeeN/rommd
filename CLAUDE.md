@@ -28,6 +28,23 @@ untracked. One launch per ROM at a time: a second gets the first's ID. The
 updater and `rommd service stop/restart` wait while a launch is in progress.
 The RomM client has connect and read timeouts but no total timeout, which
 would cut off large downloads.
+
+ROM downloads (`romm::RommClient::fetch_to`) go through `<file>.part` and
+resume: a `.part` from an earlier attempt is continued with a range request,
+a dropped connection (sleep, Wi-Fi) is retried for about a minute and
+otherwise kept for the next launch, a server that ignores the range restarts
+the file cleanly, and the result must match RomM's `file_size_bytes`. Only a
+cancel or a refused download removes the `.part`. Multi-file ROMs (other than
+real `.zip` ROMs) are fetched file by file through RomM's per-file endpoint
+(`/api/roms/{file id}/files/content/{name}`, which honours ranges; the zip
+bundle doesn't), each at its `file_path` relative to the ROM's `full_path`,
+so nothing is extracted and folders from older bundle downloads match. A game
+is complete when every file exists with RomM's size; a single-file ROM of the
+wrong size is downloaded again too (the old file stays until the new one is
+whole). Extracted `.zip` ROMs can't be size-checked; extraction is staged. Launch file: an `.m3u`
+rommd writes for multi-disc games (several `.cue`, else disc images; an
+existing one, e.g. RomM's, is kept), else the one top-level file RomM's
+`category` calls `game`, else `find_launch_file`.
 - **`src/server/`** — axum HTTP handlers, OpenAPI spec (utoipa), request/response types
 - **`src/process.rs`** — process tracking (a game is its whole process tree: Unix process group, Windows job object), stop, post-exit sync trigger
 - **`src/emulator/`** — one file per emulator, all implement the `Emulator` trait
@@ -296,6 +313,7 @@ named save histories) is tracked in `dev/backlog.md`.
 Base URL and credentials are in config. The client is `src/romm/mod.rs`.
 Endpoints used: `GET /api/roms` (search: `search_term`, repeated `platform_ids`),
 `GET /api/platforms`, `GET /api/roms/{id}`, `GET /api/roms/{id}/content/{name}`,
+`GET /api/roms/{file id}/files/content/{name}`,
 `GET /api/saves`, `POST /api/saves`, `PUT /api/saves/{id}`, `GET /api/saves/{id}/content`,
 `GET /api/states`, `POST /api/states`, `GET /api/states/{id}/content`.
 

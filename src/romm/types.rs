@@ -21,6 +21,9 @@ pub struct RomDetail {
     pub platform_fs_slug: String,
     #[serde(default)]
     pub platform_display_name: Option<String>,
+    /// Where the ROM sits on the server, e.g. `roms/switch/<game>`.
+    #[serde(default)]
+    pub full_path: String,
     pub name: Option<String>,
     /// Component files for multi-file ROMs. Empty for single-file ROMs.
     #[serde(default)]
@@ -31,6 +34,15 @@ pub struct RomDetail {
 pub struct RomFileSchema {
     pub id: i64,
     pub file_name: String,
+    /// The file's folder on the server, e.g. `roms/switch/<game>/update`;
+    /// relative to the ROM's `full_path` it is the file's place in the game.
+    #[serde(default)]
+    pub file_path: String,
+    #[serde(default)]
+    pub file_size_bytes: Option<u64>,
+    /// `game`, `update`, `dlc`, … (RomM's own classification).
+    #[serde(default)]
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

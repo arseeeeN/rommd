@@ -168,7 +168,7 @@ may each have their own version rules.
 The Deck is the hardest target: Game Mode has no browser or terminal for the
 userscript, it suspends constantly, and its storage is small. In order:
 
-**1. Resumable, per-file ROM downloads.** Verified against RomM 5.2: the
+**1. Resumable, per-file ROM downloads (done).** Verified against RomM 5.2: the
 per-file endpoint `GET /api/roms/{file id}/files/content/{name}` answers range
 requests (`206`), while the bundled `GET /api/roms/{id}/content/{name}?file_ids=…`
 (zipped on the fly) ignores them. Downloading a multi-file ROM file by file

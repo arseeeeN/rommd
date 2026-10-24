@@ -209,7 +209,9 @@ A query is words from the game's name plus filters:
 `search` shows the emulator each game would start with. Without `emulator:`,
 `play` uses the one configured for the game's platform (see Configure). When
 the game isn't downloaded yet, `play` shows the download's progress; Ctrl+C
-cancels it and removes the partial file. Once the download is done, the game
+cancels it and removes the partial file. A download cut off by sleep or a
+lost connection picks up where it stopped, by itself within a minute or else
+on the next launch. Once the download is done, the game
 starts even if you stop waiting.
 
 ## Launch button in RomM (temporary)
