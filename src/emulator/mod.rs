@@ -10,11 +10,25 @@ pub mod ryujinx;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::process::Child;
 
 use crate::config::EmulatorConfig;
 use crate::profile::ProfileBlob;
 pub use layout::{CreateDir, FileSet, GameSaveDir, SaveLayout, SaveSet};
+
+/// Every supported emulator. To add one, implement `Emulator` in its own
+/// module here and list it.
+pub fn all() -> Vec<Arc<dyn Emulator>> {
+    vec![
+        Arc::new(duckstation::DuckStation),
+        Arc::new(mgba::MGba),
+        Arc::new(dolphin::Dolphin),
+        Arc::new(ryujinx::Ryujinx),
+        Arc::new(eden::Eden),
+        Arc::new(azahar::Azahar),
+    ]
+}
 
 /// Command for spawning an emulator. On Unix the emulator becomes the leader of
 /// its own process group, so stopping it and waiting for it cover every process

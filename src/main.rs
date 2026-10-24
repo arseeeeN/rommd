@@ -30,10 +30,7 @@ use std::time::Duration;
 use tracing::{info, warn};
 
 use config::Config;
-use emulator::{
-    Emulator, azahar::Azahar, dolphin::Dolphin, duckstation::DuckStation, eden::Eden, mgba::MGba,
-    ryujinx::Ryujinx,
-};
+use emulator::Emulator;
 use process::ProcessManager;
 use server::state::AppState;
 
@@ -112,7 +109,7 @@ fn main() -> Result<()> {
             tokio::runtime::Runtime::new()?.block_on(cli::search(&query, limit))
         }
         Some(Command::Detect { path, save }) => {
-            cli::detect(&all_emulators(), path.as_deref(), save)
+            cli::detect(&emulator::all(), path.as_deref(), save)
         }
         Some(Command::Play { first, query }) => {
             tokio::runtime::Runtime::new()?.block_on(cli::play(&query, first))
@@ -195,7 +192,7 @@ async fn run_daemon(background: bool) -> Result<()> {
     info!("config loaded from {}", Config::path().display());
     info!("roms_dir: {}", config.roms_dir().display());
 
-    let emulators: HashMap<String, Arc<dyn Emulator>> = all_emulators()
+    let emulators: HashMap<String, Arc<dyn Emulator>> = emulator::all()
         .into_iter()
         .map(|e| (e.id().to_owned(), e))
         .collect();
@@ -270,19 +267,6 @@ fn check_romm(snapshot: &live::Snapshot) {
         }
         _ => warn!("no [romm] section in the config: games can only launch with local_path"),
     }
-}
-
-/// Every supported emulator. To add one, implement `Emulator` in
-/// `src/emulator/` and list it here.
-fn all_emulators() -> Vec<Arc<dyn Emulator>> {
-    vec![
-        Arc::new(DuckStation),
-        Arc::new(MGba),
-        Arc::new(Dolphin),
-        Arc::new(Ryujinx),
-        Arc::new(Eden),
-        Arc::new(Azahar),
-    ]
 }
 
 /// Warn about emulator entries that won't work; `only` limits the check to

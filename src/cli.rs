@@ -182,7 +182,7 @@ pub fn detect(
             anyhow::ensure!(path.exists(), "{} does not exist", path.display());
             crate::detect::detect_at(path, emulators)
         }
-        None => crate::detect::detect(emulators),
+        None => crate::detect::detect(emulators, true),
     };
     if detection.found.is_empty() {
         match path {

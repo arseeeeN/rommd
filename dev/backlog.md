@@ -174,8 +174,9 @@ mGBA and Azahar (`Emulator::mac_app`): install folders, then Spotlight, or a
 path the user names, with a hint to move apps found outside Applications. Not yet detected on macOS: Eden (bundle ID
 `com.yuzu-emu.yuzu`, yuzu's, so also require the executable `eden`; data in
 `~/.local/share/eden`, XDG paths even on macOS). The config editor
-(`src/config_edit.rs`) and `rommd detect --save` are done too. Next: filling in
-detected emulators on first run, with a template for the current OS only.
+(`src/config_edit.rs`), `rommd detect --save`, and the first-run config (this
+OS's examples only, with the emulators found in the install folders filled in)
+are done too. Next: Linux and Windows detection.
 
 **How far to look** (decided): known install locations; the OS's own index
 where it identifies apps (macOS Spotlight by bundle ID, ~30 ms a query); a

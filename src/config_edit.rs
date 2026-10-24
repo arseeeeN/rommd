@@ -58,12 +58,7 @@ pub fn with_emulator(
         .as_table_mut()
         .context("[emulators] is not a table rommd can add to")?;
 
-    // Aligned like the examples in the generated config.
-    let mut entry = Table::new();
-    let mut binary_key = Key::new("binary");
-    binary_key.leaf_decor_mut().set_suffix("     ");
-    entry.insert_formatted(&binary_key, value(config_path(binary)));
-    entry.insert("config_dir", value(config_path(config_dir)));
+    let mut entry = entry_table(binary, config_dir);
     if first_emulator && !trailing.trim().is_empty() {
         let mut prefix = trailing;
         if !prefix.ends_with('\n') {
@@ -86,6 +81,16 @@ pub fn with_emulator(
         "the edited config doesn't read back as intended"
     );
     Ok(updated)
+}
+
+/// An emulator's table, aligned like the examples in the generated config.
+pub fn entry_table(binary: &Path, config_dir: &Path) -> Table {
+    let mut entry = Table::new();
+    let mut binary_key = Key::new("binary");
+    binary_key.leaf_decor_mut().set_suffix("     ");
+    entry.insert_formatted(&binary_key, value(config_path(binary)));
+    entry.insert("config_dir", value(config_path(config_dir)));
+    entry
 }
 
 /// A path as people write it in the config: `~/…` under the home folder
@@ -192,7 +197,8 @@ switch = "eden"
 
     #[test]
     fn adds_to_the_bottom_of_the_generated_config() {
-        let template = crate::config::DEFAULT_CONFIG_TEMPLATE;
+        let generated = crate::config::default_config(crate::config::Os::current(), &[]);
+        let template = generated.as_str();
         let out = add(template, "dolphin", "/d", "/d").unwrap();
         let (kept, added) = out.split_at(template.trim_end().len());
         assert_eq!(kept, template.trim_end(), "the template is kept as written");

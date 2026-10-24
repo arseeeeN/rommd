@@ -25,6 +25,7 @@ pub struct MacApp {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Found {
     pub emulator: &'static str,
+    pub name: &'static str,
     /// Where it was found, e.g. the `.app` bundle.
     pub install: PathBuf,
     pub binary: PathBuf,
@@ -46,9 +47,14 @@ pub struct Detection {
     pub also: Vec<Found>,
 }
 
-/// Look in the places this OS installs apps, then wherever the OS's own index
-/// knows an emulator's app to be. Only macOS is covered so far.
-pub fn detect(emulators: &[Arc<dyn Emulator>]) -> Detection {
+/// Look in the places this OS installs apps, and with `everywhere` also
+/// wherever the OS's own index knows an emulator's app to be. Only macOS is
+/// covered so far.
+///
+/// `everywhere` is for the CLI: reading an app on the Desktop or in Downloads
+/// from the background daemon would make macOS ask the user, out of nowhere,
+/// to let rommd access that folder.
+pub fn detect(emulators: &[Arc<dyn Emulator>], everywhere: bool) -> Detection {
     let Some(home) = dirs::home_dir() else {
         return Detection::default();
     };
@@ -62,7 +68,7 @@ pub fn detect(emulators: &[Arc<dyn Emulator>]) -> Detection {
         .map(|a| a.bundle_id)
         .collect();
     let mut candidates: Vec<PathBuf> = install_dirs.iter().flat_map(|d| app_bundles(d)).collect();
-    for bundle in spotlight(&ids) {
+    for bundle in spotlight(&ids).into_iter().filter(|_| everywhere) {
         if !candidates.contains(&bundle) {
             candidates.push(bundle);
         }
@@ -132,6 +138,7 @@ pub fn scan_mac(
             let markers = emulator.config_dir_markers();
             let found = Found {
                 emulator: emulator.id(),
+                name: emulator.display_name(),
                 config_dir_in_use: config_dir.is_dir()
                     && (markers.is_empty() || markers.iter().any(|m| config_dir.join(m).exists())),
                 in_install_folder: install_dirs.iter().any(|d| bundle.starts_with(d)),

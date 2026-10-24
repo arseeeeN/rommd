@@ -88,7 +88,9 @@ your own build, set `mode = "off"` under `[updates]`.
 
 ## Configure
 
-rommd creates a commented config file on first start:
+rommd creates a commented config file on first start, with the examples for
+your OS and, on macOS, the emulators it finds in Applications already filled
+in:
 
 | Platform | Config file |
 |---|---|

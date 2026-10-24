@@ -32,7 +32,7 @@ would cut off large downloads.
 - **`src/process.rs`** — process tracking (a game is its whole process tree: Unix process group, Windows job object), stop, post-exit sync trigger
 - **`src/emulator/`** — one file per emulator, all implement the `Emulator` trait
 - **`src/romm/`** — RomM HTTP client (ROM download, save/state upload/download)
-- **`src/config.rs`** — config file parsing, controller registry
+- **`src/config.rs`** — config file parsing, controller registry; the config written on first run (`default_config`: this OS's examples, with the emulators detected in the install folders filled in; never Spotlight, since the daemon's first start is unattended)
 - **`src/live.rs`** — the running config, reloaded when its file changes
 - **`src/switch.rs`** — Switch title ID extraction from NSP and XCI (ticket + NCA header decryption)
 - **`src/n3ds.rs`** — 3DS title ID extraction (NCSD / NCCH headers, CIA TMD; no keys)
@@ -116,8 +116,8 @@ Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
   executable name for a fork that kept its parent's ID) and data folder
   relative to home. `None` = not detected. Identity comes from the bundle's
   `Info.plist`, never from running the binary, so the same check can vet a
-  path a client suggests. Supported emulators are listed in `main.rs`
-  (`all_emulators`)
+  path a client suggests. Supported emulators are listed in
+  `emulator::all()`
 - `save_family` — emulator IDs whose RomM saves this emulator can restore
   (Switch emulators share `switch::SAVE_COMPATIBLE_EMULATORS`)
 - `game_id_for_rom` — sync; returns the emulator's stable game identifier.
@@ -126,7 +126,7 @@ Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
 - `snapshot` / `launch` — profile overlay and process spawn
 
 Adding a new emulator: create `src/emulator/<name>.rs`, implement the trait,
-add `pub mod <name>` to `mod.rs`, list it in `all_emulators` in `main.rs`.
+add `pub mod <name>` to `mod.rs`, list it in `emulator::all()`.
 
 ## Save sync (`src/sync/`)
 

@@ -127,11 +127,27 @@ impl Config {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating config directory {}", parent.display()))?;
         }
-        std::fs::write(&path, DEFAULT_CONFIG_TEMPLATE)
+        // Only the install folders: looking further (Spotlight) could read
+        // an app on the Desktop, and the daemon's first start is unattended.
+        let found: Vec<_> = crate::detect::detect(&crate::emulator::all(), false)
+            .found
+            .into_iter()
+            .filter(|f| f.in_install_folder)
+            .collect();
+        let text = default_config(Os::current(), &found);
+        std::fs::write(&path, &text)
             .with_context(|| format!("writing default config to {}", path.display()))?;
-        info!("created default config at {}", path.display());
-
-        Ok(Self::default())
+        let names: Vec<&str> = found.iter().map(|f| f.emulator).collect();
+        info!(
+            "created default config at {} with the emulators found here: {}",
+            path.display(),
+            if names.is_empty() {
+                "none".into()
+            } else {
+                names.join(", ")
+            }
+        );
+        Self::parse(&text, &path)
     }
 
     /// Read and parse an existing config file.
@@ -225,15 +241,13 @@ fn expand_percent_vars(s: &str) -> String {
     result
 }
 
-// Written on first run when no config file exists yet.
-pub(crate) const DEFAULT_CONFIG_TEMPLATE: &str = r#"# rommd configuration — edit to match your setup.
+/// The start of the config written on first run. `{ROMS_DIR}` is this OS's
+/// default.
+const TEMPLATE_HEAD: &str = r#"# rommd configuration — edit to match your setup.
 # Both ~ and %ENVVAR% are expanded in path fields.
 
-# ROMs are stored under roms_dir/<platform_slug>/<rom_file>.
-# Defaults to the platform data directory if not set:
-#   Linux:   ~/.local/share/rommd/roms
-#   macOS:   ~/Library/Application Support/rommd/roms
-#   Windows: %LOCALAPPDATA%\rommd\roms
+# ROMs are stored under roms_dir/<platform_slug>/<rom_file>, by default in
+# {ROMS_DIR}.
 # roms_dir = "~/Roms"
 
 [server]
@@ -264,75 +278,12 @@ mode = "auto"
 # Add one [emulators.<id>] block per emulator. The id is used in API calls.
 # When several emulators run the same platform (Eden and Ryujinx), the one
 # listed first is used unless [platforms] below picks another.
-#
-# macOS
-# -----
-# [emulators.duckstation]
-# binary     = "/Applications/DuckStation.app/Contents/MacOS/DuckStation"
-# config_dir = "~/Library/Application Support/DuckStation"
-#
-# [emulators.mgba]
-# binary     = "/Applications/mGBA.app/Contents/MacOS/mGBA"
-# config_dir = "~/.config/mgba"
-#
-# [emulators.dolphin]
-# binary     = "/Applications/Dolphin.app/Contents/MacOS/Dolphin"
-# config_dir = "~/Library/Application Support/Dolphin"
-#
-# [emulators.ryujinx]
-# binary     = "/Applications/Ryujinx.app/Contents/MacOS/Ryujinx"
-# config_dir = "~/Library/Application Support/Ryujinx"
-#
-# Windows
-# -------
-# Write Windows paths in single quotes: in double quotes a backslash starts
-# an escape sequence. Portable installs keep config_dir next to the program
-# (DuckStation and mGBA: its folder; Dolphin, Eden, Azahar: "User"/"user";
-# Ryujinx: "portable").
-#
-# [emulators.duckstation]
-# binary     = 'C:\Program Files\DuckStation\duckstation-qt-x64-ReleaseLTCG.exe'
-# config_dir = '%LOCALAPPDATA%\DuckStation'   # older installs: '~\Documents\DuckStation'
-#
-# [emulators.mgba]
-# binary     = 'C:\Program Files\mGBA\mGBA.exe'
-# config_dir = '%APPDATA%\mGBA'
-#
-# [emulators.dolphin]
-# binary     = 'C:\Program Files\Dolphin\Dolphin.exe'
-# config_dir = '%APPDATA%\Dolphin Emulator'  # older installs: '~\Documents\Dolphin Emulator'
-#
-# [emulators.ryujinx]
-# binary     = 'C:\Program Files\Ryujinx\Ryujinx.exe'
-# config_dir = '%APPDATA%\Ryujinx'
-#
-# [emulators.eden]
-# binary     = 'C:\Program Files\Eden\eden.exe'
-# config_dir = '%APPDATA%\eden'
-#
-# [emulators.azahar]
-# binary     = 'C:\Program Files\Azahar\azahar.exe'
-# config_dir = '%APPDATA%\Azahar'
-#
-# Linux
-# -----
-# [emulators.duckstation]
-# binary     = "/usr/bin/duckstation-qt"
-# config_dir = "~/.local/share/duckstation"   # or $XDG_CONFIG_HOME/duckstation if set
-#
-# [emulators.mgba]
-# binary     = "/usr/bin/mgba-qt"
-# config_dir = "~/.config/mgba"
-#
-# [emulators.dolphin]
-# binary     = "/usr/bin/dolphin-emu"
-# config_dir = "~/.config/dolphin-emu"
-#
-# [emulators.ryujinx]
-# binary     = "/usr/bin/Ryujinx"
-# config_dir = "~/.config/Ryujinx"
+# `rommd detect` lists the emulators installed here; `rommd detect --save`
+# adds them to this file.
+"#;
 
-# ── Platforms ─────────────────────────────────────────────────────────────────
+/// The end of the config written on first run, after the emulators.
+const TEMPLATE_TAIL: &str = r#"# ── Platforms ─────────────────────────────────────────────────────────────────
 # Which emulator runs a platform's games when several can, by RomM platform
 # slug (switch, ngc, wii, 3ds, psx, gba, ...; `rommd search` shows them):
 # [platforms]
@@ -371,6 +322,177 @@ mode = "auto"
 # device_expr = "DSUClient/0/0"
 "#;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Os {
+    Mac,
+    Windows,
+    Linux,
+}
+
+impl Os {
+    pub fn current() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Mac
+        } else if cfg!(windows) {
+            Self::Windows
+        } else {
+            Self::Linux
+        }
+    }
+
+    fn default_roms_dir(self) -> &'static str {
+        match self {
+            Self::Mac => "~/Library/Application Support/rommd/roms",
+            Self::Windows => r"%LOCALAPPDATA%\rommd\roms",
+            Self::Linux => "~/.local/share/rommd/roms",
+        }
+    }
+
+    /// Notes before this OS's emulator examples.
+    fn examples_note(self) -> &'static str {
+        match self {
+            Self::Windows => {
+                "# Write Windows paths in single quotes: in double quotes a backslash starts\n\
+                 # an escape sequence. Portable installs keep config_dir next to the program\n\
+                 # (DuckStation and mGBA: its folder; Dolphin, Eden, Azahar: \"User\"/\"user\";\n\
+                 # Ryujinx: \"portable\").\n#\n"
+            }
+            _ => "",
+        }
+    }
+
+    /// Example entries: (emulator ID, `binary` line value, `config_dir` line
+    /// value), written as they appear in the file.
+    fn examples(self) -> &'static [(&'static str, &'static str, &'static str)] {
+        match self {
+            Self::Mac => &[
+                (
+                    "duckstation",
+                    r#""/Applications/DuckStation.app/Contents/MacOS/DuckStation""#,
+                    r#""~/Library/Application Support/DuckStation""#,
+                ),
+                (
+                    "mgba",
+                    r#""/Applications/mGBA.app/Contents/MacOS/mGBA""#,
+                    r#""~/.config/mgba""#,
+                ),
+                (
+                    "dolphin",
+                    r#""/Applications/Dolphin.app/Contents/MacOS/Dolphin""#,
+                    r#""~/Library/Application Support/Dolphin""#,
+                ),
+                (
+                    "ryujinx",
+                    r#""/Applications/Ryujinx.app/Contents/MacOS/Ryujinx""#,
+                    r#""~/Library/Application Support/Ryujinx""#,
+                ),
+                (
+                    "azahar",
+                    r#""/Applications/Azahar.app/Contents/MacOS/azahar""#,
+                    r#""~/Library/Application Support/Azahar""#,
+                ),
+            ],
+            Self::Windows => &[
+                (
+                    "duckstation",
+                    r"'C:\Program Files\DuckStation\duckstation-qt-x64-ReleaseLTCG.exe'",
+                    r"'%LOCALAPPDATA%\DuckStation'   # older installs: '~\Documents\DuckStation'",
+                ),
+                (
+                    "mgba",
+                    r"'C:\Program Files\mGBA\mGBA.exe'",
+                    r"'%APPDATA%\mGBA'",
+                ),
+                (
+                    "dolphin",
+                    r"'C:\Program Files\Dolphin\Dolphin.exe'",
+                    r"'%APPDATA%\Dolphin Emulator'  # older installs: '~\Documents\Dolphin Emulator'",
+                ),
+                (
+                    "ryujinx",
+                    r"'C:\Program Files\Ryujinx\Ryujinx.exe'",
+                    r"'%APPDATA%\Ryujinx'",
+                ),
+                (
+                    "eden",
+                    r"'C:\Program Files\Eden\eden.exe'",
+                    r"'%APPDATA%\eden'",
+                ),
+                (
+                    "azahar",
+                    r"'C:\Program Files\Azahar\azahar.exe'",
+                    r"'%APPDATA%\Azahar'",
+                ),
+            ],
+            Self::Linux => &[
+                (
+                    "duckstation",
+                    r#""/usr/bin/duckstation-qt""#,
+                    r#""~/.local/share/duckstation"   # or $XDG_CONFIG_HOME/duckstation if set"#,
+                ),
+                ("mgba", r#""/usr/bin/mgba-qt""#, r#""~/.config/mgba""#),
+                (
+                    "dolphin",
+                    r#""/usr/bin/dolphin-emu""#,
+                    r#""~/.config/dolphin-emu""#,
+                ),
+                ("ryujinx", r#""/usr/bin/Ryujinx""#, r#""~/.config/Ryujinx""#),
+            ],
+        }
+    }
+}
+
+/// The config written on first run: this OS's notes and examples, with the
+/// emulators found on this computer filled in and their examples left out.
+pub fn default_config(os: Os, found: &[crate::detect::Found]) -> String {
+    let mut text = TEMPLATE_HEAD.replace("{ROMS_DIR}", os.default_roms_dir());
+    if !found.is_empty() {
+        text.push_str("#\n# Found on this computer when this file was created:\n\n");
+        let mut doc = toml_edit::DocumentMut::new();
+        let mut emulators = toml_edit::Table::new();
+        emulators.set_implicit(true);
+        for (i, f) in found.iter().enumerate() {
+            let mut entry = crate::config_edit::entry_table(&f.binary, &f.config_dir);
+            if i > 0 {
+                entry.decor_mut().set_prefix("\n");
+            }
+            if !f.config_dir_in_use
+                && let Some(dir) = entry.get_mut("config_dir").and_then(|v| v.as_value_mut())
+            {
+                dir.decor_mut()
+                    .set_suffix(format!("  # created when {} first runs", f.name));
+            }
+            emulators.insert(f.emulator, toml_edit::Item::Table(entry));
+        }
+        doc.insert("emulators", toml_edit::Item::Table(emulators));
+        text.push_str(&doc.to_string());
+    }
+    let examples: Vec<_> = os
+        .examples()
+        .iter()
+        .filter(|(id, _, _)| !found.iter().any(|f| f.emulator == *id))
+        .collect();
+    if !examples.is_empty() {
+        text.push_str(if found.is_empty() {
+            "#\n# Examples (remove the # to use one):\n#\n"
+        } else {
+            "\n# More examples (remove the # to use one):\n#\n"
+        });
+        text.push_str(os.examples_note());
+        for (i, (id, binary, config_dir)) in examples.iter().enumerate() {
+            if i > 0 {
+                text.push_str("#\n");
+            }
+            text.push_str(&format!(
+                "# [emulators.{id}]\n# binary     = {binary}\n# config_dir = {config_dir}\n"
+            ));
+        }
+    }
+    text.push('\n');
+    text.push_str(TEMPLATE_TAIL);
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,35 +516,104 @@ mod tests {
         assert!(err.contains("single quotes"), "{err}");
     }
 
-    /// Uncomment one platform's emulator examples in the template.
-    fn template_examples(platform: &str) -> String {
-        DEFAULT_CONFIG_TEMPLATE
-            .split(&format!("# {platform}\n"))
-            .nth(1)
-            .unwrap()
-            .lines()
-            .take_while(|l| !l.starts_with("# ──") && *l != "# Linux" && *l != "# Windows")
-            .filter_map(|l| l.strip_prefix("# "))
-            .filter(|l| {
-                l.starts_with('[') || l.starts_with("binary") || l.starts_with("config_dir")
+    const ALL_OS: [Os; 3] = [Os::Mac, Os::Windows, Os::Linux];
+
+    /// The generated config with its emulator examples uncommented.
+    fn uncommented(text: &str) -> String {
+        text.lines()
+            .map(|l| match l.strip_prefix("# ") {
+                Some(rest) if rest.starts_with("[emulators.") => rest,
+                Some(rest) if rest.starts_with("binary") || rest.starts_with("config_dir") => rest,
+                _ => l,
             })
             .collect::<Vec<_>>()
             .join("\n")
     }
 
-    #[test]
-    fn template_examples_parse() {
-        for platform in ["macOS", "Windows", "Linux"] {
-            let examples = template_examples(platform);
-            let config = Config::parse(&examples, Path::new("template"))
-                .unwrap_or_else(|e| panic!("{platform}: {e:#}\n{examples}"));
-            assert!(config.emulators.len() >= 4, "{platform}: {examples}");
+    fn found(emulator: &'static str, in_use: bool) -> crate::detect::Found {
+        crate::detect::Found {
+            emulator,
+            name: "Dolphin",
+            install: PathBuf::from("/Applications/Dolphin.app"),
+            binary: PathBuf::from("/Applications/Dolphin.app/Contents/MacOS/Dolphin"),
+            config_dir: PathBuf::from("/Users/me/Library/Application Support/Dolphin"),
+            config_dir_in_use: in_use,
+            in_install_folder: true,
         }
-        let windows = Config::parse(&template_examples("Windows"), Path::new("t")).unwrap();
-        let mgba = &windows.emulators["mgba"];
+    }
+
+    #[test]
+    fn the_generated_config_has_this_os_examples_only() {
+        for os in ALL_OS {
+            let text = default_config(os, &[]);
+            let config = Config::parse(&text, Path::new("t")).unwrap();
+            assert!(
+                config.emulators.is_empty(),
+                "{os:?}: examples stay commented"
+            );
+            assert!(text.contains(os.default_roms_dir()), "{os:?}");
+            let examples = Config::parse(&uncommented(&text), Path::new("t"))
+                .unwrap_or_else(|e| panic!("{os:?}: {e:#}\n{text}"));
+            assert_eq!(examples.emulators.len(), os.examples().len(), "{os:?}");
+            for other in ALL_OS.into_iter().filter(|o| *o != os) {
+                assert!(
+                    !text.contains(other.default_roms_dir()),
+                    "{os:?} mentions {other:?}"
+                );
+            }
+        }
+        let windows = Config::parse(
+            &uncommented(&default_config(Os::Windows, &[])),
+            Path::new("t"),
+        )
+        .unwrap();
         assert_eq!(
-            mgba.binary,
+            windows.emulators["mgba"].binary,
             PathBuf::from(r"C:\Program Files\mGBA\mGBA.exe")
+        );
+    }
+
+    #[test]
+    fn the_generated_config_fills_in_the_emulators_found() {
+        let text = default_config(Os::Mac, &[found("dolphin", false), found("mgba", true)]);
+        let config = Config::parse(&text, Path::new("t")).unwrap();
+        assert_eq!(
+            config.emulators.keys().collect::<Vec<_>>(),
+            ["dolphin", "mgba"],
+            "in the order found"
+        );
+        assert_eq!(
+            config.emulators["dolphin"].binary,
+            PathBuf::from("/Applications/Dolphin.app/Contents/MacOS/Dolphin")
+        );
+        assert!(
+            text.contains("  # created when Dolphin first runs"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("# [emulators.dolphin]"),
+            "its example is left out"
+        );
+        assert!(
+            text.contains("# [emulators.ryujinx]"),
+            "other examples stay"
+        );
+        let examples = Config::parse(&uncommented(&text), Path::new("t")).unwrap();
+        assert_eq!(examples.emulators.len(), Os::Mac.examples().len());
+
+        let more = crate::config_edit::with_emulator(
+            &text,
+            Path::new("t"),
+            "azahar",
+            Path::new("/a"),
+            Path::new("/a"),
+        )
+        .unwrap();
+        let mgba_end = more.find("[emulators.mgba]").unwrap();
+        assert!(
+            more[mgba_end..].find("[emulators.azahar]").unwrap()
+                < more[mgba_end..].find("# More examples").unwrap(),
+            "detect --save adds to the same section"
         );
     }
 
