@@ -364,13 +364,16 @@ fn roms_dir(console: &mut Console<'_>, config: Option<&Config>) -> Result<Option
         return Ok(None);
     }
     let dir = crate::config::expand_path(PathBuf::from(typed));
+    if dir == current {
+        return Ok(None);
+    }
     anyhow::ensure!(
         dir.is_absolute(),
         "{} is not a full path (like {})",
         dir.display(),
         current.display()
     );
-    Ok((dir != current).then_some(dir))
+    Ok(Some(dir))
 }
 
 fn update_mode(console: &mut Console<'_>, config: Option<&Config>) -> Result<Option<UpdateMode>> {
@@ -501,13 +504,15 @@ mod tests {
 
     #[test]
     fn more_settings_are_only_changed_when_they_differ() {
+        let games = if cfg!(windows) { r"D:\Games" } else { "/games" };
         let config = Config::parse(
-            "roms_dir = '/games'\n[updates]\nmode = 'notify'\n",
+            &format!("roms_dir = '{games}'\n[updates]\nmode = 'notify'\n"),
             Path::new("c.toml"),
         )
         .unwrap();
         let mut out = Vec::new();
-        let mut c = console("\n/games\n", &mut out);
+        let input = format!("\n{games}\n");
+        let mut c = console(&input, &mut out);
         assert_eq!(roms_dir(&mut c, Some(&config)).unwrap(), None);
         assert_eq!(roms_dir(&mut c, Some(&config)).unwrap(), None);
         drop(c);
