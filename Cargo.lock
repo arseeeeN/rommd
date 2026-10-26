@@ -1480,6 +1480,7 @@ dependencies = [
  "nix",
  "notify",
  "reqwest",
+ "rpassword",
  "ruzstd",
  "self-replace",
  "semver",

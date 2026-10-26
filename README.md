@@ -64,7 +64,11 @@ irm https://github.com/arseeeeN/rommd/releases/latest/download/install.ps1 | iex
 
 The script installs the latest release (to `~/.local/bin` or
 `%LOCALAPPDATA%\Programs\rommd`), checks it against the release checksums,
-and registers rommd to start when you log in. Run it again to reinstall.
+runs `rommd setup` (below), and registers rommd to start when you log in.
+Run it again to upgrade; it doesn't ask again once rommd is set up.
+
+To install without questions, pass RomM's address and an API token in
+`ROMMD_URL` and `ROMMD_TOKEN`; `ROMMD_NO_SETUP=1` skips setup.
 
 Prefer to do it by hand? Download `rommd-<target>` (`.exe` on Windows) for
 your platform from the [releases page](https://github.com/arseeeeN/rommd/releases)
@@ -87,6 +91,13 @@ themselves to the latest release like an installed binary. To keep running
 your own build, set `mode = "off"` under `[updates]`.
 
 ## Configure
+
+`rommd setup` asks for your RomM server's address and an API token (create
+one in RomM under Settings > API Tokens), checks both against the server,
+and adds the emulators it finds on this computer (macOS and Linux so far).
+Choosing to change more settings also asks for the ROM folder and how updates
+are installed. It only changes what you answer, keeps everything else in the
+file as it is, and can be run again any time.
 
 rommd creates a commented config file on first start, with the examples for
 your OS and, on macOS, the emulators it finds in Applications already filled

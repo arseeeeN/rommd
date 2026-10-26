@@ -6,6 +6,9 @@
 # Environment:
 #   ROMMD_BIN_DIR     where to put the binary (default ~/.local/bin)
 #   ROMMD_NO_SERVICE  set to skip starting rommd at login
+#   ROMMD_URL, ROMMD_TOKEN  RomM's address and an API token, to set up
+#                     without questions (`rommd setup --yes`)
+#   ROMMD_NO_SETUP    set to skip setup
 #   ROMMD_REPO        GitHub owner/name to install from
 set -eu
 
@@ -48,6 +51,19 @@ chmod 755 "$tmp/$asset"
 mv -f "$tmp/$asset" "$bin_dir/rommd"
 echo "Installed $("$bin_dir/rommd" --version) to $bin_dir/rommd"
 
+# Before the service starts, so rommd's first start finds a complete config.
+# The script itself is read from stdin (curl | sh), so questions go to the
+# terminal; without one (CI, provisioning) setup is left for later.
+if [ -z "${ROMMD_NO_SETUP:-}" ]; then
+  if [ -n "${ROMMD_URL:-}" ] && [ -n "${ROMMD_TOKEN:-}" ]; then
+    "$bin_dir/rommd" setup --yes || exit 1
+  elif (exec </dev/tty) 2>/dev/null; then
+    echo
+    "$bin_dir/rommd" setup --if-needed </dev/tty || echo "Setup didn't finish; run 'rommd setup' to try again."
+    echo
+  fi
+fi
+
 if [ -z "${ROMMD_NO_SERVICE:-}" ]; then
   "$bin_dir/rommd" service install
 fi
@@ -56,7 +72,7 @@ case ":$PATH:" in
   *":$bin_dir:"*) ;;
   *) echo "Note: $bin_dir is not on your PATH." ;;
 esac
-echo "Configure rommd in its config file (created on first start):"
+echo "Change settings with 'rommd setup', or in the config file:"
 case "$(uname -s)" in
   Darwin) echo "  ~/Library/Application Support/rommd/config.toml" ;;
   *) echo "  ${XDG_CONFIG_HOME:-$HOME/.config}/rommd/config.toml" ;;

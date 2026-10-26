@@ -111,6 +111,8 @@ impl FakeRomm {
             .route("/api/states", get(list_states).post(add_state))
             .route("/api/states/{id}", put(update_state))
             .route("/api/states/{id}/content", get(state_content))
+            .route("/api/heartbeat", get(heartbeat))
+            .route("/api/users/me", get(me))
             .route("/api/platforms", get(list_platforms))
             .route("/api/roms", get(search_roms))
             .route("/api/roms/{id}", get(get_rom))
@@ -511,6 +513,18 @@ fn rom_json(store: &Store, r: &FakeRom) -> serde_json::Value {
         "platform_id": p.id, "platform_slug": p.slug, "platform_fs_slug": p.fs_slug,
         "platform_display_name": p.name,
     })
+}
+
+async fn heartbeat() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "SYSTEM": { "VERSION": "5.2.0" } }))
+}
+
+/// Only the token the fake's own client uses is accepted.
+async fn me(headers: axum::http::HeaderMap) -> StatusCode {
+    match headers.get("authorization") {
+        Some(v) if v == "Bearer test" => StatusCode::OK,
+        _ => StatusCode::UNAUTHORIZED,
+    }
 }
 
 async fn list_platforms(State(store): State<Shared>) -> Json<serde_json::Value> {

@@ -30,6 +30,7 @@ md-5 = "0.10"
 utoipa = { version = "5", features = ["indexmap"] }
 clap = { version = "4", features = ["derive"] }
 semver = "1"
+rpassword = "7"
 minisign-verify = "0.2"
 notify = "8"
 ruzstd = { version = "0.9", default-features = false, features = ["std"] }

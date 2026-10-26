@@ -16,6 +16,7 @@ mod romm;
 mod save_archive;
 mod server;
 mod service;
+mod setup;
 mod switch;
 mod sync;
 #[cfg(test)]
@@ -59,6 +60,18 @@ enum Command {
         limit: u32,
         #[arg(required = true, num_args = 1.., value_name = "QUERY")]
         query: Vec<String>,
+    },
+    /// Connect rommd to RomM and add the emulators found here, by answering
+    /// a few questions. Changes only what you answer; run it again any time.
+    Setup {
+        /// Ask nothing: RomM's address and API token come from ROMMD_URL and
+        /// ROMMD_TOKEN (or stay as configured), emulators found in the
+        /// install folders are added, everything else keeps its default.
+        #[arg(long)]
+        yes: bool,
+        /// Do nothing if the config already has RomM settings.
+        #[arg(long)]
+        if_needed: bool,
     },
     /// List the emulators installed on this computer and where their data
     /// is, next to what the config says. Doesn't need rommd running.
@@ -113,6 +126,9 @@ fn main() -> Result<()> {
     match cli.command {
         Some(Command::Search { limit, query }) => {
             tokio::runtime::Runtime::new()?.block_on(cli::search(&query, limit))
+        }
+        Some(Command::Setup { yes, if_needed }) => {
+            tokio::runtime::Runtime::new()?.block_on(setup::run(setup::Options { yes, if_needed }))
         }
         Some(Command::Detect { path, save }) => {
             cli::detect(&emulator::all(), path.as_deref(), save)

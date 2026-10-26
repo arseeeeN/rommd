@@ -50,6 +50,13 @@ impl RommClient {
     /// Returns its version. Run at startup, so a wrong address or token shows
     /// up in the log instead of only when a game is launched.
     pub async fn check(&self) -> Result<String> {
+        let version = self.server_version().await?;
+        self.check_login(&version).await?;
+        Ok(version)
+    }
+
+    /// The RomM version at `base_url`, or why it isn't a RomM server.
+    pub async fn server_version(&self) -> Result<String> {
         let url = format!("{}/api/heartbeat", self.base_url);
         let response = self
             .client
@@ -71,7 +78,11 @@ impl RommClient {
             .as_str()
             .unwrap_or("of unknown version")
             .to_owned();
+        Ok(version)
+    }
 
+    /// Whether RomM accepts the credentials.
+    pub async fn check_login(&self, version: &str) -> Result<()> {
         let token = self
             .tokens
             .get_token()
@@ -90,7 +101,7 @@ impl RommClient {
             version,
             me.status()
         );
-        Ok(version)
+        Ok(())
     }
 
     // ── ROM ──────────────────────────────────────────────────────────────────

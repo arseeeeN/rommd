@@ -282,6 +282,59 @@ Not covered yet, roughly by likely demand:
 
 Next: Windows detection.
 
+**Windows (notes for whoever builds it; nothing here is verified on a
+Windows machine yet):**
+- Why it matters now: `rommd setup` (run by `install.ps1`) adds the
+  emulators `detect` finds, and on Windows it can only tell the user to edit
+  the config by hand (`detect::supported()` is false there). The first
+  outside tester is on Windows 10, so this is the step that makes the
+  install painless. Once detection works, flip `supported()` and the setup
+  message goes away by itself.
+- Shape: like `mac_app` / `linux_app`, a `windows_app()` on the `Emulator`
+  trait (`None` = not detected) and a `src/detect/windows.rs` next to
+  `mac.rs` / `linux.rs`, producing the same `Found`.
+- Identity from the file, never by running it: the `.exe`'s version
+  resource (`VS_VERSIONINFO` → `StringFileInfo`: `ProductName`,
+  `OriginalFilename`, `CompanyName`), read statically from the PE (a small
+  parser or a pure-Rust crate such as `pelite`). Check what each emulator
+  really carries; Qt and .NET builds may differ, and a fork (Eden from
+  yuzu) may keep its parent's names, so it may need the exe name too, like
+  Eden's macOS bundle ID.
+- Where to look (all to be checked): uninstall entries in the registry
+  (`HKCU` and `HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\*`:
+  `InstallLocation`, `DisplayIcon`; needs windows-sys
+  `Win32_System_Registry`) for installer-based emulators (mGBA; Dolphin and
+  Azahar offer installers too); `Program Files`, `%LOCALAPPDATA%\Programs`;
+  Scoop (`~\scoop\apps\<app>\current`); winget portable packages
+  (`%LOCALAPPDATA%\Microsoft\WinGet\Packages`, links in `…\WinGet\Links`);
+  Start Menu shortcuts (`.lnk` in `%APPDATA%` and `%ProgramData%\Microsoft\
+  Windows\Start Menu\Programs`) for portable installs someone pinned; the
+  CLI and setup also look in Desktop, Downloads and Documents, a level or
+  two down (an extracted zip is a folder holding the exe). EmuDeck for
+  Windows has its own layout, worth a look.
+- "Installed" needs a Windows meaning. DuckStation, Ryujinx and Eden mostly
+  ship as zips with no installer and no standard place, so "outside the
+  install folders → move it first" (setup and `detect --save` skip those)
+  would skip most Windows installs. Suggestion: treat everything as
+  installed except Downloads, Desktop and temp folders, and suggest
+  `%LOCALAPPDATA%\Programs\<Emulator>` as the place to move to.
+- Data dirs, as the `config_dir_hint`s already describe (to verify):
+  Dolphin `%APPDATA%\Dolphin Emulator` (older: `Documents\Dolphin
+  Emulator`; portable: `User\` next to the exe when `portable.txt` is
+  there); DuckStation `%LOCALAPPDATA%\DuckStation` (`Documents\DuckStation`
+  if that existed first; the exe's folder with `portable.txt`); Ryujinx
+  `%APPDATA%\Ryujinx` (`portable\` next to the exe); mGBA `%APPDATA%\mGBA`
+  (the exe's folder with `portable.ini`); Azahar `%APPDATA%\Azahar`
+  (`user\` next to the exe); Eden probably `%APPDATA%\eden` (`user\` next
+  to the exe). A portable marker beside the exe wins over AppData, and the
+  usual `config_dir_markers` check applies.
+- Paths are written as single-quoted literal strings (`config_edit` already
+  does this for backslashes), not `~`; `%APPDATA%` stays expanded.
+- Tests run on the Windows CI runner: build a minimal PE with a version
+  resource in the test rather than committing emulator binaries.
+- After it works: a real `install.ps1` run on Windows 10 (PowerShell 5.1),
+  with `rommd setup` adding what was found, is the test that matters.
+
 **How far to look** (decided): known install locations; the OS's own index
 where it identifies apps (macOS Spotlight by bundle ID, ~30 ms a query); a
 path the user names (`rommd detect <path>`, the same hint-and-verify check as
@@ -351,6 +404,11 @@ identified by the bundle identifier in `Contents/Info.plist`; Linux packages
 Files, `%LOCALAPPDATA%`, Scoop, winget.
 
 ## Guided setup: `rommd setup`, run by the install scripts
+
+**Done** as planned below, except: emulators are confirmed all at once, not
+one by one; and on Windows setup can't add emulators yet, since detection
+covers only macOS and Linux (see "Emulator auto-detection"). The install
+scripts are untested on a real install (Windows PowerShell 5 especially).
 
 Today the installer drops the binary, installs the service, and the daemon
 writes a default config on its first start; the user then has to find

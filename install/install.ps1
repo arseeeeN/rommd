@@ -3,7 +3,9 @@
 #   irm https://github.com/arseeeeN/rommd/releases/latest/download/install.ps1 | iex
 #
 # Environment: ROMMD_NO_SERVICE to skip starting at login, ROMMD_REPO to
-# install from another GitHub owner/name.
+# install from another GitHub owner/name, ROMMD_URL and ROMMD_TOKEN (RomM's
+# address and an API token) to set up without questions, ROMMD_NO_SETUP to
+# skip setup.
 $ErrorActionPreference = 'Stop'
 
 $repo = if ($env:ROMMD_REPO) { $env:ROMMD_REPO } else { 'arseeeeN/rommd' }
@@ -53,11 +55,26 @@ try {
         Write-Host "Added $dir to your PATH (open a new terminal to use it)."
     }
 
+    # Before the service starts, so rommd's first start finds a complete
+    # config. Without a console to ask in, setup is left for later.
+    if (-not $env:ROMMD_NO_SETUP) {
+        if ($env:ROMMD_URL -and $env:ROMMD_TOKEN) {
+            & $exe setup --yes
+            if ($LASTEXITCODE -ne 0) { throw 'setup failed; check ROMMD_URL and ROMMD_TOKEN' }
+        }
+        elseif ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+            Write-Host ''
+            & $exe setup --if-needed
+            if ($LASTEXITCODE -ne 0) { Write-Warning "Setup didn't finish; run 'rommd setup' to try again." }
+            Write-Host ''
+        }
+    }
+
     if (-not $env:ROMMD_NO_SERVICE) {
         & $exe service install
         if ($LASTEXITCODE -ne 0) { Write-Warning "rommd is installed but does not start at login; run 'rommd service install' to retry." }
     }
-    Write-Host "Configure rommd in $config (created on first start)."
+    Write-Host "Change settings with 'rommd setup' (in a new terminal), or in $config."
 }
 finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

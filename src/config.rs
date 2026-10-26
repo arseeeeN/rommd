@@ -205,7 +205,7 @@ pub fn default_roms_dir() -> PathBuf {
         .join("roms")
 }
 
-fn expand_path(path: PathBuf) -> PathBuf {
+pub fn expand_path(path: PathBuf) -> PathBuf {
     let s = match path.to_str() {
         Some(s) => s,
         None => return path,
