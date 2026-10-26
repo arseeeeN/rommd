@@ -68,6 +68,7 @@ impl LaunchCommand {
         self
     }
 
+    #[cfg_attr(windows, allow(dead_code))] // only mGBA, which takes options on Windows
     pub fn env(&mut self, name: &'static str, value: impl AsRef<OsStr>) -> &mut Self {
         debug_assert!(
             Self::ENV.contains(&name),
