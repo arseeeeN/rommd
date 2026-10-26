@@ -2,6 +2,10 @@
 //! downloads instead of holding the request open (browsers give up on a
 //! response after a few minutes). Clients follow a launch through
 //! `GET /launches/{id}` and cancel its download with `DELETE /launches/{id}`.
+//!
+//! An attached launch stops at `Ready` with the emulator command, which the
+//! client (`rommd play --attach`) runs itself and reports with
+//! `POST /launches/{id}/attached`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -9,6 +13,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use tokio::sync::oneshot;
+
+use crate::emulator::LaunchCommand;
 use crate::romm::Transfer;
 
 /// Finished launches stay listed this long, so a client polling every few
@@ -27,6 +34,11 @@ pub enum LaunchState {
     },
     /// The ROM is there; saves are synced and the emulator started.
     Starting,
+    /// Attached launch: saves are synced and the game is waiting for the
+    /// client to run `command` and report it.
+    Ready {
+        command: LaunchCommand,
+    },
     Started {
         pid: u32,
     },
@@ -49,9 +61,29 @@ pub struct LaunchInfo {
 /// Where a launch is; `Fetching` covers both `Preparing` and `Downloading`,
 /// told apart by the transfer's progress.
 enum Phase {
-    Fetching { cancel_requested: bool },
+    Fetching {
+        cancel_requested: bool,
+    },
     Starting,
+    Ready {
+        command: LaunchCommand,
+        report: Option<oneshot::Sender<Attached>>,
+    },
     Done(LaunchState, Instant),
+}
+
+/// What the client of an attached launch reports.
+#[derive(Debug)]
+pub enum Attached {
+    Started { pid: u32 },
+    Failed { error: String },
+}
+
+pub enum Attach {
+    Reported,
+    NotFound,
+    /// Not waiting for a report: not attached, not ready yet, or reported.
+    NotWaiting,
 }
 
 struct Entry {
@@ -77,6 +109,9 @@ impl Entry {
                 }
             }
             Phase::Starting => LaunchState::Starting,
+            Phase::Ready { command, .. } => LaunchState::Ready {
+                command: command.clone(),
+            },
             Phase::Done(state, _) => state.clone(),
         };
         LaunchInfo {
@@ -162,6 +197,40 @@ impl Launches {
         }
     }
 
+    /// Wait for the client to run `command`. The receiver fails when the
+    /// launch is gone.
+    pub fn to_ready(&self, id: u64, command: LaunchCommand) -> oneshot::Receiver<Attached> {
+        let (report, reported) = oneshot::channel();
+        if let Some(e) = self.entries.lock().unwrap().get_mut(&id) {
+            e.phase = Phase::Ready {
+                command,
+                report: Some(report),
+            };
+        }
+        reported
+    }
+
+    /// The client's report on an attached launch: the game runs, or it
+    /// couldn't start it.
+    pub fn attach(&self, id: u64, attached: Attached) -> Attach {
+        let mut entries = self.entries.lock().unwrap();
+        let Some(e) = entries.get_mut(&id) else {
+            return Attach::NotFound;
+        };
+        match &mut e.phase {
+            Phase::Ready { report, .. } => {
+                match report.take().map(|report| report.send(attached)) {
+                    Some(Ok(())) => {
+                        e.phase = Phase::Starting;
+                        Attach::Reported
+                    }
+                    _ => Attach::NotWaiting,
+                }
+            }
+            _ => Attach::NotWaiting,
+        }
+    }
+
     pub fn finish(&self, id: u64, state: LaunchState) {
         if let Some(e) = self.entries.lock().unwrap().get_mut(&id) {
             e.phase = Phase::Done(state, Instant::now());
@@ -181,7 +250,7 @@ impl Launches {
                 Cancel::Cancelled
             }
             Phase::Done(LaunchState::Cancelled, _) => Cancel::Cancelled,
-            Phase::Starting | Phase::Done(..) => Cancel::TooLate,
+            Phase::Starting | Phase::Ready { .. } | Phase::Done(..) => Cancel::TooLate,
         }
     }
 
@@ -279,5 +348,47 @@ mod tests {
         assert!(launches.to_starting(other));
         assert!(matches!(launches.cancel(other), Cancel::TooLate));
         assert!(matches!(launches.cancel(999), Cancel::NotFound));
+    }
+
+    #[test]
+    fn an_attached_launch_takes_one_report_while_ready() {
+        let launches = Launches::default();
+        let id = launches
+            .begin(5, "Odyssey", "ryujinx", &Transfer::default())
+            .unwrap();
+        assert!(
+            matches!(
+                launches.attach(id, Attached::Started { pid: 1 }),
+                Attach::NotWaiting
+            ),
+            "not ready yet"
+        );
+        assert!(launches.to_starting(id));
+        let command = LaunchCommand::new(std::path::Path::new("/bin/ryujinx"));
+        let mut reported = launches.to_ready(id, command.clone());
+        assert_eq!(
+            launches.info(id).unwrap().state,
+            LaunchState::Ready { command }
+        );
+        assert!(matches!(launches.cancel(id), Cancel::TooLate));
+        assert!(launches.busy(), "an update must wait for it");
+
+        assert!(matches!(
+            launches.attach(id, Attached::Started { pid: 42 }),
+            Attach::Reported
+        ));
+        assert!(matches!(
+            reported.try_recv(),
+            Ok(Attached::Started { pid: 42 })
+        ));
+        assert_eq!(launches.info(id).unwrap().state, LaunchState::Starting);
+        assert!(matches!(
+            launches.attach(id, Attached::Started { pid: 43 }),
+            Attach::NotWaiting
+        ));
+        assert!(matches!(
+            launches.attach(999, Attached::Started { pid: 1 }),
+            Attach::NotFound
+        ));
     }
 }

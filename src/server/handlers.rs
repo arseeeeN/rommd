@@ -1,3 +1,4 @@
+use anyhow::Context;
 use axum::{
     extract::{Json, State},
     http::StatusCode,
@@ -12,7 +13,7 @@ use super::state::AppState;
 use super::types::*;
 use crate::config::ControllerConfig;
 use crate::error::AppError;
-use crate::launches::{Cancel, LaunchInfo, LaunchState};
+use crate::launches::{Attach, Attached, Cancel, LaunchInfo, LaunchState};
 use crate::process::{GameProcess, ProcessTree, monitor};
 use crate::romm::Transfer;
 use crate::sync::{self, ConflictRecord, SyncCtx};
@@ -66,7 +67,8 @@ fn emulator_list(state: &AppState) -> Vec<EmulatorInfo> {
         (status = 201, description = "Game started", body = LaunchResponse),
         (status = 202, description = "The ROM is downloading; the game starts when it is done. \
             Follow it with `GET /launches/{id}`, cancel it with `DELETE /launches/{id}`. Also \
-            returned for a ROM that another launch is still fetching.", body = LaunchResponse),
+            returned for a ROM that another launch is still fetching, and at once for an \
+            attached launch.", body = LaunchResponse),
         (status = 500, description = "Launch failed")
     )
 )]
@@ -145,7 +147,16 @@ pub async fn launch(
         romm,
         transfer: transfer.clone(),
     };
+    let attach = launch.req.attach;
     let mut task = tokio::spawn(launch.run());
+    if attach {
+        let response = LaunchResponse {
+            launch_id: id,
+            pid: None,
+            emulator: emulator_id,
+        };
+        return Ok((StatusCode::ACCEPTED, Json(response)));
+    }
     // A ROM that is already here starts within seconds, so answer with the
     // PID. A download can take far longer than a browser waits for a response
     // (Firefox: 5 minutes), so then answer at once.
@@ -252,20 +263,26 @@ impl Launch {
             None => Default::default(),
         };
 
-        let (child, launch_ctx) = emulator
-            .launch(
+        let (command, launch_ctx) = emulator
+            .command(
                 emu_config,
                 &rom_path,
                 game_id.as_deref(),
                 req.profile.as_ref(),
             )
             .await?;
-
-        let tree = ProcessTree::new(&child)
-            .ok_or_else(|| anyhow::anyhow!("process exited immediately"))?;
-        let pid = child
-            .id()
-            .ok_or_else(|| anyhow::anyhow!("process exited immediately"))?;
+        let started = if req.attach {
+            attached(&state, id, command).await
+        } else {
+            spawned(&command, emulator.display_name())
+        };
+        let (pid, child, tree) = match started {
+            Ok(started) => started,
+            Err(e) => {
+                launch_ctx.clean_up().await;
+                return Err(e);
+            }
+        };
         let started_at = SystemTime::now();
         info!("launched {} pid={} rom_id={}", emulator_id, pid, req.rom_id);
 
@@ -298,6 +315,43 @@ impl Launch {
         );
         Ok(pid)
     }
+}
+
+/// How long an attached launch waits for its client to start the game.
+const ATTACH_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+fn spawned(
+    command: &crate::emulator::LaunchCommand,
+    name: &str,
+) -> anyhow::Result<(u32, Option<tokio::process::Child>, ProcessTree)> {
+    let child = command
+        .spawn()
+        .with_context(|| format!("starting {name} from {}", command.program.display()))?;
+    let exited = || anyhow::anyhow!("{name} exited immediately");
+    let tree = ProcessTree::new(&child).ok_or_else(exited)?;
+    let pid = child.id().ok_or_else(exited)?;
+    Ok((pid, Some(child), tree))
+}
+
+/// Hand `command` to the client of an attached launch and wait for it to
+/// report the game's PID.
+async fn attached(
+    state: &AppState,
+    id: u64,
+    command: crate::emulator::LaunchCommand,
+) -> anyhow::Result<(u32, Option<tokio::process::Child>, ProcessTree)> {
+    let reported = state.launches.to_ready(id, command);
+    let pid = match tokio::time::timeout(ATTACH_WAIT, reported).await {
+        Ok(Ok(Attached::Started { pid })) => pid,
+        Ok(Ok(Attached::Failed { error })) => anyhow::bail!("{error}"),
+        Ok(Err(_)) => anyhow::bail!("the launch is gone"),
+        Err(_) => anyhow::bail!(
+            "nothing started the game within {} s of it being ready",
+            ATTACH_WAIT.as_secs()
+        ),
+    };
+    let tree = ProcessTree::attach(pid)?;
+    Ok((pid, None, tree))
 }
 
 /// Keep the computer from idle sleep once bytes flow, until the returned
@@ -370,6 +424,53 @@ pub async fn cancel_launch(
             Json(serde_json::json!({
                 "error": "the ROM is already there; the game is starting or has started"
             })),
+        )
+            .into_response(),
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/launches/{id}/attached",
+    params(("id" = u64, Path, description = "From the `POST /launch` response")),
+    request_body = AttachedRequest,
+    responses(
+        (status = 204, description = "Reported; the launch goes on to `started` (or `failed` \
+            when the PID can't be tracked)"),
+        (status = 403, description = "Sent from a web page; only local programs attach"),
+        (status = 404, description = "No launch with this ID in the last few minutes"),
+        (status = 409, description = "The launch is not waiting for a report: not attached, \
+            not `ready` yet, or already reported")
+    )
+)]
+/// The client of an attached launch started the game (or couldn't). Only for
+/// programs, not web pages: the daemon would track, and could stop, any
+/// process a page named.
+pub async fn attached_launch(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<u64>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<AttachedRequest>,
+) -> Response {
+    if headers.contains_key(axum::http::header::ORIGIN) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "only local programs can attach to a launch" })),
+        )
+            .into_response();
+    }
+    let report = match req {
+        AttachedRequest { pid: Some(pid), .. } => Attached::Started { pid },
+        AttachedRequest { error, .. } => Attached::Failed {
+            error: error.unwrap_or_else(|| "the game could not be started".into()),
+        },
+    };
+    match state.launches.attach(id, report) {
+        Attach::Reported => StatusCode::NO_CONTENT.into_response(),
+        Attach::NotFound => not_found(id),
+        Attach::NotWaiting => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "this launch is not waiting for a game to start" })),
         )
             .into_response(),
     }
@@ -767,5 +868,132 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cancel.status(), StatusCode::CONFLICT);
+    }
+
+    async fn wait_for_state(http: &reqwest::Client, base: &str, id: u64, state: &str) -> Value {
+        let mut info = Value::Null;
+        for _ in 0..100 {
+            info = get(http, format!("{base}/launches/{id}")).await;
+            if info["state"] == state {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        info
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn an_attached_launch_hands_over_the_command_and_tracks_the_game_it_reports() {
+        let fake = FakeRomm::start().await;
+        fake.seed_platform(22, "switch", "switch", "Nintendo Switch");
+        fake.seed_rom(5, "Odyssey", 22);
+        let dir = TempDir::new("launch-attached");
+        let rom = dir.path().join("roms/switch/Odyssey.bin");
+        crate::testing::write(&rom, b"rom");
+        let base = rommd(&dir, &fake).await;
+        let http = reqwest::Client::new();
+
+        let response = http
+            .post(format!("{base}/launch"))
+            .json(&json!({ "rom_id": 5, "attach": true }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let id = response.json::<Value>().await.unwrap()["launch_id"]
+            .as_u64()
+            .unwrap();
+        let info = wait_for_state(&http, &base, id, "ready").await;
+        assert_eq!(info["state"], "ready", "{info}");
+        let command: crate::emulator::LaunchCommand =
+            serde_json::from_value(info["command"].clone()).unwrap();
+        assert_eq!(command.program, dir.path().join("no-ryujinx"));
+        assert_eq!(command.args, [rom.display().to_string()]);
+        assert!(
+            get(&http, format!("{base}/status")).await["running"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "the daemon starts nothing itself"
+        );
+
+        // The client runs the command; a stand-in game that ends by itself.
+        let mut game = crate::emulator::LaunchCommand::new(std::path::Path::new("sleep"));
+        game.arg("1");
+        let mut child = game.spawn().unwrap();
+        let pid = child.id().unwrap();
+        let report = |origin: Option<&str>| {
+            let mut request = http
+                .post(format!("{base}/launches/{id}/attached"))
+                .json(&json!({ "pid": pid }));
+            if let Some(origin) = origin {
+                request = request.header("Origin", origin);
+            }
+            request.send()
+        };
+        let from_page = report(Some(fake.base_url())).await.unwrap();
+        assert_eq!(
+            from_page.status(),
+            StatusCode::FORBIDDEN,
+            "web pages can't attach"
+        );
+        assert_eq!(report(None).await.unwrap().status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            report(None).await.unwrap().status(),
+            StatusCode::CONFLICT,
+            "one report per launch"
+        );
+
+        let info = wait_for_state(&http, &base, id, "started").await;
+        assert_eq!(info["pid"], pid, "{info}");
+        let running = get(&http, format!("{base}/status")).await["running"].clone();
+        assert_eq!(running[0]["pid"], pid, "{running}");
+
+        child.wait().await.unwrap();
+        let mut running = Value::Null;
+        for _ in 0..50 {
+            running = get(&http, format!("{base}/status")).await["running"].clone();
+            if running.as_array().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            running,
+            json!([]),
+            "the game's end is noticed without a child handle"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_attached_launch_fails_when_its_client_reports_a_failure() {
+        let fake = FakeRomm::start().await;
+        fake.seed_platform(22, "switch", "switch", "Nintendo Switch");
+        fake.seed_rom(5, "Odyssey", 22);
+        let dir = TempDir::new("launch-attached-failed");
+        crate::testing::write(&dir.path().join("roms/switch/Odyssey.bin"), b"rom");
+        let base = rommd(&dir, &fake).await;
+        let http = reqwest::Client::new();
+        let response: Value = http
+            .post(format!("{base}/launch"))
+            .json(&json!({ "rom_id": 5, "attach": true }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let id = response["launch_id"].as_u64().unwrap();
+        wait_for_state(&http, &base, id, "ready").await;
+        let report = http
+            .post(format!("{base}/launches/{id}/attached"))
+            .json(&json!({ "error": "no such file" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(report.status(), StatusCode::NO_CONTENT);
+        let info = wait_for_state(&http, &base, id, "failed").await;
+        assert_eq!(info["error"], "no such file", "{info}");
     }
 }

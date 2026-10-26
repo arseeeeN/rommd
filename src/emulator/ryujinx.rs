@@ -2,10 +2,9 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::process::Child;
 use tracing::{debug, info};
 
-use super::{CreateDir, Emulator, GameSaveDir, LaunchContext, SaveLayout, SaveSet};
+use super::{CreateDir, Emulator, GameSaveDir, LaunchCommand, LaunchContext, SaveLayout, SaveSet};
 use crate::config::EmulatorConfig;
 use crate::profile::ProfileBlob;
 
@@ -87,18 +86,16 @@ impl Emulator for Ryujinx {
         }
     }
 
-    async fn launch(
+    async fn command(
         &self,
         config: &EmulatorConfig,
         rom_path: &Path,
         _game_id: Option<&str>,
         _profile: Option<&ProfileBlob>,
-    ) -> Result<(Child, LaunchContext)> {
-        let child = super::emulator_command(&config.binary)
-            .arg(rom_path)
-            .spawn()
-            .with_context(|| format!("spawning Ryujinx from {}", config.binary.display()))?;
-        Ok((child, LaunchContext::default()))
+    ) -> Result<(LaunchCommand, LaunchContext)> {
+        let mut command = LaunchCommand::new(&config.binary);
+        command.arg(rom_path);
+        Ok((command, LaunchContext::default()))
     }
 
     async fn snapshot(&self, _config: &EmulatorConfig, _game_id: &str) -> Result<ProfileBlob> {

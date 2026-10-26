@@ -103,10 +103,12 @@ impl ProcessManager {
 }
 
 /// Spawn a background task that waits for the game to exit, then syncs
-/// saves/states to RomM and cleans up any launch artifacts.
+/// saves/states to RomM and cleans up any launch artifacts. `child` is `None`
+/// for an attached launch, whose emulator is another process's child; its
+/// process tree is all there is to wait for.
 pub fn monitor(
     pid: u32,
-    mut child: Child,
+    child: Option<Child>,
     manager: ProcessManager,
     romm: Option<Arc<RommClient>>,
     emulator: Arc<dyn Emulator>,
@@ -114,26 +116,28 @@ pub fn monitor(
     store: Arc<SyncStore>,
 ) {
     tokio::spawn(async move {
-        match child.wait().await {
-            Ok(status) => info!("game pid={} exited: {}", pid, status),
-            Err(e) => warn!("error waiting for pid={}: {}", pid, e),
-        }
+        let mut child = child;
         let tree = manager.inner.lock().await.get(&pid).map(|g| g.tree.clone());
-        if let Some(tree) = tree {
-            tree.wait().await;
+        match &mut child {
+            Some(child) => {
+                match child.wait().await {
+                    Ok(status) => info!("game pid={} exited: {}", pid, status),
+                    Err(e) => warn!("error waiting for pid={}: {}", pid, e),
+                }
+                if let Some(tree) = tree {
+                    tree.wait().await;
+                }
+            }
+            None => {
+                if let Some(tree) = tree {
+                    tree.wait_until_gone().await;
+                }
+                info!("game pid={} exited", pid);
+            }
         }
 
         if let Some(game) = manager.remove(pid).await {
-            for path in &game.launch_ctx.temp_files {
-                if let Err(e) = tokio::fs::remove_file(path).await {
-                    warn!("could not remove temp file {}: {}", path.display(), e);
-                }
-            }
-            for dir in &game.launch_ctx.temp_dirs {
-                if let Err(e) = tokio::fs::remove_dir_all(dir).await {
-                    warn!("could not remove temp dir {}: {}", dir.display(), e);
-                }
-            }
+            game.launch_ctx.clean_up().await;
 
             if let Some(romm) = romm {
                 let ctx = SyncCtx {
@@ -163,8 +167,8 @@ pub fn monitor(
 /// can exit before the emulator does (a uruntime AppImage parent that was
 /// killed), and syncing then would read saves the emulator may still write.
 ///
-/// On Unix this is the process group `emulator_command` makes the emulator
-/// lead. On Windows it is a job object the emulator joins right after it is
+/// On Unix this is the process group `LaunchCommand::spawn` makes the
+/// emulator lead. On Windows it is a job object the emulator joins right after it is
 /// spawned; the job does not kill its processes when rommd exits, so games
 /// keep running across a rommd restart.
 #[derive(Debug)]
@@ -196,7 +200,36 @@ impl ProcessTree {
         })
     }
 
-    /// Wait until no process of the tree is left.
+    /// The tree of a game another process started (`rommd play --attach`).
+    /// On Unix `pid` must lead its process group, as `LaunchCommand::spawn`
+    /// makes it, or the group could be the starter's own. On Windows the
+    /// process joins a job here, so whatever it started before is not
+    /// tracked; its starter's job (if any) still is.
+    pub fn attach(pid: u32) -> anyhow::Result<Self> {
+        #[cfg(unix)]
+        {
+            let p = nix::unistd::Pid::from_raw(pid as i32);
+            let group = nix::unistd::getpgid(Some(p))
+                .map_err(|e| anyhow::anyhow!("no process {pid} to track: {e}"))?;
+            anyhow::ensure!(
+                group == p,
+                "process {pid} does not lead its own process group"
+            );
+            Ok(Self { pid })
+        }
+        #[cfg(windows)]
+        {
+            let job = job::Job::with_pid(pid)
+                .map_err(|e| anyhow::anyhow!("cannot track process {pid}: {e}"))?;
+            Ok(Self {
+                pid,
+                job: Some(job),
+            })
+        }
+    }
+
+    /// Wait until no process of the tree is left, once its first process
+    /// has exited.
     pub async fn wait(&self) {
         let mut logged = false;
         while self.alive() {
@@ -207,6 +240,13 @@ impl ProcessTree {
                 );
                 logged = true;
             }
+            tokio::time::sleep(TREE_POLL).await;
+        }
+    }
+
+    /// Wait until no process of the tree is left.
+    pub async fn wait_until_gone(&self) {
+        while self.alive() {
             tokio::time::sleep(TREE_POLL).await;
         }
     }
@@ -313,6 +353,30 @@ mod job {
                 return Err(std::io::Error::last_os_error());
             }
             Ok(job)
+        }
+
+        /// The job of a process that is already running, found by its ID.
+        pub fn with_pid(pid: u32) -> std::io::Result<Self> {
+            use windows_sys::Win32::System::Threading::{
+                OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA,
+                PROCESS_TERMINATE,
+            };
+            // SAFETY: plain Win32 call; a null result is an error.
+            let process = unsafe {
+                OpenProcess(
+                    PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+                    0,
+                    pid,
+                )
+            };
+            if process.is_null() {
+                return Err(std::io::Error::last_os_error());
+            }
+            let job = Self::with_process(process as RawHandle);
+            // SAFETY: the handle was opened above and is closed once; the job
+            // keeps its own reference to the process.
+            unsafe { CloseHandle(process) };
+            job
         }
 
         pub fn active_processes(&self) -> u32 {

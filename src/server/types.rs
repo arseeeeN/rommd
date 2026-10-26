@@ -22,6 +22,23 @@ pub struct LaunchRequest {
     #[allow(dead_code)]
     // accepted ahead of wiring to emulator configs (dev/controller-design.md)
     pub controller_slots: Option<Vec<ControllerSlot>>,
+    /// Don't start the emulator: once the ROM is there and the saves are
+    /// synced, the launch waits in state `ready` with the command, which the
+    /// client runs as its own child and reports with
+    /// `POST /launches/{id}/attached` (`rommd play --attach`, for Steam's
+    /// Game Mode). Answered with 202 at once.
+    #[serde(default)]
+    pub attach: bool,
+}
+
+/// Exactly one of `pid` and `error`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct AttachedRequest {
+    /// The emulator the client started; it must lead its own process group
+    /// on Unix.
+    pub pid: Option<u32>,
+    /// Why the client could not start it.
+    pub error: Option<String>,
 }
 
 /// Binds a locally configured physical controller to an emulator slot.

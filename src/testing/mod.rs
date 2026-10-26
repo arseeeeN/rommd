@@ -7,10 +7,9 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
-use tokio::process::Child;
 
 use crate::config::EmulatorConfig;
-use crate::emulator::{Emulator, LaunchContext, SaveLayout};
+use crate::emulator::{Emulator, LaunchCommand, LaunchContext, SaveLayout};
 use crate::profile::ProfileBlob;
 
 /// An emulator that only has an identity; tests hand the sync engine a
@@ -34,13 +33,13 @@ impl Emulator for TestEmulator {
         &[]
     }
 
-    async fn launch(
+    async fn command(
         &self,
         _config: &EmulatorConfig,
         _rom_path: &Path,
         _game_id: Option<&str>,
         _profile: Option<&ProfileBlob>,
-    ) -> Result<(Child, LaunchContext)> {
+    ) -> Result<(LaunchCommand, LaunchContext)> {
         unimplemented!("test emulators are never launched")
     }
 

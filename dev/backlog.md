@@ -197,7 +197,13 @@ rommd's user service (not part of the login session) take one; desktops that
 manage idle sleep themselves (GNOME, KDE) may also need the session's
 `org.freedesktop.ScreenSaver.Inhibit`.
 
-**3. Attached launches for gamescope.** As far as known, gamescope shows and
+**3. Attached launches for gamescope (done: `rommd play --attach`; verified on
+macOS, including the CLI being killed outright; untested in Game Mode).** To
+check on a Deck: that gamescope shows and focuses the emulator, that Steam
+Input applies, what "Exit game" sends (SIGTERM is forwarded as a stop; with
+SIGKILL the emulator, in its own process group, keeps running, tracked by the
+daemon, so whether Steam's reaper kills the whole tree matters), and that
+Flatpak emulators behave the same. As far as known, gamescope shows and
 focuses the windows of the process tree Steam launched; an emulator started
 by rommd's background service is outside it (likely hidden behind Steam's UI,
 without controller focus) and misses Steam's environment (Steam Input's

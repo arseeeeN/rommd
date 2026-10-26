@@ -77,6 +77,11 @@ enum Command {
         /// Play the best match without asking.
         #[arg(long)]
         first: bool,
+        /// Start the emulator from this process and wait until the game
+        /// ends, instead of the daemon starting it. For Steam shortcuts: in
+        /// Game Mode, Steam only shows and controls games it started.
+        #[arg(long)]
+        attach: bool,
         #[arg(required = true, num_args = 1.., value_name = "QUERY")]
         query: Vec<String>,
     },
@@ -112,9 +117,11 @@ fn main() -> Result<()> {
         Some(Command::Detect { path, save }) => {
             cli::detect(&emulator::all(), path.as_deref(), save)
         }
-        Some(Command::Play { first, query }) => {
-            tokio::runtime::Runtime::new()?.block_on(cli::play(&query, first))
-        }
+        Some(Command::Play {
+            first,
+            attach,
+            query,
+        }) => tokio::runtime::Runtime::new()?.block_on(cli::play(&query, first, attach)),
         Some(Command::Service { action }) => match action {
             ServiceAction::Install => service::install(),
             ServiceAction::Start => control(service::Control::Start),

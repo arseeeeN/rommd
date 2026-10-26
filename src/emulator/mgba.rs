@@ -2,10 +2,9 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use indexmap::IndexMap;
 use std::path::{Path, PathBuf};
-use tokio::process::Child;
 use tracing::debug;
 
-use super::{Emulator, FileSet, LaunchContext, SaveLayout, SaveSet};
+use super::{Emulator, FileSet, LaunchCommand, LaunchContext, SaveLayout, SaveSet};
 use crate::config::EmulatorConfig;
 use crate::ini::IniFile;
 use crate::profile::ProfileBlob;
@@ -88,18 +87,18 @@ impl Emulator for MGba {
         }
     }
 
-    async fn launch(
+    async fn command(
         &self,
         config: &EmulatorConfig,
         rom_path: &Path,
         _game_id: Option<&str>,
         profile: Option<&ProfileBlob>,
-    ) -> Result<(Child, LaunchContext)> {
+    ) -> Result<(LaunchCommand, LaunchContext)> {
         ensure_paths_configured(config).await?;
 
         #[cfg_attr(windows, allow(unused_mut))]
         let mut launch_ctx = LaunchContext::default();
-        let mut cmd = super::emulator_command(&config.binary);
+        let mut cmd = LaunchCommand::new(&config.binary);
 
         // Write a merged config to a temp dir and point XDG_CONFIG_HOME at it.
         #[cfg(not(windows))]
@@ -132,11 +131,7 @@ impl Emulator for MGba {
         }
 
         cmd.arg(rom_path);
-        let child = cmd
-            .spawn()
-            .with_context(|| format!("spawning mGBA from {}", config.binary.display()))?;
-
-        Ok((child, launch_ctx))
+        Ok((cmd, launch_ctx))
     }
 
     /// mGBA has no per-game settings — snapshot returns the global config as

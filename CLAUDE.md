@@ -12,7 +12,7 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 
 - **`src/main.rs`** — CLI (`rommd`, `rommd search|play`, `rommd service install|start|stop|restart|uninstall`), startup, emulator registry
 - **`src/games.rs`** — game search (`GET /games`): query language (words + `platform:`/`emulator:`/`library:`/`id:`), platform matching, emulator choice
-- **`src/cli.rs`** — `rommd search` / `rommd play`, a client of the running daemon (`/games`, `/launch`, `/launches/{id}`)
+- **`src/cli.rs`** — `rommd search` / `rommd play [--attach]`, a client of the running daemon (`/games`, `/launch`, `/launches/{id}`)
 - **`src/detect/`** — finding installed emulators (`rommd detect [path]`; macOS and Linux), each verified from its files only, never by running it. macOS (`mac.rs`): `.app` bundles in the install folders, then Spotlight (`mdfind` by bundle ID). Linux (`linux.rs`): root-owned executables on `PATH` (packages), Flatpak installations (`exports/bin/<app id>` as binary, data in `~/.var/app/<id>`, and the sandbox's `filesystems` grants, so `detect` can warn when `roms_dir` is out of reach), and AppImages in `~/Applications`, `~/AppImages`, `~/.local/bin`, `~/bin` or launched by a desktop entry, recognised by the app ID their image declares (`appimage.rs` reads the squashfs root: `<id>.desktop` or icon) or, for DwarFS images, their `.upd_info`; the CLI also looks in Desktop, Downloads, Documents. Or a path the user names. Emulators are listed in `emulator::all()` order (so a new config's file order, which picks between Ryujinx and Eden, is fixed); of several installs of one emulator, one in an install folder wins, then one whose data dir is in use
 - **`src/config_edit.rs`** — edits to the user's `config.toml` (`toml_edit`, so comments and layout survive): adding an emulator after the last `[emulators.*]` (or at the very end, taking over trailing comments), never overwriting an entry or repairing a file that doesn't parse, written via temp file + rename. Only on request (`rommd detect --save`), never in the background
 - **`src/awake.rs`** — keeps the computer from *idle* sleep while a ROM downloads (`systemd-inhibit --what=idle` on Linux, `caffeinate -i` on macOS, both helpers that end with rommd; `SetThreadExecutionState` on a thread of its own on Windows); deliberate sleep still works
@@ -29,6 +29,19 @@ untracked. One launch per ROM at a time: a second gets the first's ID. The
 updater and `rommd service stop/restart` wait while a launch is in progress.
 The RomM client has connect and read timeouts but no total timeout, which
 would cut off large downloads.
+
+Attached launches (`"attach": true`, `rommd play --attach`, for Steam's Game
+Mode, where gamescope and Steam only handle games Steam's process tree
+started): answered `202` at once; after the download and pre-launch sync the
+launch waits in state `ready` with the `LaunchCommand`, the client spawns it
+as its own child and reports the PID (`POST /launches/{id}/attached`, refused
+with an `Origin` so web pages can't make rommd track and stop arbitrary
+processes), and the daemon tracks it by process group / job
+(`ProcessTree::attach`) with no child handle, so it syncs even if the client
+is killed. No report within 60 s fails the launch. The CLI runs only the
+`binary` its own config names and only `LaunchCommand::ENV` variables, since
+anything could be listening on the port; it forwards termination signals as
+a stop (polite, then killed) and exits when the game's tree is gone.
 
 ROM downloads (`romm::RommClient::fetch_to`) go through `<file>.part` and
 resume: a `.part` from an earlier attempt is continued with a range request,
@@ -147,7 +160,8 @@ Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
 - `game_id_for_rom` — sync; returns the emulator's stable game identifier.
   Used for save scoping. Must not use the ROM filename as a source — filenames
   can be wrong and would silently sync saves for the wrong game
-- `snapshot` / `launch` — profile overlay and process spawn
+- `snapshot` / `command` — profile overlay, and the `LaunchCommand` that
+  starts the game (run by the daemon, or by the client of an attached launch)
 
 Adding a new emulator: create `src/emulator/<name>.rs`, implement the trait,
 add `pub mod <name>` to `mod.rs`, list it in `emulator::all()`.

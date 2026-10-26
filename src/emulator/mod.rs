@@ -9,6 +9,9 @@ pub mod ryujinx;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::process::Child;
@@ -30,17 +33,65 @@ pub fn all() -> Vec<Arc<dyn Emulator>> {
     ]
 }
 
-/// Command for spawning an emulator. On Unix the emulator becomes the leader of
-/// its own process group, so stopping it and waiting for it cover every process
-/// it runs. This matters for launchers that keep the real emulator as a child:
-/// uruntime AppImages (Eden) stay alive as the parent, and killing only that
-/// PID would orphan the emulator.
-pub fn emulator_command(binary: &Path) -> tokio::process::Command {
-    #[cfg_attr(not(unix), allow(unused_mut))]
-    let mut cmd = tokio::process::Command::new(binary);
-    #[cfg(unix)]
-    cmd.process_group(0);
-    cmd
+/// How to start an emulator for one game. The daemon runs it, or for an
+/// attached launch hands it to `rommd play --attach`, which runs it as its own
+/// child so the game belongs to whatever started that (Steam in Game Mode).
+///
+/// Arguments are strings so the command travels as JSON; rommd's paths come
+/// from the TOML config and RomM's file names, which are UTF-8 already.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct LaunchCommand {
+    #[schema(value_type = String)]
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    /// Variables set on top of the inherited environment; only names in
+    /// `LaunchCommand::ENV` are ever used.
+    pub env: BTreeMap<String, String>,
+}
+
+impl LaunchCommand {
+    /// The variables an emulator command may set. `rommd play --attach`
+    /// refuses any other, so whatever answers on rommd's port can't make it
+    /// load code into the emulator (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`).
+    pub const ENV: &[&str] = &["XDG_CONFIG_HOME"];
+
+    pub fn new(binary: &Path) -> Self {
+        Self {
+            program: binary.to_owned(),
+            args: Vec::new(),
+            env: BTreeMap::new(),
+        }
+    }
+
+    pub fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {
+        self.args.push(arg.as_ref().to_string_lossy().into_owned());
+        self
+    }
+
+    pub fn env(&mut self, name: &'static str, value: impl AsRef<OsStr>) -> &mut Self {
+        debug_assert!(
+            Self::ENV.contains(&name),
+            "{name} is not in LaunchCommand::ENV"
+        );
+        self.env.insert(
+            name.to_owned(),
+            value.as_ref().to_string_lossy().into_owned(),
+        );
+        self
+    }
+
+    /// Start it. On Unix the emulator becomes the leader of its own process
+    /// group, so stopping it and waiting for it cover every process it runs.
+    /// This matters for launchers that keep the real emulator as a child:
+    /// uruntime AppImages (Eden) stay alive as the parent, and killing only
+    /// that PID would orphan the emulator.
+    pub fn spawn(&self) -> std::io::Result<Child> {
+        let mut cmd = tokio::process::Command::new(&self.program);
+        cmd.args(&self.args).envs(&self.env);
+        #[cfg(unix)]
+        cmd.process_group(0);
+        cmd.spawn()
+    }
 }
 
 /// Resources created during launch that must be cleaned up after the game exits.
@@ -50,19 +101,35 @@ pub struct LaunchContext {
     pub temp_dirs: Vec<PathBuf>,
 }
 
+impl LaunchContext {
+    pub async fn clean_up(&self) {
+        for path in &self.temp_files {
+            if let Err(e) = tokio::fs::remove_file(path).await {
+                tracing::warn!("could not remove temp file {}: {}", path.display(), e);
+            }
+        }
+        for dir in &self.temp_dirs {
+            if let Err(e) = tokio::fs::remove_dir_all(dir).await {
+                tracing::warn!("could not remove temp dir {}: {}", dir.display(), e);
+            }
+        }
+    }
+}
+
 #[async_trait]
 pub trait Emulator: Send + Sync {
     fn id(&self) -> &'static str;
     fn display_name(&self) -> &'static str;
 
-    /// Apply the profile overlay (if any) and spawn the emulator process.
-    async fn launch(
+    /// Apply the profile overlay (if any) and return the command that starts
+    /// the game; the caller runs it (`LaunchCommand::spawn`).
+    async fn command(
         &self,
         config: &EmulatorConfig,
         rom_path: &Path,
         game_id: Option<&str>,
         profile: Option<&ProfileBlob>,
-    ) -> Result<(Child, LaunchContext)>;
+    ) -> Result<(LaunchCommand, LaunchContext)>;
 
     /// Read the emulator's current per-game config for `game_id`, clean it,
     /// and return a portable profile blob. For DuckStation, `game_id` is the disc serial.

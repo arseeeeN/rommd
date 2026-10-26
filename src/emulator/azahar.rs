@@ -1,9 +1,8 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
-use tokio::process::Child;
 
-use super::{Emulator, FileSet, GameSaveDir, LaunchContext, SaveLayout, SaveSet};
+use super::{Emulator, FileSet, GameSaveDir, LaunchCommand, LaunchContext, SaveLayout, SaveSet};
 use crate::config::EmulatorConfig;
 use crate::ini::IniFile;
 use crate::profile::ProfileBlob;
@@ -109,18 +108,16 @@ impl Emulator for Azahar {
         }
     }
 
-    async fn launch(
+    async fn command(
         &self,
         config: &EmulatorConfig,
         rom_path: &Path,
         _game_id: Option<&str>,
         _profile: Option<&ProfileBlob>,
-    ) -> Result<(Child, LaunchContext)> {
-        let child = super::emulator_command(&config.binary)
-            .arg(rom_path)
-            .spawn()
-            .with_context(|| format!("spawning Azahar from {}", config.binary.display()))?;
-        Ok((child, LaunchContext::default()))
+    ) -> Result<(LaunchCommand, LaunchContext)> {
+        let mut command = LaunchCommand::new(&config.binary);
+        command.arg(rom_path);
+        Ok((command, LaunchContext::default()))
     }
 
     async fn snapshot(&self, _config: &EmulatorConfig, _game_id: &str) -> Result<ProfileBlob> {

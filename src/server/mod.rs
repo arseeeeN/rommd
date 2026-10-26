@@ -27,6 +27,7 @@ use types::*;
         handlers::games,
         handlers::launch_info,
         handlers::cancel_launch,
+        handlers::attached_launch,
         handlers::status,
         handlers::stop,
         handlers::snapshot,
@@ -39,6 +40,8 @@ use types::*;
         HealthResponse,
         EmulatorInfo,
         LaunchRequest,
+        AttachedRequest,
+        crate::emulator::LaunchCommand,
         LaunchResponse,
         GamesResponse,
         GameMatch,
@@ -73,6 +76,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/launches/{id}",
             get(handlers::launch_info).delete(handlers::cancel_launch),
         )
+        .route("/launches/{id}/attached", post(handlers::attached_launch))
         .route("/status", get(handlers::status))
         .route("/stop", post(handlers::stop))
         .route("/snapshot", post(handlers::snapshot))

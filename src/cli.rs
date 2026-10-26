@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::{Config, ServerConfig};
-use crate::emulator::Emulator;
+use crate::emulator::{Emulator, LaunchCommand};
 use crate::launches::{LaunchInfo, LaunchState};
 use crate::server::types::{GameMatch, GamesResponse};
 
@@ -32,7 +32,7 @@ pub async fn search(words: &[String], limit: u32) -> Result<()> {
     Ok(())
 }
 
-pub async fn play(words: &[String], first: bool) -> Result<()> {
+pub async fn play(words: &[String], first: bool, attach: bool) -> Result<()> {
     let daemon = Daemon::new()?;
     let query = query_string(words);
     let found = daemon.games(&query, PLAY_CHOICES).await?;
@@ -51,9 +51,138 @@ pub async fn play(words: &[String], first: bool) -> Result<()> {
         "Starting {} ({}) with {}: {}.",
         game.name, game.platform_name, emulator, game.emulator_reason
     );
+    if attach {
+        return play_attached(&daemon, game, emulator).await;
+    }
     let pid = launch_showing_progress(&daemon, game, emulator).await?;
     println!("Running (pid {pid}). Saves sync when the game exits.");
     Ok(())
+}
+
+/// `rommd play --attach`: the daemon downloads the ROM and syncs the saves,
+/// then the emulator is started here, as this process's child, and this
+/// process lives until the game has ended. Whatever started `rommd play`
+/// (Steam in Game Mode) then owns the game: gamescope shows it, Steam Input
+/// maps the controller, and Steam shows it as playing until it ends. The
+/// daemon tracks the game as usual and syncs after it exits, even when this
+/// process is killed first.
+async fn play_attached(daemon: &Daemon, game: &GameMatch, emulator: &str) -> Result<()> {
+    let config = Config::read(&Config::path()).context("reading the config")?;
+    let id = match daemon.launch(game.rom_id, emulator, true).await? {
+        Launched::Downloading(id) => id,
+        Launched::Started(_) => anyhow::bail!("rommd started the game itself; is it up to date?"),
+    };
+    let command = match follow(daemon, id, true).await? {
+        Followed::Ready(command) => command,
+        Followed::Started(_) => anyhow::bail!("rommd started the game itself; is it up to date?"),
+    };
+    let started = trusted(&config, emulator, &command).and_then(|()| {
+        command
+            .spawn()
+            .with_context(|| format!("starting {}", command.program.display()))
+    });
+    let child = match started {
+        Ok(child) => child,
+        Err(e) => {
+            let _ = daemon.attached(id, Err(format!("{e:#}"))).await;
+            return Err(e);
+        }
+    };
+    let tree = crate::process::ProcessTree::new(&child)
+        .ok_or_else(|| anyhow::anyhow!("{emulator} exited immediately"))?;
+    let pid = child
+        .id()
+        .ok_or_else(|| anyhow::anyhow!("{emulator} exited immediately"))?;
+    let tracked = match daemon.attached(id, Ok(pid)).await {
+        Ok(()) => follow(daemon, id, true).await.map(|_| ()),
+        Err(e) => Err(e),
+    };
+    match tracked {
+        Ok(()) => println!("Running (pid {pid}). Saves sync when the game exits."),
+        Err(e) => eprintln!("rommd is not tracking the game, so its saves won't sync: {e:#}"),
+    }
+    wait_for_game(child, tree).await;
+    Ok(())
+}
+
+/// The daemon's command runs only the emulator binary the user configured, and
+/// sets no variable outside `LaunchCommand::ENV`: anything could be listening
+/// on rommd's port while rommd isn't (another user's program), and must not
+/// get to run code as this user.
+fn trusted(config: &Config, emulator: &str, command: &LaunchCommand) -> Result<()> {
+    let configured = config
+        .emulators
+        .get(emulator)
+        .ok_or_else(|| anyhow::anyhow!("{emulator} is not in your config"))?;
+    anyhow::ensure!(
+        command.program == configured.binary,
+        "refusing to start {}: your config's {emulator} binary is {}",
+        command.program.display(),
+        configured.binary.display()
+    );
+    if let Some(name) = command
+        .env
+        .keys()
+        .find(|name| !LaunchCommand::ENV.contains(&name.as_str()))
+    {
+        anyhow::bail!("refusing to start {emulator} with {name} set");
+    }
+    Ok(())
+}
+
+/// Wait until every process of the game has ended. Asked to end (Steam's
+/// "Exit game", Ctrl+C, the terminal closing), close the game the way rommd
+/// stops one: politely first, killed a few seconds later.
+async fn wait_for_game(mut child: tokio::process::Child, tree: crate::process::ProcessTree) {
+    let tree = Arc::new(tree);
+    let mut signals = termination_signals();
+    let mut stopping = false;
+    loop {
+        tokio::select! {
+            _ = child.wait() => break,
+            Some(()) = signals.recv(), if !stopping => {
+                stopping = true;
+                eprintln!("Closing the game.");
+                tree.clone().stop().await;
+            }
+        }
+    }
+    loop {
+        tokio::select! {
+            _ = tree.wait_until_gone() => break,
+            Some(()) = signals.recv(), if !stopping => {
+                stopping = true;
+                tree.clone().stop().await;
+            }
+        }
+    }
+}
+
+/// Every request to end this process, as a stream.
+fn termination_signals() -> tokio::sync::mpsc::UnboundedReceiver<()> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        for kind in [
+            SignalKind::terminate(),
+            SignalKind::interrupt(),
+            SignalKind::hangup(),
+        ] {
+            let Ok(mut received) = signal(kind) else {
+                continue;
+            };
+            let tx = tx.clone();
+            tokio::spawn(
+                async move { while received.recv().await.is_some() && tx.send(()).is_ok() {} },
+            );
+        }
+    }
+    #[cfg(windows)]
+    tokio::spawn(
+        async move { while tokio::signal::ctrl_c().await.is_ok() && tx.send(()).is_ok() {} },
+    );
+    rx
 }
 
 /// Start the game and wait until it runs. When the ROM has to be downloaded
@@ -62,9 +191,12 @@ pub async fn play(words: &[String], first: bool) -> Result<()> {
 /// only stops waiting.
 async fn launch_showing_progress(daemon: &Daemon, game: &GameMatch, emulator: &str) -> Result<u64> {
     tokio::select! {
-        launched = daemon.launch(game.rom_id, emulator) => match launched? {
+        launched = daemon.launch(game.rom_id, emulator, false) => match launched? {
             Launched::Started(pid) => Ok(pid),
-            Launched::Downloading(id) => follow(daemon, id).await,
+            Launched::Downloading(id) => match follow(daemon, id, false).await? {
+                Followed::Started(pid) => Ok(pid),
+                Followed::Ready(_) => anyhow::bail!("rommd waits for the game to be started"),
+            },
         },
         _ = tokio::signal::ctrl_c() => {
             eprintln!("Stopped waiting; rommd still starts the game.");
@@ -73,7 +205,14 @@ async fn launch_showing_progress(daemon: &Daemon, game: &GameMatch, emulator: &s
     }
 }
 
-async fn follow(daemon: &Daemon, id: u64) -> Result<u64> {
+enum Followed {
+    Started(u64),
+    /// An attached launch, ready to be started here.
+    Ready(LaunchCommand),
+}
+
+/// Follow a launch until the game started or, attached, is ready to start.
+async fn follow(daemon: &Daemon, id: u64, attach: bool) -> Result<Followed> {
     let mut ticker = tokio::time::interval(Duration::from_millis(500));
     let mut progress = ProgressLine::new();
     loop {
@@ -82,6 +221,10 @@ async fn follow(daemon: &Daemon, id: u64) -> Result<u64> {
                 progress.finish();
                 match daemon.cancel(id).await {
                     Ok(true) => eprintln!("Download cancelled."),
+                    Ok(false) if attach => {
+                        let _ = daemon.attached(id, Err("stopped before the game started".into())).await;
+                        eprintln!("Stopped before starting the game.");
+                    }
                     Ok(false) => eprintln!("The download had just finished; rommd is starting the game."),
                     Err(e) => eprintln!("Could not cancel the download: {e:#}"),
                 }
@@ -97,7 +240,11 @@ async fn follow(daemon: &Daemon, id: u64) -> Result<u64> {
                     LaunchState::Starting => progress.finish(),
                     LaunchState::Started { pid } => {
                         progress.finish();
-                        return Ok(pid.into());
+                        return Ok(Followed::Started(pid.into()));
+                    }
+                    LaunchState::Ready { command } => {
+                        progress.finish();
+                        return Ok(Followed::Ready(command));
                     }
                     LaunchState::Failed { error } => {
                         progress.finish();
@@ -471,11 +618,11 @@ impl Daemon {
     /// ROM first, which can take minutes.
     /// Not time-limited: for a ROM that is already here the daemon answers
     /// once the saves are synced and the emulator started.
-    async fn launch(&self, rom_id: i64, emulator: &str) -> Result<Launched> {
+    async fn launch(&self, rom_id: i64, emulator: &str, attach: bool) -> Result<Launched> {
         let request = self
             .client
             .post(format!("{}/launch", self.base))
-            .json(&serde_json::json!({ "rom_id": rom_id, "emulator": emulator }));
+            .json(&serde_json::json!({ "rom_id": rom_id, "emulator": emulator, "attach": attach }));
         let response = self.send(request).await?;
         let accepted = response.status() == reqwest::StatusCode::ACCEPTED;
         let body: serde_json::Value = response.json().await?;
@@ -497,6 +644,20 @@ impl Daemon {
             .get(format!("{}/launches/{id}", self.base))
             .timeout(Duration::from_secs(5));
         Ok(self.send(request).await?.json().await?)
+    }
+
+    /// Report on an attached launch: the game's PID, or why it didn't start.
+    async fn attached(&self, id: u64, started: std::result::Result<u32, String>) -> Result<()> {
+        let body = match started {
+            Ok(pid) => serde_json::json!({ "pid": pid }),
+            Err(error) => serde_json::json!({ "error": error }),
+        };
+        let request = self
+            .client
+            .post(format!("{}/launches/{id}/attached", self.base))
+            .json(&body)
+            .timeout(Duration::from_secs(5));
+        self.send(request).await.map(|_| ())
     }
 
     /// False when it was too late: the download had finished.
@@ -596,5 +757,29 @@ mod tests {
             total: 0,
         };
         assert!(pick(&none, true).is_err());
+    }
+
+    #[test]
+    fn an_attached_launch_runs_only_the_configured_binary() {
+        let config = Config::parse(
+            "[emulators.ryujinx]\nbinary = '/apps/Ryujinx'\nconfig_dir = '/data'\n",
+            std::path::Path::new("config.toml"),
+        )
+        .unwrap();
+        let mut command = LaunchCommand::new(std::path::Path::new("/apps/Ryujinx"));
+        command.arg("/roms/game.nsp");
+        assert!(trusted(&config, "ryujinx", &command).is_ok());
+        assert!(trusted(&config, "eden", &command).is_err());
+
+        let other = LaunchCommand::new(std::path::Path::new("/tmp/evil"));
+        assert!(trusted(&config, "ryujinx", &other).is_err());
+
+        let mut preload = command.clone();
+        preload
+            .env
+            .insert("LD_PRELOAD".into(), "/tmp/evil.so".into());
+        assert!(trusted(&config, "ryujinx", &preload).is_err());
+        command.env("XDG_CONFIG_HOME", "/tmp/rommd-mgba");
+        assert!(trusted(&config, "ryujinx", &command).is_ok());
     }
 }

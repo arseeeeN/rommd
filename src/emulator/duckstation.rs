@@ -2,10 +2,9 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use indexmap::IndexMap;
 use std::path::{Path, PathBuf};
-use tokio::process::Child;
 use tracing::debug;
 
-use super::{Emulator, FileSet, LaunchContext, SaveLayout, SaveSet, ps1};
+use super::{Emulator, FileSet, LaunchCommand, LaunchContext, SaveLayout, SaveSet, ps1};
 use crate::config::EmulatorConfig;
 use crate::ini::IniFile;
 use crate::profile::{ProfileBlob, SnapshotCleaner};
@@ -57,25 +56,22 @@ impl Emulator for DuckStation {
         })
     }
 
-    async fn launch(
+    async fn command(
         &self,
         config: &EmulatorConfig,
         rom_path: &Path,
         game_id: Option<&str>,
         profile: Option<&ProfileBlob>,
-    ) -> Result<(Child, LaunchContext)> {
+    ) -> Result<(LaunchCommand, LaunchContext)> {
         match (game_id, profile) {
             (Some(id), Some(p)) => self.apply_profile(config, id, p).await?,
             (None, Some(_)) => anyhow::bail!("game_id is required to apply a DuckStation profile"),
             _ => {}
         }
 
-        let child = super::emulator_command(&config.binary)
-            .arg(rom_path)
-            .spawn()
-            .with_context(|| format!("spawning DuckStation from {}", config.binary.display()))?;
-
-        Ok((child, LaunchContext::default()))
+        let mut command = LaunchCommand::new(&config.binary);
+        command.arg(rom_path);
+        Ok((command, LaunchContext::default()))
     }
 
     /// `game_id` is the disc serial (e.g. "SLUS-00255").

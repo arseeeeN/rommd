@@ -3,10 +3,9 @@ use async_trait::async_trait;
 use indexmap::IndexMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use tokio::process::Child;
 use tracing::{debug, warn};
 
-use super::{Emulator, FileSet, GameSaveDir, LaunchContext, SaveLayout, SaveSet};
+use super::{Emulator, FileSet, GameSaveDir, LaunchCommand, LaunchContext, SaveLayout, SaveSet};
 use crate::config::EmulatorConfig;
 use crate::ini::IniFile;
 use crate::profile::ProfileBlob;
@@ -86,13 +85,13 @@ impl Emulator for Dolphin {
         }
     }
 
-    async fn launch(
+    async fn command(
         &self,
         config: &EmulatorConfig,
         rom_path: &Path,
         game_id: Option<&str>,
         profile: Option<&ProfileBlob>,
-    ) -> Result<(Child, LaunchContext)> {
+    ) -> Result<(LaunchCommand, LaunchContext)> {
         match (game_id, profile) {
             (Some(id), Some(p)) => apply_game_settings(config, id, p).await?,
             (None, Some(_)) => warn!(
@@ -102,13 +101,9 @@ impl Emulator for Dolphin {
             _ => {}
         }
 
-        let child = super::emulator_command(&config.binary)
-            .arg("-e")
-            .arg(rom_path)
-            .spawn()
-            .with_context(|| format!("spawning Dolphin from {}", config.binary.display()))?;
-
-        Ok((child, LaunchContext::default()))
+        let mut command = LaunchCommand::new(&config.binary);
+        command.arg("-e").arg(rom_path);
+        Ok((command, LaunchContext::default()))
     }
 
     async fn snapshot(&self, config: &EmulatorConfig, game_id: &str) -> Result<ProfileBlob> {

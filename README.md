@@ -215,6 +215,15 @@ still works). A download cut off by sleep or a lost connection picks up where
 it stopped, by itself within a minute or else on the next launch. Once the download is done, the game
 starts even if you stop waiting.
 
+`rommd play --attach` starts the emulator itself instead of leaving that to
+the background rommd, and keeps running until the game has ended; closing it
+closes the game. This is for Steam shortcuts: in the Steam Deck's Game Mode,
+Steam only shows and controls games it started. Add a non-Steam game with
+the full path to rommd as its target and, for example, `play --attach id:199`
+as its launch options (an `id:` query, since there is no terminal to pick
+from a list). It only runs the emulator binary in your config. Not yet
+tested on a Steam Deck.
+
 ## Launch button in RomM (temporary)
 
 Until RomM itself can call rommd, a userscript adds a **Launch** button next
