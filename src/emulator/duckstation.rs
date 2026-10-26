@@ -56,6 +56,23 @@ impl Emulator for DuckStation {
         })
     }
 
+    /// Builds are named per CPU (`duckstation-qt-x64-ReleaseLTCG.exe`); the
+    /// updater and uninstaller next to it carry the same product name. Its
+    /// folder: `SetDataRoot` in `core/core.cpp`.
+    fn windows_app(&self) -> Option<crate::detect::WindowsApp> {
+        use crate::detect::{AppData, Mark, Portable, WindowsApp, WindowsDataDir};
+        Some(WindowsApp {
+            executables: &["duckstation-qt*.exe"],
+            mark: Mark::Product("DuckStation"),
+            data_dir: WindowsDataDir {
+                portable: Portable::Here(&["portable.txt", "settings.ini"]),
+                registry: None,
+                documents: Some("DuckStation"),
+                app_data: AppData::Local("DuckStation"),
+            },
+        })
+    }
+
     async fn command(
         &self,
         config: &EmulatorConfig,

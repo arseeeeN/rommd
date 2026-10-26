@@ -56,6 +56,22 @@ impl Emulator for MGba {
         })
     }
 
+    /// `mGBA.exe` is the Qt build (`mgba-sdl.exe` next to it has no version
+    /// resource). Its folder: `mCoreConfigDirectory`.
+    fn windows_app(&self) -> Option<crate::detect::WindowsApp> {
+        use crate::detect::{AppData, Mark, Portable, WindowsApp, WindowsDataDir};
+        Some(WindowsApp {
+            executables: &["mGBA.exe"],
+            mark: Mark::Product("mGBA"),
+            data_dir: WindowsDataDir {
+                portable: Portable::Here(&["portable.ini"]),
+                registry: None,
+                documents: None,
+                app_data: AppData::Roaming("mGBA"),
+            },
+        })
+    }
+
     fn game_id_for_rom(&self, _config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         rom_path
             .file_stem()

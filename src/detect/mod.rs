@@ -1,6 +1,6 @@
 //! Finding installed emulators. Each emulator declares how its install is
-//! recognised on each OS (`Emulator::mac_app`, `Emulator::linux_app`); the
-//! OS modules look for them.
+//! recognised on each OS (`Emulator::mac_app`, `Emulator::linux_app`,
+//! `Emulator::windows_app`); the OS modules look for them.
 //!
 //! Nothing here runs a program: an install is recognised from its files
 //! alone, so the same check can vet a path that a client merely suggests (see
@@ -9,12 +9,14 @@
 mod appimage;
 mod linux;
 mod mac;
+mod windows;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use linux::{LinuxApp, Sandbox, XdgDir};
 pub use mac::MacApp;
+pub use windows::{AppData, Mark, Portable, WindowsApp, WindowsDataDir};
 
 use crate::emulator::Emulator;
 
@@ -27,6 +29,14 @@ pub enum Kind {
     Flatpak,
     /// A distribution package (root-owned, on `PATH`).
     Package,
+    /// Windows: put in place by an installer (it has an uninstall entry).
+    Installer,
+    /// Windows: a folder of its own, e.g. an extracted zip.
+    Folder,
+    /// Windows: a winget portable package.
+    Winget,
+    /// Windows: a Scoop package.
+    Scoop,
 }
 
 impl Kind {
@@ -36,6 +46,10 @@ impl Kind {
             Kind::AppImage => "AppImage",
             Kind::Flatpak => "Flatpak",
             Kind::Package => "package",
+            Kind::Installer => "installer",
+            Kind::Folder => "folder",
+            Kind::Winget => "winget",
+            Kind::Scoop => "Scoop",
         }
     }
 }
@@ -147,7 +161,7 @@ pub fn shared_platforms(found: &[Found]) -> Vec<(&'static str, Vec<&'static str>
 
 /// Whether this OS has detection.
 pub fn supported() -> bool {
-    cfg!(any(target_os = "macos", target_os = "linux"))
+    cfg!(any(target_os = "macos", target_os = "linux", windows))
 }
 
 /// Whether `emulator` is detected on this OS.
@@ -156,6 +170,8 @@ pub fn detectable(emulator: &dyn Emulator) -> bool {
         emulator.mac_app().is_some()
     } else if cfg!(target_os = "linux") {
         emulator.linux_app().is_some()
+    } else if cfg!(windows) {
+        emulator.windows_app().is_some()
     } else {
         false
     }
@@ -163,7 +179,7 @@ pub fn detectable(emulator: &dyn Emulator) -> bool {
 
 /// Look in the places this OS installs apps, and with `everywhere` also
 /// further afield (macOS: wherever Spotlight knows an emulator's app to be;
-/// Linux: Desktop, Downloads, Documents and `PATH`).
+/// Linux and Windows: Desktop, Downloads, Documents, and on Linux `PATH`).
 ///
 /// `everywhere` is for the CLI: reading an app on the Desktop or in Downloads
 /// from the background daemon would make macOS ask the user, out of nowhere,
@@ -173,6 +189,8 @@ pub fn detect(emulators: &[Arc<dyn Emulator>], everywhere: bool) -> Detection {
         mac::detect(emulators, everywhere)
     } else if cfg!(target_os = "linux") {
         linux::detect(emulators, everywhere)
+    } else if cfg!(windows) {
+        windows::detect(emulators, everywhere)
     } else {
         Detection::default()
     }
@@ -185,6 +203,8 @@ pub fn detect_at(path: &Path, emulators: &[Arc<dyn Emulator>]) -> Detection {
         mac::detect_at(path, emulators)
     } else if cfg!(target_os = "linux") {
         linux::detect_at(path, emulators)
+    } else if cfg!(windows) {
+        windows::detect_at(path, emulators)
     } else {
         Detection::default()
     }

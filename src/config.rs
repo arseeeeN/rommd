@@ -630,6 +630,22 @@ mod tests {
     }
 
     #[test]
+    fn windows_paths_found_here_are_written_as_literal_strings() {
+        let mut dolphin = found("dolphin", true);
+        dolphin.kind = crate::detect::Kind::Folder;
+        dolphin.binary = PathBuf::from(r"C:\Program Files\Dolphin\Dolphin.exe");
+        dolphin.config_dir = PathBuf::from(r"C:\Users\me\AppData\Roaming\Dolphin Emulator");
+        let text = default_config(Os::Windows, std::slice::from_ref(&dolphin));
+        assert!(
+            text.contains(r"binary     = 'C:\Program Files\Dolphin\Dolphin.exe'"),
+            "{text}"
+        );
+        let config = Config::parse(&text, Path::new("t")).unwrap();
+        assert_eq!(config.emulators["dolphin"].binary, dolphin.binary);
+        assert_eq!(config.emulators["dolphin"].config_dir, dolphin.config_dir);
+    }
+
+    #[test]
     fn the_generated_config_says_which_of_two_switch_emulators_runs() {
         let text = default_config(Os::Linux, &[found("eden", true), found("ryujinx", true)]);
         assert!(

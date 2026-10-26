@@ -195,6 +195,12 @@ pub trait Emulator: Send + Sync {
     fn linux_app(&self) -> Option<crate::detect::LinuxApp> {
         None
     }
+
+    /// How `rommd detect` recognises this emulator's program on Windows;
+    /// `None` means it isn't detected there.
+    fn windows_app(&self) -> Option<crate::detect::WindowsApp> {
+        None
+    }
 }
 
 /// Why `config_dir` does not look like this emulator's folder, if it doesn't.

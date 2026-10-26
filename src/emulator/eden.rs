@@ -56,6 +56,22 @@ impl Emulator for Eden {
         })
     }
 
+    /// eden.exe has no version resource; it links to eden-emu.dev (yuzu
+    /// builds don't). Its folder: `PathManagerImpl::Reinitialize`.
+    fn windows_app(&self) -> Option<crate::detect::WindowsApp> {
+        use crate::detect::{AppData, Mark, Portable, WindowsApp, WindowsDataDir};
+        Some(WindowsApp {
+            executables: &["eden.exe"],
+            mark: Mark::Text("eden-emu.dev"),
+            data_dir: WindowsDataDir {
+                portable: Portable::Folder("user"),
+                registry: None,
+                documents: None,
+                app_data: AppData::Roaming("eden"),
+            },
+        })
+    }
+
     fn game_id_for_rom(&self, config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         crate::switch::title_id_for_rom(rom_path, &config.config_dir.join("keys").join("prod.keys"))
     }

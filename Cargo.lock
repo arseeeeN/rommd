@@ -1475,6 +1475,7 @@ dependencies = [
  "flate2",
  "indexmap",
  "md-5",
+ "memchr",
  "minisign",
  "minisign-verify",
  "nix",

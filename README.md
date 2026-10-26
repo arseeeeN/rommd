@@ -134,18 +134,30 @@ binary     = 'C:\Program Files\Dolphin\Dolphin.exe'
 config_dir = '%APPDATA%\Dolphin Emulator'
 ```
 
-On macOS, `rommd detect` lists the supported emulators installed on your Mac
-(in `/Applications`, `~/Applications`, or anywhere Spotlight knows of), with
+`rommd detect` lists the supported emulators installed on this computer, with
 the `binary` and `config_dir` to use for each and whether your config already
-has them (Eden is not detected yet). For an emulator somewhere unusual, name
-it: `rommd detect ~/Desktop/Dolphin`. Keep emulators in Applications: one on
-the Desktop or in Downloads is easily moved or deleted, and the config then
-points nowhere.
+has them. It looks in:
+
+- **macOS:** `/Applications`, `~/Applications`, and anywhere Spotlight knows
+  of (Eden is not detected yet).
+- **Linux:** distribution packages, Flatpaks, and AppImages in
+  `~/Applications`, `~/AppImages`, `~/.local/bin`, `~/bin` or started by a
+  desktop entry.
+- **Windows:** installed programs, `Program Files`, `%LOCALAPPDATA%\Programs`,
+  winget and Scoop packages, and the programs Start Menu and Desktop shortcuts
+  point to (Ryujinx is not detected yet). A zip extracted anywhere else is
+  found through a shortcut to it.
+- On Linux and Windows also the Desktop, Downloads and Documents.
+
+For an emulator somewhere unusual, name it: `rommd detect ~/Desktop/Dolphin`
+(a folder, the program, or on Windows a shortcut). Keep emulators where they
+can stay: one on the Desktop or in Downloads is easily moved or deleted, and
+the config then points nowhere.
 
 `rommd detect --save` adds what it found to the config file, after your other
 emulators, leaving the rest of the file (comments included) as it was.
-Emulators already in the config are never changed, and an app outside
-Applications is only added when you name its path.
+Emulators already in the config are never changed, and one on the Desktop or
+in Downloads is only added when you name its path.
 
 `config_dir` is the folder where the emulator keeps its saves. Where an
 emulator splits its settings into a separate folder (Dolphin, Eden and Azahar

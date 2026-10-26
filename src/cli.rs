@@ -370,8 +370,8 @@ pub fn detect(
         }
         if !found.installed {
             println!(
-                "  note: {} is outside {}; move it there first, or the config breaks when \
-                 it is moved or deleted",
+                "  note: move {} to {} first, or the config breaks when it is moved or \
+                 deleted",
                 home_relative(&found.install),
                 install_folder()
             );
@@ -448,7 +448,7 @@ fn save_detected(
             println!("Kept your entry for {id}.");
         } else if !found.installed && !named {
             println!(
-                "Skipped {id}: move it into {}, then run this again (or name it: \
+                "Skipped {id}: move it to {}, then run this again (or name it: \
                  rommd detect <path> --save).",
                 install_folder()
             );
@@ -469,13 +469,19 @@ fn save_detected(
 fn install_folder() -> &'static str {
     if cfg!(target_os = "macos") {
         "Applications"
+    } else if cfg!(windows) {
+        r"a folder it can stay in, e.g. %LOCALAPPDATA%\Programs,"
     } else {
         "~/Applications (or add a desktop entry for it)"
     }
 }
 
-/// `~/…` for paths in the home folder.
+/// `~/…` for paths in the home folder; whole on Windows, where the config
+/// holds them that way.
 fn home_relative(path: &std::path::Path) -> String {
+    if cfg!(windows) {
+        return path.display().to_string();
+    }
     match dirs::home_dir().and_then(|h| path.strip_prefix(h).ok().map(|p| p.to_owned())) {
         Some(rest) => format!("~/{}", rest.display()),
         None => path.display().to_string(),

@@ -280,60 +280,58 @@ Not covered yet, roughly by likely demand:
 - Snaps, Dolphin's legacy `~/.dolphin-emu`, portable installs next to an
   extracted binary, xz/lzo squashfs.
 
-Next: Windows detection.
+**Windows (done, `src/detect/windows.rs`, verified on Windows 10):** programs
+with the emulator's file name in the folders the uninstall entries name
+(`HKCU`/`HKLM`, both registry views), `Program Files`,
+`%LOCALAPPDATA%\Programs` (two levels down), winget packages, Scoop's
+`apps\*\current`, and the targets of `.lnk` shortcuts in the Start Menu and on
+the Desktop; the CLI and setup also look in Desktop, Downloads and Documents
+(three levels down, for zips extracted into a folder named after the zip).
+Everything except Desktop, Downloads, temp and the Recycle Bin counts as
+installed, as suggested: most Windows emulators ship as zips with no standard
+place. A scan takes about 0.25 s on a machine with ~190 uninstall entries.
 
-**Windows (notes for whoever builds it; nothing here is verified on a
-Windows machine yet):**
-- Why it matters now: `rommd setup` (run by `install.ps1`) adds the
-  emulators `detect` finds, and on Windows it can only tell the user to edit
-  the config by hand (`detect::supported()` is false there). The first
-  outside tester is on Windows 10, so this is the step that makes the
-  install painless. Once detection works, flip `supported()` and the setup
-  message goes away by itself.
-- Shape: like `mac_app` / `linux_app`, a `windows_app()` on the `Emulator`
-  trait (`None` = not detected) and a `src/detect/windows.rs` next to
-  `mac.rs` / `linux.rs`, producing the same `Found`.
-- Identity from the file, never by running it: the `.exe`'s version
-  resource (`VS_VERSIONINFO` → `StringFileInfo`: `ProductName`,
-  `OriginalFilename`, `CompanyName`), read statically from the PE (a small
-  parser or a pure-Rust crate such as `pelite`). Check what each emulator
-  really carries; Qt and .NET builds may differ, and a fork (Eden from
-  yuzu) may keep its parent's names, so it may need the exe name too, like
-  Eden's macOS bundle ID.
-- Where to look (all to be checked): uninstall entries in the registry
-  (`HKCU` and `HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\*`:
-  `InstallLocation`, `DisplayIcon`; needs windows-sys
-  `Win32_System_Registry`) for installer-based emulators (mGBA; Dolphin and
-  Azahar offer installers too); `Program Files`, `%LOCALAPPDATA%\Programs`;
-  Scoop (`~\scoop\apps\<app>\current`); winget portable packages
-  (`%LOCALAPPDATA%\Microsoft\WinGet\Packages`, links in `…\WinGet\Links`);
-  Start Menu shortcuts (`.lnk` in `%APPDATA%` and `%ProgramData%\Microsoft\
-  Windows\Start Menu\Programs`) for portable installs someone pinned; the
-  CLI and setup also look in Desktop, Downloads and Documents, a level or
-  two down (an extracted zip is a folder holding the exe). EmuDeck for
-  Windows has its own layout, worth a look.
-- "Installed" needs a Windows meaning. DuckStation, Ryujinx and Eden mostly
-  ship as zips with no installer and no standard place, so "outside the
-  install folders → move it first" (setup and `detect --save` skip those)
-  would skip most Windows installs. Suggestion: treat everything as
-  installed except Downloads, Desktop and temp folders, and suggest
-  `%LOCALAPPDATA%\Programs\<Emulator>` as the place to move to.
-- Data dirs, as the `config_dir_hint`s already describe (to verify):
-  Dolphin `%APPDATA%\Dolphin Emulator` (older: `Documents\Dolphin
-  Emulator`; portable: `User\` next to the exe when `portable.txt` is
-  there); DuckStation `%LOCALAPPDATA%\DuckStation` (`Documents\DuckStation`
-  if that existed first; the exe's folder with `portable.txt`); Ryujinx
-  `%APPDATA%\Ryujinx` (`portable\` next to the exe); mGBA `%APPDATA%\mGBA`
-  (the exe's folder with `portable.ini`); Azahar `%APPDATA%\Azahar`
-  (`user\` next to the exe); Eden probably `%APPDATA%\eden` (`user\` next
-  to the exe). A portable marker beside the exe wins over AppData, and the
-  usual `config_dir_markers` check applies.
-- Paths are written as single-quoted literal strings (`config_edit` already
-  does this for backslashes), not `~`; `%APPDATA%` stays expanded.
-- Tests run on the Windows CI runner: build a minimal PE with a version
-  resource in the test rather than committing emulator binaries.
-- After it works: a real `install.ps1` run on Windows 10 (PowerShell 5.1),
-  with `rommd setup` adding what was found, is the test that matters.
+What the real builds turned out to carry (checked October 2026):
+- Version resource (`ProductName`): mGBA (`mGBA`, Inno Setup installer and
+  7z), DuckStation (`DuckStation`; its updater and uninstaller say so too, so
+  the file name `duckstation-qt*.exe` matters). **Dolphin, Azahar and Eden
+  ship none**, so the planned `ProductName` check alone would miss them; they
+  are identified by their project's web address inside the program
+  (`dolphin-emu.org`, `azahar-emu.org`, `eden-emu.dev`; yuzu builds don't
+  carry Eden's). No embedded manifest either.
+- Data folders, from each emulator's source: Dolphin
+  (`UICommon::SetUserDirectory`): `portable.txt` or registry
+  `LocalUserConfig` → `User\` next to the exe, else registry `UserConfigPath`
+  (Dolphin writes it, with mixed slashes and a trailing slash), else
+  `Documents\Dolphin Emulator` if it exists, else `%APPDATA%\Dolphin
+  Emulator`. DuckStation: `portable.txt` or `settings.ini` next to the exe,
+  else `Documents\DuckStation` if it exists, else
+  `%LOCALAPPDATA%\DuckStation`. Eden and Azahar: a `user\` folder next to the
+  exe, else `%APPDATA%\eden` / `%APPDATA%\Azahar`. mGBA: `portable.ini` next
+  to the exe, else `%APPDATA%\mGBA`.
+- winget: DuckStation is a portable zip package
+  (`%LOCALAPPDATA%\Microsoft\WinGet\Packages\Stenzek.DuckStation_…`, an
+  `HKCU` uninstall entry, a link in `WinGet\Links`); mGBA and Azahar are their
+  installers; Dolphin is only the 2016 5.0 installer; Ryujinx and Eden aren't
+  there. Dolphin's own download is a 7z that people extract by hand (no
+  uninstall entry, no shortcut).
+
+Not covered yet:
+- **Ryujinx:** its servers (`update.ryujinx.app`, `git.ryujinx.app`) were
+  down, so no build could be inspected and it has no `windows_app`. Not on
+  winget. Scoop's `games` bucket has `ryujinx` (Ryubing) and
+  `ryujinx-canary`, downloading from the same server; its manifest confirms
+  the zip layout (`extract_dir = publish`, so `publish\Ryujinx.exe`) and that
+  Scoop runs it portable (`persist = portable`, moving an existing
+  `%APPDATA%\Ryujinx` into `apps\ryujinx\current\portable`). Left to check:
+  what proves the program is Ryujinx (the .NET apphost's version resource,
+  `ProductName` probably `Ryujinx`), then add `windows_app` with
+  `Portable::Folder("portable")` and `AppData::Roaming("Ryujinx")`.
+- Real installs not tried: Scoop packages, DuckStation's own installer,
+  Dolphin's 5.0 installer from winget, Dolphin's `LocalUserConfig` set.
+- EmuDeck for Windows' layout.
+- `install.ps1` on Windows 10 with `rommd setup` adding what it finds: the
+  test that matters, still to do.
 
 **How far to look** (decided): known install locations; the OS's own index
 where it identifies apps (macOS Spotlight by bundle ID, ~30 ms a query); a
@@ -400,15 +398,14 @@ as `~/…`, and Windows paths as single-quoted literal strings, since
 
 **Where to look:** macOS `/Applications/*.app` and `~/Applications`,
 identified by the bundle identifier in `Contents/Info.plist`; Linux packages
-(`/usr/bin`), Flatpak exports, AppImages (`~/Applications`); Windows Program
-Files, `%LOCALAPPDATA%`, Scoop, winget.
+(`/usr/bin`), Flatpak exports, AppImages (`~/Applications`); Windows as above.
 
 ## Guided setup: `rommd setup`, run by the install scripts
 
 **Done** as planned below, except: emulators are confirmed all at once, not
-one by one; and on Windows setup can't add emulators yet, since detection
-covers only macOS and Linux (see "Emulator auto-detection"). The install
-scripts are untested on a real install (Windows PowerShell 5 especially).
+one by one. Windows detection now exists too (see "Emulator auto-detection"),
+so setup adds emulators there as well. The install scripts are untested on a
+real install (Windows PowerShell 5 especially).
 
 Today the installer drops the binary, installs the service, and the daemon
 writes a default config on its first start; the user then has to find

@@ -57,6 +57,22 @@ impl Emulator for Dolphin {
         })
     }
 
+    /// Dolphin.exe has no version resource; it links to dolphin-emu.org.
+    /// Its folder: `UICommon::SetUserDirectory`.
+    fn windows_app(&self) -> Option<crate::detect::WindowsApp> {
+        use crate::detect::{AppData, Mark, Portable, WindowsApp, WindowsDataDir};
+        Some(WindowsApp {
+            executables: &["Dolphin.exe"],
+            mark: Mark::Text("dolphin-emu.org"),
+            data_dir: WindowsDataDir {
+                portable: Portable::FolderIf("User", &["portable.txt"]),
+                registry: Some(r"Software\Dolphin Emulator"),
+                documents: Some("Dolphin Emulator"),
+                app_data: AppData::Roaming("Dolphin Emulator"),
+            },
+        })
+    }
+
     fn game_id_for_rom(&self, _config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         read_disc(rom_path).map(|(id, _)| id)
     }

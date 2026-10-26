@@ -67,6 +67,22 @@ impl Emulator for Azahar {
         })
     }
 
+    /// azahar.exe has no version resource; it links to azahar-emu.org. Its
+    /// folder: `FileUtil::SetUserPath`.
+    fn windows_app(&self) -> Option<crate::detect::WindowsApp> {
+        use crate::detect::{AppData, Mark, Portable, WindowsApp, WindowsDataDir};
+        Some(WindowsApp {
+            executables: &["azahar.exe"],
+            mark: Mark::Text("azahar-emu.org"),
+            data_dir: WindowsDataDir {
+                portable: Portable::Folder("user"),
+                registry: None,
+                documents: None,
+                app_data: AppData::Roaming("Azahar"),
+            },
+        })
+    }
+
     fn game_id_for_rom(&self, _config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         crate::n3ds::title_id_for_rom(rom_path)
     }
