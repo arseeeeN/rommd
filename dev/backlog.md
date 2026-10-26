@@ -226,6 +226,22 @@ game runs. Cheapest in Game Mode is no launcher process at all: per-game Steam
 shortcuts that call rommd directly, created by rommd or by a Steam ROM Manager
 parser listing the RomM library (an idea, not decided).
 
+## Fullscreen as a launch option
+
+Starting games fullscreen is common enough to be its own option instead of a
+profile overlay. Overlays write each emulator's own config files, where the
+setting has a different name in every one. Fullscreen can instead be a
+command-line flag that `Emulator::command` adds, so the emulator's settings
+are never touched.
+
+- Config default: `[launch] fullscreen` (or similar), off for normal launches.
+- Attached launches (`rommd play --attach`, Steam's Game Mode) default to on.
+- Per-launch override: `"fullscreen": true|false` on `POST /launch`,
+  `--fullscreen` / `--windowed` on `rommd play`.
+- Each emulator declares how (its flag, if it has one); look up and check
+  each one's flag before relying on it. An emulator without one says so in
+  the log rather than failing the launch.
+
 ## Emulator auto-detection
 
 Find installed emulators and fill in `[emulators.*]`, so a new install works
