@@ -328,6 +328,49 @@ identified by the bundle identifier in `Contents/Info.plist`; Linux packages
 (`/usr/bin`), Flatpak exports, AppImages (`~/Applications`); Windows Program
 Files, `%LOCALAPPDATA%`, Scoop, winget.
 
+## Guided setup: `rommd setup`, run by the install scripts
+
+Today the installer drops the binary, installs the service, and the daemon
+writes a default config on its first start; the user then has to find
+`config.toml` and fill in the RomM URL and credentials by hand, and nothing
+works until they do. Instead, an interactive `rommd setup` that the install
+scripts call before `service install`.
+
+**In the binary, not the scripts.** One implementation instead of one in
+`install.sh` and one in `install.ps1`; it reuses `default_config`,
+`config_edit` and detection; it can check answers against RomM; package
+manager users (brew, AUR) and anyone changing their mind later run it
+themselves.
+
+**Flow** (like rustup: "proceed with the standard setup / customize / cancel"):
+- Quick: RomM URL and API token (hidden input), checked against the server
+  before anything is written ("connected to RomM 5.2.0 as …", or why not:
+  not a RomM server, token refused, unreachable). Then detected emulators,
+  each confirmed. Interactive, so detection may look everywhere (Spotlight,
+  Downloads, `detect(…, true)`), unlike the daemon's unattended first start.
+  The URL also matters for the userscript, whose origin rommd checks against
+  `romm.base_url`.
+- Customize: also the ROM directory and the update mode (auto / notify /
+  off); later `[platforms]` when two emulators share one. Port stays a file
+  edit.
+- An existing config is not overwritten: setup offers to change its RomM
+  settings and add emulators through `config_edit`. The file holds the token,
+  so it is written owner-only (0600 on Unix).
+
+**Install scripts:**
+- `curl … | sh` feeds the script on stdin, so prompts read from `/dev/tty`;
+  with no terminal (CI, provisioning) setup is skipped and the install works
+  as today. `install.ps1` (`irm | iex`) can use `Read-Host`.
+- Unattended installs: `-y`, or `ROMMD_URL` / `ROMMD_TOKEN` in the
+  environment.
+- Re-running the installer to upgrade doesn't ask again when a config exists
+  (at most "reconfigure? [y/N]").
+- Steam Deck: installed from Desktop Mode in Konsole, so interactive works.
+
+**Later: RomM's device registration / pairing** instead of pasting a token,
+if RomM's flow suits a local daemon (not looked into yet). Related:
+"Register rommd as a RomM device" above.
+
 ## Editing the config through the API (postponed)
 
 Endpoints to add or change emulators would let frontends (RomM, a launcher)
