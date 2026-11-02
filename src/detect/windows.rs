@@ -73,6 +73,8 @@ pub enum AppData {
     Roaming(&'static str),
     /// `%LOCALAPPDATA%\<name>`.
     Local(&'static str),
+    /// `Documents\<name>`, for emulators that never use AppData (PCSX2).
+    Documents(&'static str),
 }
 
 /// Dolphin's registry values.
@@ -198,6 +200,7 @@ impl Places {
         match dir {
             AppData::Roaming(name) => self.roaming.join(name),
             AppData::Local(name) => self.local.join(name),
+            AppData::Documents(name) => self.documents.join(name),
         }
     }
 

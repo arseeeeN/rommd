@@ -98,6 +98,22 @@ impl FileSet {
         })
     }
 
+    /// Files named after `stem` that end in `.<extension>`, for emulators
+    /// that keep other files with the same names beside them (PCSX2's
+    /// `.p2s.backup`). `None` for an empty stem, as with `stem`.
+    pub fn stem_with_extension(
+        dir: PathBuf,
+        stem: impl Into<String>,
+        extension: &'static str,
+    ) -> Option<Self> {
+        Self::stem(dir, stem).map(|mut set| {
+            if let FileMatcher::Stem(stem) = set.matcher {
+                set.matcher = FileMatcher::StemExtension(stem, extension);
+            }
+            set
+        })
+    }
+
     pub fn gci(dir: PathBuf, game_id: impl Into<String>) -> Self {
         Self {
             dir,
@@ -148,6 +164,8 @@ pub enum FileMatcher {
     /// `<stem>` followed by `.` or `_`, or exactly `<stem>`: `Game.sav` and
     /// `Game_1.mcd` belong to "Game", `Game Plus.sav` does not.
     Stem(String),
+    /// As `Stem`, and the name ends in `.<extension>` (case-insensitive).
+    StemExtension(String, &'static str),
     /// A GameCube save (`*.gci`) whose header starts with this 6-character game
     /// ID (4-character game code + 2-character maker code).
     Gci(String),
@@ -160,6 +178,12 @@ impl FileMatcher {
             FileMatcher::Stem(stem) => name
                 .strip_prefix(stem.as_str())
                 .is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '_'])),
+            FileMatcher::StemExtension(stem, ext) => {
+                FileMatcher::Stem(stem.clone()).matches_name(name)
+                    && name
+                        .rsplit_once('.')
+                        .is_some_and(|(_, e)| e.eq_ignore_ascii_case(ext))
+            }
             FileMatcher::Gci(_) => name.to_ascii_lowercase().ends_with(".gci"),
         }
     }
@@ -168,7 +192,7 @@ impl FileMatcher {
     /// not enough.
     pub fn matches_file(&self, path: &Path) -> bool {
         match self {
-            FileMatcher::Stem(_) => true,
+            FileMatcher::Stem(_) | FileMatcher::StemExtension(..) => true,
             FileMatcher::Gci(id) => {
                 let mut header = [0u8; 6];
                 std::fs::File::open(path)
@@ -182,6 +206,7 @@ impl FileMatcher {
     pub fn label(&self) -> String {
         match self {
             FileMatcher::Stem(stem) => stem.clone(),
+            FileMatcher::StemExtension(stem, ext) => format!("{}.{}", stem, ext),
             FileMatcher::Gci(id) => format!("gci:{}", id),
         }
     }
@@ -200,6 +225,12 @@ mod tests {
         assert!(!m.matches_name("Mario Kart.sav"));
         assert!(!m.matches_name("MarioKart.sav"));
         assert!(FileSet::stem(PathBuf::from("/x"), "").is_none());
+
+        let m = FileMatcher::StemExtension("SLUS-20811 (CB99CD12)".into(), "p2s");
+        assert!(m.matches_name("SLUS-20811 (CB99CD12).01.p2s"));
+        assert!(m.matches_name("SLUS-20811 (CB99CD12).resume.p2s"));
+        assert!(!m.matches_name("SLUS-20811 (CB99CD12).01.p2s.backup"));
+        assert!(!m.matches_name("SLUS-20811 (00000000).01.p2s"));
     }
 
     #[test]

@@ -4,7 +4,7 @@ use indexmap::IndexMap;
 use std::path::{Path, PathBuf};
 use tracing::debug;
 
-use super::{Emulator, FileSet, LaunchCommand, LaunchContext, SaveLayout, SaveSet, ps1};
+use super::{Emulator, FileSet, LaunchCommand, LaunchContext, SaveLayout, SaveSet, ps_disc};
 use crate::config::EmulatorConfig;
 use crate::ini::IniFile;
 use crate::profile::{ProfileBlob, SnapshotCleaner};
@@ -109,7 +109,7 @@ impl Emulator for DuckStation {
     }
 
     fn game_id_for_rom(&self, config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
-        let serial = ps1::read_serial(rom_path).or_else(|| {
+        let serial = ps_disc::read_serial(rom_path).or_else(|| {
             let cache = config.config_dir.join("cache").join("gamelist.cache");
             lookup_in_gamelist_cache(&cache, rom_path).map(|e| e.serial)
         });

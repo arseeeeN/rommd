@@ -4,7 +4,8 @@ pub mod duckstation;
 pub mod eden;
 mod layout;
 pub mod mgba;
-pub mod ps1;
+pub mod pcsx2;
+pub mod ps_disc;
 pub mod ryujinx;
 
 use anyhow::Result;
@@ -30,6 +31,7 @@ pub fn all() -> Vec<Arc<dyn Emulator>> {
         Arc::new(ryujinx::Ryujinx),
         Arc::new(eden::Eden),
         Arc::new(azahar::Azahar),
+        Arc::new(pcsx2::Pcsx2),
     ]
 }
 

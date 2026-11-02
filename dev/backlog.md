@@ -54,6 +54,53 @@ Azahar keeps per-game settings in `~/.config/azahar-emu/custom/<TITLE ID>.ini`
 (Linux; `config_dir/config/custom/` elsewhere). That is where profile support
 (`launch` overlay, `snapshot`) would hook in, as Dolphin's GameSettings do.
 
+## PS2 memory cards (PCSX2)
+
+PCSX2 syncs save states only. Its default cards (`memcards/Mcd001.ps2`,
+`Mcd002.ps2`, named by `[MemoryCards] Slot1_Filename`/`Slot2_Filename` in
+`inis/PCSX2.ini`) are 8 MB images holding every game's saves; a card can also
+be a *folder card* (a directory of save folders plus `_pcsx2_superblock`).
+
+argosy-launcher syncs both through Sigil's `pcsx2_standalone` layout, and
+rommd should produce and accept the same RomM entries:
+
+- The unit is one file, `<rom stem>.ps2`: a fresh 8 MB card with ECC holding
+  only the game's save folders, those whose names start with the
+  region-prefixed serial (`BASLUS-20811…`; the serial's third letter picks
+  the prefix: `E` gives `BE`, `P`/`J`/`K` give `BI`, anything else `BA`).
+  PCSX2's system folders
+  (`*DATA-SYSTEM*`, `BWNETCNF`) are shown to every game but never bundled.
+- Restore merges the unit's folders back into whichever card holds them (or
+  slot 1's), never touching another game's saves, refusing before writing when
+  they don't fit. On a folder card it writes the folders and, when missing or
+  unformatted, a formatted `_pcsx2_superblock` (byte 0x16 = 0x6F, else PCSX2
+  ignores the card); the superblock never travels.
+- Restore must also read the older argosy shapes still on servers: a zip of
+  save folders, `<folder>/<file>`, or the same under `<card>.ps2/`.
+- Spec: `sigil/docs/platforms/ps2.md`, `sigil/docs/sync.md` and
+  `docs/save-id-to-path.md` (PS2 section) in argosy-launcher; the card
+  filesystem is `sigil/src/card_ps2.c` and folder cards
+  `sigil/src/sync_folder_cards.c`, which follow PCSX2's
+  `pcsx2/Reference/PS2-MemoryCardFileSystem.htm`.
+
+The sync engine has no unit whose local side is *derived* from a shared
+file yet (every `SaveSet` is real files or folders), so this needs a new
+`SaveSet` kind with collect and restore hooks, plus scenarios. The same
+mechanism would cover Dolphin's raw GameCube cards (one `.gci` or a zip of
+them, per Sigil's `gamecube` layout), which rommd skips today. A real card
+with saves to test against: a fresh PCSX2 install, play a game, save.
+
+Open question for the RomM devs (pending, to be asked before this work starts):
+are Sigil's unit formats a stable, versioned spec rommd can follow, and is
+building Sigil's CLI in CI as a test oracle (same file name and `content_hash`
+for the same fixture saves; no runtime C dependency) welcome?
+
+## PCSX2 per-game settings
+
+PCSX2 keeps per-game settings in `gamesettings/<SERIAL>_<CRC>.ini` (CRC as
+in the save state names, 8 uppercase hex digits). That is where profile
+support would hook in.
+
 
 ## Key the local ROM cache on the platform slug
 

@@ -41,6 +41,10 @@ config_dir = "~/Library/Application Support/Dolphin"
 binary     = "/Applications/Ryujinx.app/Contents/MacOS/Ryujinx"
 config_dir = "~/Library/Application Support/Ryujinx"
 
+[emulators.pcsx2]
+binary     = "/Applications/PCSX2.app/Contents/MacOS/PCSX2"
+config_dir = "~/Library/Application Support/PCSX2"
+
 # ── Controllers ───────────────────────────────────────────────────────────────
 # The id (e.g. "dualshock_mine") is what you reference in launch requests.
 # These entries are machine-local and are never sent to RomM.

@@ -355,8 +355,8 @@ impl Os {
             Self::Windows => {
                 "# Write Windows paths in single quotes: in double quotes a backslash starts\n\
                  # an escape sequence. Portable installs keep config_dir next to the program\n\
-                 # (DuckStation and mGBA: its folder; Dolphin, Eden, Azahar: \"User\"/\"user\";\n\
-                 # Ryujinx: \"portable\").\n#\n"
+                 # (DuckStation, mGBA and PCSX2: its folder; Dolphin, Eden, Azahar:\n\
+                 # \"User\"/\"user\"; Ryujinx: \"portable\").\n#\n"
             }
             _ => "",
         }
@@ -392,6 +392,11 @@ impl Os {
                     r#""/Applications/Azahar.app/Contents/MacOS/azahar""#,
                     r#""~/Library/Application Support/Azahar""#,
                 ),
+                (
+                    "pcsx2",
+                    r#""/Applications/PCSX2.app/Contents/MacOS/PCSX2""#,
+                    r#""~/Library/Application Support/PCSX2""#,
+                ),
             ],
             Self::Windows => &[
                 (
@@ -424,6 +429,11 @@ impl Os {
                     r"'C:\Program Files\Azahar\azahar.exe'",
                     r"'%APPDATA%\Azahar'",
                 ),
+                (
+                    "pcsx2",
+                    r"'C:\Program Files\PCSX2\pcsx2-qt.exe'",
+                    r"'~\Documents\PCSX2'",
+                ),
             ],
             Self::Linux => &[
                 (
@@ -438,6 +448,7 @@ impl Os {
                     r#""~/.config/dolphin-emu""#,
                 ),
                 ("ryujinx", r#""/usr/bin/Ryujinx""#, r#""~/.config/Ryujinx""#),
+                ("pcsx2", r#""/usr/bin/pcsx2-qt""#, r#""~/.config/PCSX2""#),
             ],
         }
     }

@@ -33,6 +33,7 @@ and uploads your progress when you quit.
 | GameCube / Wii | [Dolphin](https://dolphin-emu.org) | `dolphin` | ✓ | ✓ |
 | Game Boy Advance | [mGBA](https://mgba.io) | `mgba` | ✓ | ✓ |
 | PlayStation | [DuckStation](https://www.duckstation.org) | `duckstation` | ✓ (memory cards) | ✓ |
+| PlayStation 2 | [PCSX2](https://pcsx2.net) | `pcsx2` | — (not yet) | ✓ |
 
 The ID is the emulator's name in the config file (`[emulators.<id>]`) and in
 launch requests. Things to know:
@@ -47,6 +48,11 @@ launch requests. Things to know:
 - **GameCube:** memory card slot A must be a GCI folder (Dolphin's default).
   A raw memory card image holds every game's saves in one file and is not
   synced.
+- **PlayStation 2:** save states sync; memory cards don't yet. PCSX2's cards
+  hold every game's saves in one file, and syncing one game's saves out of
+  them is planned. rommd reads the game's serial from `.iso` and `.bin`
+  images; for `.chd` and `.cso`, add rommd's ROM folder to PCSX2's game list
+  once, so PCSX2's cache knows the game.
 
 ## Install
 

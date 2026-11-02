@@ -13,7 +13,7 @@ RomM (remote) ←→ rommd daemon ←→ local emulators
 - **`src/main.rs`** — CLI (`rommd`, `rommd search|play`, `rommd service install|start|stop|restart|uninstall`), startup, emulator registry
 - **`src/games.rs`** — game search (`GET /games`): query language (words + `platform:`/`emulator:`/`library:`/`id:`), platform matching, emulator choice
 - **`src/cli.rs`** — `rommd search` / `rommd play [--attach]`, a client of the running daemon (`/games`, `/launch`, `/launches/{id}`)
-- **`src/detect/`** — finding installed emulators (`rommd detect [path]`; macOS, Linux and Windows), each verified from its files only, never by running it. macOS (`mac.rs`): `.app` bundles in the install folders, then Spotlight (`mdfind` by bundle ID). Linux (`linux.rs`): root-owned executables on `PATH` (packages), Flatpak installations (`exports/bin/<app id>` as binary, data in `~/.var/app/<id>`, and the sandbox's `filesystems` grants, so `detect` can warn when `roms_dir` is out of reach), and AppImages in `~/Applications`, `~/AppImages`, `~/.local/bin`, `~/bin` or launched by a desktop entry, recognised by the app ID their image declares (`appimage.rs` reads the squashfs root: `<id>.desktop` or icon) or, for DwarFS images, their `.upd_info`; the CLI also looks in Desktop, Downloads, Documents. Or a path the user names. Emulators are listed in `emulator::all()` order (so a new config's file order, which picks between Ryujinx and Eden, is fixed); of several installs of one emulator, one in an install folder wins, then one whose data dir is in use. Windows (`windows.rs`): programs with the emulator's file name in the folders uninstall entries name (`HKCU`/`HKLM`), `Program Files` and `%LOCALAPPDATA%\Programs` (two levels down), winget packages, Scoop's `apps\*\current`, and the targets of Start Menu and Desktop `.lnk` shortcuts; the CLI also looks in Desktop, Downloads, Documents. A program is identified by `ProductName` in its version resource (mGBA, DuckStation) or, since Dolphin, Azahar and Eden ship none, by its project's web address inside the file. Its data dir follows the emulator's own rules (portable marker next to the program, Dolphin's registry values, a legacy Documents folder, AppData). Everything but Desktop, Downloads and temp counts as installed, since most Windows emulators ship as zips with no standard place
+- **`src/detect/`** — finding installed emulators (`rommd detect [path]`; macOS `mac.rs`, Linux `linux.rs` + `appimage.rs`, Windows `windows.rs`), each verified from its files only, never by running it; where each OS looks and how a program is recognised: `dev/detection.md`
 - **`src/config_edit.rs`** — edits to the user's `config.toml` (`toml_edit`, so comments and layout survive): adding an emulator after the last `[emulators.*]` (or at the very end, taking over trailing comments), setting RomM / `roms_dir` / update mode (`with_settings`: in place of the generated config's commented examples when they are there), never overwriting an entry or repairing a file that doesn't parse, every edit checked by parsing it back, written via temp file + rename, owner-only on Unix (it holds the token). Only on request (`rommd detect --save`, `rommd setup`), never in the background
 - **`src/setup.rs`** — `rommd setup`, run by the install scripts before the service starts (`--if-needed`: not when RomM is configured, i.e. an upgrade; `--yes` with `ROMMD_URL`/`ROMMD_TOKEN` for unattended installs; `install.sh` asks through `/dev/tty` since the script itself is on stdin). Asks the RomM address (no scheme = https, a game page's URL = its server) and API token (read without echo, never printed), each checked against RomM (`server_version`, `check_login`) and asked again until it works; adds detected emulators (it may look everywhere, unlike the daemon's first start); "more settings" asks `roms_dir` and update mode. Writes once at the end
 - **`src/awake.rs`** — keeps the computer from *idle* sleep while a ROM downloads (`systemd-inhibit --what=idle` on Linux, `caffeinate -i` on macOS, both helpers that end with rommd; `SetThreadExecutionState` on a thread of its own on Windows); deliberate sleep still works
@@ -138,7 +138,10 @@ Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
 - `FileSet` / `FileMatcher` — the files in one directory that belong to a
   game. `Stem` matches `<stem>` followed by `.`/`_` or nothing (never `Game
   Plus.sav` for "Game"); build it with `FileSet::stem`, which refuses an empty
-  stem. `Gci` matches `.gci` files by the game ID in their header
+  stem. `StemExtension` (`FileSet::stem_with_extension`) also requires the
+  extension, for emulators that keep other files of the same name beside
+  them (PCSX2's `.p2s.backup`). `Gci` matches `.gci` files by the game ID in
+  their header
 - `platforms` — RomM platform slugs (canonical `slug`, never the renamable
   `fs_slug` or a display name) the emulator runs. Picks the emulator when a
   launch or search doesn't name one (`games::choose_emulator`): the requested
@@ -164,8 +167,20 @@ Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
 - `snapshot` / `command` — profile overlay, and the `LaunchCommand` that
   starts the game (run by the daemon, or by the client of an attached launch)
 
-Adding a new emulator: create `src/emulator/<name>.rs`, implement the trait,
-add `pub mod <name>` to `mod.rs`, list it in `emulator::all()`.
+Adding a new emulator: follow `dev/adding-an-emulator.md`. It starts with how
+argosy-launcher stores the system's saves (below), which decides the save
+design, and lists every file besides the module that names emulators.
+
+## argosy-launcher: the reference for save formats
+
+Save formats follow [argosy-launcher](https://github.com/rommapp/argosy-launcher)
+(RomM's Android client), so saves move between the two. Clone it next to rommd
+(`../argosy-launcher`) and run `git submodule update --init sigil` there: its
+save rules live in **Sigil** (`rommapp/argosy-sigil`, a C library), not the
+Kotlin app. Per system: `sigil/docs/platforms/<system>.md`; unit shapes and
+the older shapes restores must accept: `sigil/docs/sync.md`; file names and
+hashes: `sigil/docs/save-units.md`; argosy's placement: `docs/save-id-to-path.md`.
+rommd implements the same behaviour itself and does not link Sigil.
 
 ## Save sync (`src/sync/`)
 
@@ -257,7 +272,8 @@ tells GameCube from Wii.
   (region from the ID's 4th char: E→USA, J→JAP, else EUR; a card already
   holding the game's saves wins), or `GCIFolderAPath[Override]` when set. Slot
   A must be a GCI folder (`SlotA` = 8 or unset); a raw card (1) holds all
-  games in one image and is not synced.
+  games in one image and is not synced (argosy does sync them; see the PS2
+  memory card entry in `dev/backlog.md`).
 - **Wii:** `Dir` of `<NAND root>/title/00010000/<hex game code>/`, rooted at
   that folder name like argosy. It only counts as a save once `data/` has files
   (`required_subdir`), since Dolphin writes `content/title.tmd` on first boot.
@@ -286,6 +302,15 @@ quicksave). Save family: Citra forks (citra, citra_mmj, lime3ds, borked3ds).
 per-game-title mode are named by the *save title* from DuckStation's game
 database (`cache/gamedb.cache`: length-prefixed serial, title, sort title,
 localized title, save title), falling back to the gamelist cache title.
+
+**PCSX2:** `config_dir` is the data folder (`inis/PCSX2.ini`; folders from its
+`[Folders]` section, relative to it). The game ID is the disc serial; states are
+`<serial> (<CRC>).<NN>.p2s` and `.resume.p2s` (not `.p2s.backup`), where the
+CRC is the XOR of the boot program's 32-bit words (`ps_disc::read_ps2_boot`).
+CHD/CSO images, which `ps_disc` can't read, get both from PCSX2's
+`cache/gamelist.cache` (version 34 only). Launched with `-batch` so PCSX2 quits
+with the game. Memory cards are not synced: the default cards hold every game's
+saves (`dev/backlog.md`, PS2 memory cards).
 
 **Single files:** RomM stores names with an upload timestamp
 (`anguna [2026-05-05 13-07-23-697].srm`); `local_file_name` strips it so RomM
