@@ -194,7 +194,7 @@ to `~/.local/share/rommd/sync-state.json`). Equal hashes → in sync. Only local
 changed → upload. Only RomM changed → download. Both changed, or they differ with
 no history → conflict: the newer side wins (local mtime vs RomM `updated_at`),
 the losing version is always kept in the backup dir, and the conflict is listed
-at `GET /saves/conflicts`. A unit that did not exist locally at launch (first
+at `GET /saves/conflicts` (cleared with `DELETE`; the backups stay). A unit that did not exist locally at launch (first
 boot, or a restore that failed offline) is a fresh start: it never wins a
 conflict. Pre-launch sync returns the keys of the units present, and the
 post-exit pass gets them back. A side that is missing is recreated from the other.

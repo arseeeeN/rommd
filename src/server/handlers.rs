@@ -654,6 +654,19 @@ pub async fn save_conflicts(State(state): State<Arc<AppState>>) -> impl IntoResp
     Json(state.sync_store.conflicts().await)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/saves/conflicts",
+    responses(
+        (status = 204, description = "The list is cleared. The versions that lost stay in the \
+            backup folder (`loser_backup`); nothing is restored or deleted.")
+    )
+)]
+pub async fn clear_save_conflicts(State(state): State<Arc<AppState>>) -> StatusCode {
+    state.sync_store.clear_conflicts().await;
+    StatusCode::NO_CONTENT
+}
+
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
 pub struct UpdateQuery {
     /// Check GitHub now instead of returning the last result.

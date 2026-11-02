@@ -113,6 +113,17 @@ impl SyncStore {
         persist(&self.path, &data);
     }
 
+    /// Forget the recorded conflicts. The losing versions stay in the backup
+    /// dir; only the list is cleared.
+    pub async fn clear_conflicts(&self) {
+        let mut data = self.data.lock().await;
+        if data.conflicts.is_empty() {
+            return;
+        }
+        data.conflicts.clear();
+        persist(&self.path, &data);
+    }
+
     /// Recent conflicts, newest first.
     pub async fn conflicts(&self) -> Vec<ConflictRecord> {
         self.data
@@ -171,5 +182,40 @@ mod tests {
         assert_eq!(store.base("k").await, None);
         assert!(path.with_extension("json.corrupt").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn clearing_conflicts_keeps_the_bases() {
+        let dir = crate::testing::TempDir::new("state-clear");
+        let path = dir.path().join("sync-state.json");
+        let store = SyncStore::load(path.clone());
+        let base = SyncBase {
+            local_hash: "abc".into(),
+            remote_id: 7,
+            remote_hash: None,
+            remote_updated_at: "2026-01-01T00:00:00Z".into(),
+        };
+        store.set_base("k", base.clone()).await;
+        store
+            .record_conflict(ConflictRecord {
+                resolved_at: "2026-01-02T00:00:00Z".into(),
+                rom_id: 1,
+                emulator: "pcsx2".into(),
+                local_path: "/states/a.p2s".into(),
+                kept: "local".into(),
+                local_modified: None,
+                remote_id: 7,
+                remote_emulator: Some("pcsx2".into()),
+                remote_updated_at: "2026-01-01T00:00:00Z".into(),
+                loser_backup: None,
+            })
+            .await;
+        assert_eq!(store.conflicts().await.len(), 1);
+
+        store.clear_conflicts().await;
+        assert!(store.conflicts().await.is_empty());
+        let reloaded = SyncStore::load(path);
+        assert!(reloaded.conflicts().await.is_empty());
+        assert_eq!(reloaded.base("k").await, Some(base));
     }
 }

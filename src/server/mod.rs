@@ -33,6 +33,7 @@ use types::*;
         handlers::snapshot,
         handlers::list_controllers,
         handlers::save_conflicts,
+        handlers::clear_save_conflicts,
         handlers::update_status,
         handlers::update_install,
     ),
@@ -81,7 +82,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/stop", post(handlers::stop))
         .route("/snapshot", post(handlers::snapshot))
         .route("/controllers", get(handlers::list_controllers))
-        .route("/saves/conflicts", get(handlers::save_conflicts))
+        .route(
+            "/saves/conflicts",
+            get(handlers::save_conflicts).delete(handlers::clear_save_conflicts),
+        )
         .route(
             "/update",
             get(handlers::update_status).post(handlers::update_install),

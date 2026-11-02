@@ -160,6 +160,9 @@ Content-Type: application/json
 ### Save conflicts resolved automatically (newest first)
 GET {{base}}/saves/conflicts
 
+### Clear the conflict list (the backups stay)
+DELETE {{base}}/saves/conflicts
+
 ###
 
 ### Snapshot running Dolphin game

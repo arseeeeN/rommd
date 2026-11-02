@@ -293,6 +293,7 @@ rommd listens on `http://localhost:7497`. The full API is described by
 | `POST /stop` | Stop a game (`{pid}`) or all games |
 | `GET /emulators` | Known emulators and whether they are configured |
 | `GET /saves/conflicts` | Recent save conflicts and where the other version was kept |
+| `DELETE /saves/conflicts` | Clear that list (the kept versions stay in the backup folder) |
 | `GET /update`, `POST /update` | Update status (`?check=true` checks now); install the latest release |
 
 To launch a game without the CLI, take its ID from the game's URL in RomM
