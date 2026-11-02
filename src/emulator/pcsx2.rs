@@ -259,9 +259,14 @@ mod tests {
                 ),
             ]),
         );
+        let elsewhere = root.path().join("states/elsewhere");
         write(
             &root.path().join("data/inis/PCSX2.ini"),
-            b"[Folders]\nSavestates = /states/elsewhere\nCache = cache\n",
+            format!(
+                "[Folders]\nSavestates = {}\nCache = cache\n",
+                elsewhere.display()
+            )
+            .as_bytes(),
         );
         let config = EmulatorConfig {
             binary: "pcsx2-qt".into(),
@@ -275,7 +280,7 @@ mod tests {
         let layout = Pcsx2.save_layout(&config, &rom, Some("SLUS-20811")).await;
         assert!(layout.saves.is_none(), "memory cards are not synced yet");
         let states = layout.states.unwrap();
-        assert_eq!(states.dir, PathBuf::from("/states/elsewhere"));
+        assert_eq!(states.dir, elsewhere);
         assert!(states.matcher.matches_name("SLUS-20811 (CB99CD12).01.p2s"));
         assert!(
             states
