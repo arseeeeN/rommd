@@ -84,13 +84,11 @@ impl Found {
         config_dir: PathBuf,
         installed: bool,
     ) -> Self {
-        let markers = emulator.config_dir_markers();
         Found {
             emulator: emulator.id(),
             name: emulator.display_name(),
             kind,
-            config_dir_in_use: config_dir.is_dir()
-                && (markers.is_empty() || markers.iter().any(|m| config_dir.join(m).exists())),
+            config_dir_in_use: emulator.config_dir_in_use(&config_dir),
             install,
             binary,
             config_dir,

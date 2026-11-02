@@ -200,6 +200,14 @@ pub trait Emulator: Send + Sync {
         &[]
     }
 
+    /// Whether the emulator has run with `dir` as its `config_dir`: by
+    /// default, one of `config_dir_markers` exists. Override when a setting
+    /// can move what the markers name elsewhere.
+    fn config_dir_in_use(&self, dir: &Path) -> bool {
+        let markers = self.config_dir_markers();
+        dir.is_dir() && (markers.is_empty() || markers.iter().any(|m| dir.join(m).exists()))
+    }
+
     /// Where `config_dir` usually is on this OS, for the warning when it
     /// looks wrong.
     fn config_dir_hint(&self) -> &'static str {
@@ -234,7 +242,7 @@ pub fn config_dir_problem(emulator: &dyn Emulator, config: &EmulatorConfig) -> O
     let name = emulator.display_name();
     let problem = if !dir.is_dir() {
         format!("config_dir {} does not exist", dir.display())
-    } else if !markers.is_empty() && !markers.iter().any(|m| dir.join(m).exists()) {
+    } else if !emulator.config_dir_in_use(dir) {
         format!(
             "config_dir {} has no {}; unless {} has never run, it is not {}'s folder",
             dir.display(),

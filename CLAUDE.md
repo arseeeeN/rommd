@@ -295,7 +295,8 @@ N64's `.srm`, for one, combines several save types in one file.
 **Azahar (3DS):** `config_dir` is the user dir (`~/.local/share/azahar-emu`);
 qt-config.ini is in `config_dir/config/` (portable, macOS) or
 `~/.config/azahar-emu/` (Linux). The SD card is `config_dir/sdmc` unless
-`[Data%20Storage] use_custom_storage=true` points `sdmc_directory` elsewhere.
+`[Data%20Storage] use_custom_storage=true` points `sdmc_directory` elsewhere
+(EmuDeck does; `config_dir_in_use` then looks there, not for `sdmc`/`nand`).
 A save is two trees under `sdmc/Nintendo 3DS/<ID0>/<ID1>/` (all-zero IDs on
 Azahar): `title/<high>/<low>/data/` (the save archive plus its
 `00000001.metadata`) and `extdata/00000000/<low >> 8>/` — some games keep

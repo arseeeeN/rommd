@@ -40,6 +40,14 @@ impl Emulator for Azahar {
         &["sdmc", "nand"]
     }
 
+    /// With custom storage (EmuDeck sets it) the SD card and NAND are
+    /// elsewhere, and the user dir may hold neither.
+    fn config_dir_in_use(&self, dir: &Path) -> bool {
+        dir.is_dir()
+            && (["sdmc", "nand"].iter().any(|m| dir.join(m).exists())
+                || custom_storage(dir).iter().any(|d| d.exists()))
+    }
+
     fn config_dir_hint(&self) -> &'static str {
         if cfg!(windows) {
             r"%APPDATA%\Azahar (the user folder next to azahar.exe for portable installs)"
@@ -149,16 +157,8 @@ impl Emulator for Azahar {
 /// qt-config.ini enables custom storage. Azahar always uses all-zero IDs; an
 /// SD card copied from elsewhere with a single other pair is used as found.
 fn sd_root(config: &EmulatorConfig) -> PathBuf {
-    let ini = read_qt_config(config);
-    let custom = ini
-        .as_ref()
-        .and_then(|i| i.get("Data%20Storage", "use_custom_storage"))
-        == Some("true");
-    let sdmc = ini
-        .as_ref()
-        .and_then(|i| i.get("Data%20Storage", "sdmc_directory"))
-        .filter(|v| custom && !v.is_empty())
-        .map(PathBuf::from)
+    let sdmc = read_qt_config(&config.config_dir)
+        .and_then(|ini| storage_setting(&ini, "sdmc_directory"))
         .unwrap_or_else(|| config.config_dir.join("sdmc"));
     let base = sdmc.join("Nintendo 3DS");
     let zeros = base.join(ZERO_ID).join(ZERO_ID);
@@ -181,8 +181,27 @@ fn sd_root(config: &EmulatorConfig) -> PathBuf {
 
 /// Portable and macOS installs keep `config/qt-config.ini` inside the user
 /// dir; on Linux it is in the XDG config dir.
-fn read_qt_config(config: &EmulatorConfig) -> Option<IniFile> {
-    let bundled = config.config_dir.join("config").join("qt-config.ini");
+/// The SD card and NAND folders custom storage points at, if it is on.
+fn custom_storage(config_dir: &Path) -> Vec<PathBuf> {
+    let Some(ini) = read_qt_config(config_dir) else {
+        return Vec::new();
+    };
+    ["sdmc_directory", "nand_directory"]
+        .iter()
+        .filter_map(|key| storage_setting(&ini, key))
+        .collect()
+}
+
+fn storage_setting(ini: &IniFile, key: &str) -> Option<PathBuf> {
+    (ini.get("Data%20Storage", "use_custom_storage") == Some("true"))
+        .then(|| ini.get("Data%20Storage", key))
+        .flatten()
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
+fn read_qt_config(config_dir: &Path) -> Option<IniFile> {
+    let bundled = config_dir.join("config").join("qt-config.ini");
     let path = if bundled.is_file() {
         bundled
     } else {
@@ -257,5 +276,31 @@ mod tests {
         };
         assert!(save.dir.starts_with(&sd), "{}", save.dir.display());
         assert!(save.dir.ends_with("title/00040000/000ba900/data"));
+    }
+
+    /// EmuDeck's layout: the SD card and NAND elsewhere, neither in the user dir.
+    #[test]
+    fn custom_storage_counts_as_in_use() {
+        let root = TempDir::new("azahar-in-use");
+        let user = root.path().join("user");
+        std::fs::create_dir_all(user.join("states")).unwrap();
+        let config = EmulatorConfig {
+            binary: "azahar".into(),
+            config_dir: user.clone(),
+        };
+        let ini = |custom: bool| {
+            format!(
+                "[Data%20Storage]\nuse_custom_storage={custom}\nsdmc_directory={}/\n",
+                root.path().join("sdmc").display()
+            )
+        };
+        write(&user.join("config/qt-config.ini"), ini(true).as_bytes());
+        assert!(super::super::config_dir_problem(&Azahar, &config).is_some());
+
+        std::fs::create_dir_all(root.path().join("sdmc")).unwrap();
+        assert_eq!(super::super::config_dir_problem(&Azahar, &config), None);
+
+        write(&user.join("config/qt-config.ini"), ini(false).as_bytes());
+        assert!(!Azahar.config_dir_in_use(&user), "custom storage is off");
     }
 }
