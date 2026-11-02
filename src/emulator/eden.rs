@@ -136,17 +136,19 @@ fn game_save_dir(config: &EmulatorConfig, game_id: &str) -> Option<GameSaveDir> 
 
     let dir = match account {
         Some(a) if a.is_dir() => a,
-        _ if device.is_dir() => device,
-        _ if crate::switch::DEVICE_SAVE_TITLES.contains(&title.as_str()) => device,
+        _ if device.is_dir() => device.clone(),
+        _ if crate::switch::DEVICE_SAVE_TITLES.contains(&title.as_str()) => device.clone(),
         Some(a) => a,
         None => return None,
     };
+    let (alternatives, ignored) = crate::switch::sigil_areas(&title, dir == device);
     Some(GameSaveDir {
         dir,
         archive_root: title,
         extra_roots: Vec::new(),
         mirrors: Vec::new(),
-        required_subdir: None,
+        alternatives,
+        ignored,
         create: None,
     })
 }

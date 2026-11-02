@@ -81,20 +81,13 @@ pub fn zip_content_hash(zip_path: &Path) -> Result<String> {
     Ok(finalize_hash(lines))
 }
 
-/// RomM's `content_hash` for a zip of these in-memory members (see
-/// `entries_hash`). `None` when there are none.
-pub fn members_hash(members: &[(String, Vec<u8>)]) -> Option<String> {
-    (!members.is_empty()).then(|| {
-        finalize_hash(
-            members
-                .iter()
-                .map(|(name, data)| (name.clone(), hex(&md5::Md5::digest(data))))
-                .collect(),
-        )
-    })
+/// The MD5 of `data` as RomM writes a `content_hash`.
+pub fn bytes_md5(data: &[u8]) -> String {
+    hex(&md5::Md5::digest(data))
 }
 
 /// Write a zip of these in-memory members to `dest`.
+#[cfg(test)]
 pub fn zip_members(members: &[(String, Vec<u8>)], dest: &Path) -> Result<()> {
     anyhow::ensure!(!members.is_empty(), "no files to archive");
     let out =
@@ -243,36 +236,52 @@ pub fn restore_bundle(
     result
 }
 
-/// Restore a directory-save zip. `roots` maps each root folder the zip may
-/// contain (compared case-insensitively) to the directories that receive it:
-/// the first is the real save, the rest mirrors (Ryujinx's working copy).
+/// One root folder of a directory-save zip and where it is restored.
+#[derive(Debug, Clone)]
+pub struct ZipRoot {
+    /// The root as rommd writes it (`0100000000010000`, `data`); several
+    /// segments for a folder deeper in the zip (`524d3845/data`).
+    pub name: String,
+    /// The directories that receive it: the first is the real save, the rest
+    /// mirrors (Ryujinx's working copy).
+    pub targets: Vec<PathBuf>,
+    /// Other prefixes read as this root, preferred over `name` when a zip has
+    /// both: how argosy-launcher's Sigil units spell it
+    /// (`00040000/00033500/data`, `device/<title>`).
+    pub alternatives: Vec<String>,
+}
+
+/// Restore a directory-save zip. Prefixes compare case-insensitively.
 ///
-/// An entry under any other root fails the restore before anything is touched
-/// — it guards against restoring another game's save if RomM has a file
-/// attached to the wrong ROM. Each root the zip contains replaces its
-/// directories, after the first is copied to `backup_dir/<root>`; a root the
-/// zip lacks leaves its directories alone.
+/// An entry under no root and no `ignored` prefix fails the restore before
+/// anything is touched — it guards against restoring another game's save if
+/// RomM has a file attached to the wrong ROM. Each root the zip contains
+/// replaces its directories, after the first is copied to
+/// `backup_dir/<root>`; a root the zip lacks leaves its directories alone.
+/// Entries under `ignored` (parts of a unit this save doesn't hold) are
+/// skipped.
 pub fn restore_roots(
     zip_path: &Path,
-    roots: &[(String, Vec<PathBuf>)],
+    roots: &[ZipRoot],
+    ignored: &[String],
     backup_dir: &Path,
 ) -> Result<()> {
     let staging = tempdir_near(backup_dir)?;
     let result = (|| {
-        let expected: Vec<&str> = roots.iter().map(|(r, _)| r.as_str()).collect();
-        let present = extract_rooted(zip_path, &expected, &staging)?;
-        for (root, targets) in roots {
-            let Some(staged) = present.iter().find(|p| p.eq_ignore_ascii_case(root)) else {
+        let present = extract_rooted(zip_path, roots, ignored, &staging)?;
+        for (i, root) in roots.iter().enumerate() {
+            let variants = root.alternatives.len() + 1;
+            let Some(variant) = (0..variants).find(|v| present.contains(&(i, *v))) else {
                 continue;
             };
-            let staged = staging.join(staged);
-            if let Some(primary) = targets.first()
+            let staged = staging.join(format!("{i}-{variant}"));
+            if let Some(primary) = root.targets.first()
                 && newest_mtime(primary).is_some()
             {
-                copy_dir(primary, &backup_dir.join(root))
+                copy_dir(primary, &backup_dir.join(&root.name))
                     .with_context(|| format!("backing up {}", primary.display()))?;
             }
-            for target in targets {
+            for target in &root.targets {
                 replace_dir_contents(&staged, target)
                     .with_context(|| format!("restoring into {}", target.display()))?;
             }
@@ -283,36 +292,78 @@ pub fn restore_roots(
     result
 }
 
-/// Extract `zip_path` into `dest/<root>/…`; every entry must sit under one of
-/// `expected` roots. Returns the roots the zip contains.
-fn extract_rooted(zip_path: &Path, expected: &[&str], dest: &Path) -> Result<Vec<String>> {
+/// A prefix's path segments, lowercased.
+fn segments(prefix: &str) -> Vec<String> {
+    prefix
+        .split(['/', '\\'])
+        .filter(|s| !s.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// Extract `zip_path` into `dest/<root index>-<variant>/…`, where variant 0
+/// to n-1 are a root's alternatives and n its own name. Every entry must sit
+/// under a root or an ignored prefix; the longest prefix wins. Returns the
+/// (root, variant) pairs the zip contains.
+fn extract_rooted(
+    zip_path: &Path,
+    roots: &[ZipRoot],
+    ignored: &[String],
+    dest: &Path,
+) -> Result<Vec<(usize, usize)>> {
+    // (segments, the root and variant they stand for; `None` when ignored)
+    type Prefix = (Vec<String>, Option<(usize, usize)>);
+    let mut prefixes: Vec<Prefix> = Vec::new();
+    for (i, root) in roots.iter().enumerate() {
+        for (v, alt) in root.alternatives.iter().enumerate() {
+            prefixes.push((segments(alt), Some((i, v))));
+        }
+        prefixes.push((segments(&root.name), Some((i, root.alternatives.len()))));
+    }
+    prefixes.extend(ignored.iter().map(|p| (segments(p), None)));
+    prefixes.sort_by_key(|(segs, _)| std::cmp::Reverse(segs.len()));
+
     let file = std::fs::File::open(zip_path)?;
     let mut archive = zip::ZipArchive::new(file).context("reading save zip")?;
-    let mut present: Vec<String> = Vec::new();
+    let mut present: Vec<(usize, usize)> = Vec::new();
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         let Some(name) = entry.enclosed_name() else {
             anyhow::bail!("unsafe path in save zip: {}", entry.name());
         };
-        let mut comps = name.components();
-        let root = match comps.next() {
-            Some(Component::Normal(r)) => r.to_string_lossy().into_owned(),
-            _ => anyhow::bail!("unexpected entry in save zip: {}", entry.name()),
+        let parts: Vec<String> = name
+            .components()
+            .map(|c| match c {
+                Component::Normal(p) => Ok(p.to_string_lossy().into_owned()),
+                _ => anyhow::bail!("unexpected entry in save zip: {}", entry.name()),
+            })
+            .collect::<Result<_>>()?;
+        let Some((len, target)) = prefixes.iter().find_map(|(segs, target)| {
+            let matches = parts.len() >= segs.len()
+                && segs.iter().zip(&parts).all(|(s, p)| *s == p.to_lowercase());
+            matches.then_some((segs.len(), *target))
+        }) else {
+            anyhow::bail!(
+                "save zip holds {} but this game's save is {}",
+                parts.first().map(String::as_str).unwrap_or_default(),
+                roots
+                    .iter()
+                    .map(|r| r.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            );
         };
-        anyhow::ensure!(
-            expected.iter().any(|e| e.eq_ignore_ascii_case(&root)),
-            "save zip holds {} but this game's save is {}",
-            root,
-            expected.join(" + ")
-        );
-        if !present.contains(&root) {
-            present.push(root.clone());
+        let Some((root, variant)) = target else {
+            continue;
+        };
+        if !present.contains(&(root, variant)) {
+            present.push((root, variant));
         }
-        let rel: PathBuf = comps.collect();
+        let rel: PathBuf = parts[len..].iter().collect();
         if rel.as_os_str().is_empty() {
             continue;
         }
-        let out = dest.join(&root).join(&rel);
+        let out = dest.join(format!("{root}-{variant}")).join(&rel);
         if entry.is_dir() {
             std::fs::create_dir_all(&out)?;
             continue;
@@ -444,10 +495,8 @@ mod tests {
         let backup = base.join("backups/1");
         restore_roots(
             &zip,
-            &[(
-                "0100000000010000".into(),
-                vec![dest.clone(), mirror.clone()],
-            )],
+            &[root("0100000000010000", vec![dest.clone(), mirror.clone()])],
+            &[],
             &backup,
         )
         .unwrap();
@@ -509,7 +558,8 @@ mod tests {
         assert!(
             restore_roots(
                 &zip,
-                &[("0100000000010000".into(), vec![dest.clone()])],
+                &[root("0100000000010000", vec![dest.clone()])],
+                &[],
                 &base.join("bk")
             )
             .is_err()
@@ -579,10 +629,10 @@ mod tests {
         std::fs::create_dir_all(&data).unwrap();
         std::fs::write(data.join("save.bin"), b"keep").unwrap();
         let roots = [
-            ("data".to_owned(), vec![data.clone()]),
-            ("extdata".to_owned(), vec![ext.clone()]),
+            root("data", vec![data.clone()]),
+            root("extdata", vec![ext.clone()]),
         ];
-        restore_roots(&zip, &roots, &base.join("bk")).unwrap();
+        restore_roots(&zip, &roots, &[], &base.join("bk")).unwrap();
         assert_eq!(
             std::fs::read(data.join("save.bin")).unwrap(),
             b"keep",
@@ -590,11 +640,58 @@ mod tests {
         );
         assert_eq!(std::fs::read(ext.join("ext.bin")).unwrap(), b"new ext");
 
-        let only_data = [("data".to_owned(), vec![data.clone()])];
+        let only_data = [root("data", vec![data.clone()])];
         assert!(
-            restore_roots(&zip, &only_data, &base.join("bk2")).is_err(),
+            restore_roots(&zip, &only_data, &[], &base.join("bk2")).is_err(),
             "unexpected root"
         );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn root(name: &str, targets: Vec<PathBuf>) -> ZipRoot {
+        ZipRoot {
+            name: name.into(),
+            targets,
+            alternatives: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn reads_sigil_prefixes_and_skips_ignored_areas() {
+        let base = scratch("sigil-roots");
+        let zip = base.join("s.zip");
+        let file = std::fs::File::create(&zip).unwrap();
+        let mut w = zip::ZipWriter::new(file);
+        for (name, data) in [
+            ("0100000000010000/account.bin", &b"account"[..]),
+            ("device/0100000000010000/device.bin", b"device"),
+            ("Device/0100000000010000/sub/more.bin", b"more"),
+        ] {
+            w.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            w.write_all(data).unwrap();
+        }
+        w.finish().unwrap();
+
+        // A device save takes Sigil's device area over the account one.
+        let device = base.join("device");
+        let mut r = root("0100000000010000", vec![device.clone()]);
+        r.alternatives = vec!["device/0100000000010000".into()];
+        restore_roots(&zip, &[r], &[], &base.join("bk")).unwrap();
+        assert_eq!(std::fs::read(device.join("device.bin")).unwrap(), b"device");
+        assert_eq!(std::fs::read(device.join("sub/more.bin")).unwrap(), b"more");
+        assert!(!device.join("account.bin").exists());
+
+        // An account save skips the device area, and refuses it unless told to.
+        let account = base.join("account");
+        let r = root("0100000000010000", vec![account.clone()]);
+        assert!(restore_roots(&zip, std::slice::from_ref(&r), &[], &base.join("bk2")).is_err());
+        restore_roots(&zip, &[r], &["device".into()], &base.join("bk3")).unwrap();
+        assert_eq!(
+            std::fs::read(account.join("account.bin")).unwrap(),
+            b"account"
+        );
+        assert!(!account.join("device.bin").exists());
         let _ = std::fs::remove_dir_all(&base);
     }
 }

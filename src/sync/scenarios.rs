@@ -97,7 +97,8 @@ impl Device {
                 archive_root: TITLE.into(),
                 extra_roots: vec![],
                 mirrors: vec![],
-                required_subdir: None,
+                alternatives: vec![],
+                ignored: vec![],
                 create: None,
             })),
             states: None,
@@ -279,30 +280,91 @@ async fn refuses_an_archive_of_another_game() {
     );
 }
 
-#[tokio::test]
-async fn a_folder_without_its_required_data_is_not_a_save() {
-    let fake = FakeRomm::start().await;
-    let d = Device::new("wii");
-    write(&d.path("title/content/title.tmd"), b"tmd");
-    let layout = SaveLayout {
+fn wii(d: &Device) -> SaveLayout {
+    SaveLayout {
         saves: Some(SaveSet::Dir(GameSaveDir {
-            dir: d.path("title"),
-            archive_root: "524d3845".into(),
+            dir: d.path("title/data"),
+            archive_root: "524d3845/data".into(),
             extra_roots: vec![],
             mirrors: vec![],
-            required_subdir: Some("data"),
+            alternatives: vec![],
+            ignored: vec!["524d3845/content".into()],
             create: None,
         })),
         states: None,
-    };
-    d.sync(&fake, &DOLPHIN, &layout, None).await;
-    assert!(fake.writes().is_empty());
-    write(&d.path("title/data/save.bin"), b"progress");
-    d.sync(&fake, &DOLPHIN, &layout, None).await;
-    assert_eq!(
-        zip_names(&fake.saves(ROM)[0].data),
-        ["524d3845/content/title.tmd", "524d3845/data/save.bin"]
+    }
+}
+
+#[tokio::test]
+async fn a_wii_save_is_its_data_folder_whichever_shape_romm_holds() {
+    let fake = FakeRomm::start().await;
+    // argosy's older upload carries the title's content/ too.
+    fake.seed_save(
+        ROM,
+        "Game.zip",
+        "dolphin",
+        Some("autosave"),
+        &zip_bytes(&[
+            ("524d3845/content/title.tmd", b"their tmd"),
+            ("524d3845/data/save.bin", b"progress"),
+        ]),
     );
+    let d = Device::new("wii");
+    write(&d.path("title/content/title.tmd"), b"our tmd");
+    d.sync(&fake, &DOLPHIN, &wii(&d), None).await;
+    assert_eq!(read(d.path("title/data/save.bin")), b"progress");
+    assert_eq!(read(d.path("title/content/title.tmd")), b"our tmd");
+
+    write(&d.path("title/data/save.bin"), b"more progress");
+    d.sync(&fake, &DOLPHIN, &wii(&d), None).await;
+    assert_eq!(
+        zip_names(&fake.saves(ROM).pop().unwrap().data),
+        ["524d3845/data/save.bin"],
+        "Sigil's unit: no content/"
+    );
+}
+
+#[tokio::test]
+async fn a_switch_device_save_restores_from_sigils_device_area() {
+    let fake = FakeRomm::start().await;
+    fake.seed_save(
+        ROM,
+        "Game.zip",
+        "eden",
+        Some("autosave"),
+        &zip_bytes(&[
+            (&format!("{TITLE}/account.bin"), b"account"),
+            (&format!("device/{TITLE}/island.bin"), b"island"),
+        ]),
+    );
+    let layout = |d: &Device, device: bool| {
+        let (alternatives, ignored) = crate::switch::sigil_areas(TITLE, device);
+        SaveLayout {
+            saves: Some(SaveSet::Dir(GameSaveDir {
+                dir: d.path("save"),
+                archive_root: TITLE.into(),
+                extra_roots: vec![],
+                mirrors: vec![],
+                alternatives,
+                ignored,
+                create: None,
+            })),
+            states: None,
+        }
+    };
+    let device = Device::new("switch-device");
+    device
+        .sync(&fake, &EDEN, &layout(&device, true), None)
+        .await;
+    assert_eq!(read(device.path("save/island.bin")), b"island");
+    assert!(!device.path("save/account.bin").exists());
+
+    let account = Device::new("switch-account");
+    account
+        .sync(&fake, &RYUJINX, &layout(&account, false), None)
+        .await;
+    assert_eq!(read(account.path("save/account.bin")), b"account");
+    assert!(!account.path("save/island.bin").exists());
 }
 
 /// A Ryujinx-like layout whose save folder has to be created by a hook, which
@@ -322,7 +384,8 @@ fn slot_layout(d: &Device, calls: &Arc<AtomicUsize>, refuse: bool) -> SaveLayout
             archive_root: TITLE.into(),
             extra_roots: vec![],
             mirrors: vec![d.path("slot/1")],
-            required_subdir: None,
+            alternatives: vec![],
+            ignored: vec![],
             create: Some(create),
         })),
         states: None,
@@ -382,29 +445,55 @@ async fn a_missing_save_folder_is_created_only_to_restore_into() {
 
 // ── GameCube bundles ──────────────────────────────────────────────────────────
 
+/// A `.gci`: game and maker code, then the save's file name at 0x08.
+fn gci(id: &str, file_name: &str, body: &[u8]) -> Vec<u8> {
+    let mut data = vec![0u8; 0x40];
+    data[..6].copy_from_slice(id.as_bytes());
+    data[0x08..0x08 + file_name.len()].copy_from_slice(file_name.as_bytes());
+    data.extend_from_slice(body);
+    data
+}
+
 #[tokio::test]
 async fn gamecube_bundle_holds_only_this_games_files() {
     let fake = FakeRomm::start().await;
     let (a, b) = (Device::new("gc-a"), Device::new("gc-b"));
-    write(&a.path("card/01-GALE-SuperSmashBros.gci"), b"GALE01 melee");
-    write(&a.path("card/01-GMSE-Sunshine.gci"), b"GMSE01 sunshine");
-    a.sync(&fake, &DOLPHIN, &a.gamecube(), None).await;
-    assert_eq!(
-        zip_names(&fake.saves(ROM)[0].data),
-        ["01-GALE-SuperSmashBros.gci"]
+    let melee = gci("GALE01", "SuperSmashBros", b"melee");
+    write(&a.path("card/01-GALE-SuperSmashBros.gci"), &melee);
+    write(
+        &a.path("card/01-GMSE-Sunshine.gci"),
+        &gci("GMSE01", "Sunshine", b"s"),
     );
 
-    write(&b.path("card/01-GPOE-Other.gci"), b"GPOE01 other game");
+    // A game's only save travels bare, as argosy uploads it.
+    a.sync(&fake, &DOLPHIN, &a.gamecube(), None).await;
+    let up = fake.saves(ROM).pop().unwrap();
+    assert!(up.file_name.ends_with("].gci"), "{}", up.file_name);
+    assert_eq!(up.data, melee);
+    assert_eq!(up.content_hash, content_hash(&melee));
+
+    let other = gci("GPOE01", "Other", b"other game");
+    write(&b.path("card/01-GPOE-Other.gci"), &other);
     b.sync(&fake, &DOLPHIN, &b.gamecube(), None).await;
-    assert_eq!(
-        read(b.path("card/01-GALE-SuperSmashBros.gci")),
-        b"GALE01 melee"
-    );
+    assert_eq!(read(b.path("card/01-GALE-SuperSmashBros.gci")), melee);
     assert_eq!(
         read(b.path("card/01-GPOE-Other.gci")),
-        b"GPOE01 other game",
+        other,
         "other games' saves stay"
     );
+
+    // Two saves of the game go up as a zip of both.
+    write(
+        &b.path("card/8P-GALE-Replay.gci"),
+        &gci("GALE8P", "Replay", b"r"),
+    );
+    b.sync(&fake, &DOLPHIN, &b.gamecube(), None).await;
+    assert_eq!(
+        zip_names(&fake.saves(ROM).pop().unwrap().data),
+        ["01-GALE-SuperSmashBros.gci", "8P-GALE-Replay.gci"]
+    );
+    a.sync(&fake, &DOLPHIN, &a.gamecube(), None).await;
+    assert!(a.path("card/8P-GALE-Replay.gci").is_file());
 }
 
 #[tokio::test]
@@ -415,7 +504,7 @@ async fn refuses_a_bundle_with_another_games_save() {
         "Game.zip",
         "dolphin",
         Some("autosave"),
-        &zip_bytes(&[("01-GALE-renamed.gci", b"GMSE01 not melee")]),
+        &zip_bytes(&[("01-GALE-renamed.gci", &gci("GMSE01", "Sunshine", b"s"))]),
     );
     let d = Device::new("gc-foreign");
     d.sync(&fake, &DOLPHIN, &d.gamecube(), None).await;
@@ -612,7 +701,8 @@ async fn a_3ds_save_carries_title_data_and_extdata_separately() {
             archive_root: "data".into(),
             extra_roots: vec![("extdata".into(), d.path("extdata/00001744"))],
             mirrors: vec![],
-            required_subdir: None,
+            alternatives: vec![],
+            ignored: vec![],
             create: None,
         })),
         states: None,
@@ -646,6 +736,40 @@ async fn a_3ds_save_carries_title_data_and_extdata_separately() {
         b"b's own title data",
         "a root the zip lacks stays"
     );
+}
+
+#[tokio::test]
+async fn a_3ds_save_restores_from_sigils_unit() {
+    let fake = FakeRomm::start().await;
+    fake.seed_save(
+        ROM,
+        "Game.zip",
+        "eden",
+        Some("autosave"),
+        &zip_bytes(&[
+            ("00040000/00174400/data/00000001/save.bin", b"save"),
+            ("00040000/00174400/extdata/user/progress.bin", b"ext"),
+        ]),
+    );
+    let d = Device::new("3ds-sigil");
+    let layout = SaveLayout {
+        saves: Some(SaveSet::Dir(GameSaveDir {
+            dir: d.path("title/data"),
+            archive_root: "data".into(),
+            extra_roots: vec![("extdata".into(), d.path("extdata/00001744"))],
+            mirrors: vec![],
+            alternatives: vec![
+                ("data".into(), "00040000/00174400/data".into()),
+                ("extdata".into(), "00040000/00174400/extdata".into()),
+            ],
+            ignored: vec![],
+            create: None,
+        })),
+        states: None,
+    };
+    d.sync(&fake, &EDEN, &layout, None).await;
+    assert_eq!(read(d.path("title/data/00000001/save.bin")), b"save");
+    assert_eq!(read(d.path("extdata/00001744/user/progress.bin")), b"ext");
 }
 
 /// RomM answers uploads with `updated_at` in UTC and lists it in its own time
@@ -742,15 +866,9 @@ async fn n64_saves_move_between_rmg_and_gopher64() {
     a.sync(&fake, &RMG, &a.n64(true, None), None).await;
     let up = fake.saves(ROM).pop().unwrap();
     assert_eq!(up.slot.as_deref(), Some("autosave"));
-    assert_eq!(zip_names(&up.data), ["sram"]);
-    let unit = crate::n64::read_unit(&{
-        let path = a.path("unit.zip");
-        write(&path, &up.data);
-        path
-    })
-    .unwrap();
-    assert_eq!(unit.members(), [("sram".to_owned(), bus.clone())]);
-    assert_eq!(unit.hash().as_deref(), Some(up.content_hash.as_str()));
+    assert!(up.file_name.ends_with("].srm"), "{}", up.file_name);
+    assert_eq!(up.data.len(), 0x48800, "a libretro .srm");
+    assert_eq!(&up.data[0x20800..0x28800], &swapped[..]);
 
     b.sync(&fake, &GOPHER64, &b.n64(false, Some("GAME-12345678")), None)
         .await;
@@ -769,6 +887,26 @@ async fn n64_saves_move_between_rmg_and_gopher64() {
     a.sync(&fake, &RMG, &a.n64(true, None), None).await;
     let (_, swapped2) = n64_sram(2);
     assert_eq!(read(a.path("n64/GOOD NAME-12345678.sra")), swapped2);
+}
+
+#[tokio::test]
+async fn n64_restores_sigils_unit() {
+    let fake = FakeRomm::start().await;
+    let (bus, _) = n64_sram(1);
+    fake.seed_save(
+        ROM,
+        "Game.zip",
+        "mupen64plus_fz",
+        Some("autosave"),
+        &zip_bytes(&[("sram", &bus)]),
+    );
+    let d = Device::new("n64-sigil");
+    d.sync(&fake, &GOPHER64, &d.n64(false, Some("GAME-12345678")), None)
+        .await;
+    assert_eq!(read(d.path("n64/GAME-12345678.sra")), bus);
+    d.sync(&fake, &GOPHER64, &d.n64(false, Some("GAME-12345678")), None)
+        .await;
+    assert!(fake.writes().is_empty(), "the base covers the unit's shape");
 }
 
 #[tokio::test]

@@ -41,9 +41,12 @@ fn read_pfs0_index(f: &mut std::fs::File) -> Result<(Vec<Pfs0Entry>, Vec<u8>, u6
 }
 
 /// Emulators whose save directories hold the same raw save filesystem contents
-/// for a title, so a save made in one can be restored into any other.
-pub const SAVE_COMPATIBLE_EMULATORS: &[&str] =
-    &["eden", "ryujinx", "yuzu", "citron", "sudachi", "suyu"];
+/// for a title, so a save made in one can be restored into any other; with
+/// argosy-launcher's IDs (`EmulatorRegistry.kt`).
+pub const SAVE_COMPATIBLE_EMULATORS: &[&str] = &[
+    "eden", "ryujinx", "yuzu", "citron", "sudachi", "suyu", "eden_duo", "lemon", "kenjinx",
+    "skyline", "strato",
+];
 
 /// Titles that keep a single save per console (Switch "device" save data)
 /// instead of one per user. Only consulted when no save exists locally yet —
@@ -59,6 +62,22 @@ pub const DEVICE_SAVE_TITLES: &[&str] = &[
     "0100165003504000", // Nintendo Labo Toy-Con 04: VR Kit
     "0100C1800A9B6000", // Go Vacation
 ];
+
+/// Where argosy-launcher's Sigil units put a Switch save (Sigil
+/// `save_layout.c`, `docs/platforms/switch.md`): an account save at
+/// `<title>/`, as rommd and argosy's older uploads do, and a device save at
+/// `device/<title>/`; one unit can hold both. For a save rooted at `<title>`:
+/// the alternatives and ignored prefixes of its `GameSaveDir`.
+pub fn sigil_areas(title: &str, device: bool) -> (Vec<(String, String)>, Vec<String>) {
+    if device {
+        (
+            vec![(title.to_owned(), format!("device/{title}"))],
+            Vec::new(),
+        )
+    } else {
+        (Vec::new(), vec!["device".to_owned()])
+    }
+}
 
 /// Read the application title ID (16 lowercase hex chars) from an NSP. Filenames
 /// are deliberately not used — they can be wrong and would silently scope saves

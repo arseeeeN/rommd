@@ -235,21 +235,36 @@ entry, and a revert would be undone by the next sync. **Downloads** back up the 
 version to `save-backups/<emu>/<rom_id>/<time>/` next to the sync state (last 5 kept per game) and
 write atomically (flat files via temp + rename).
 
-**Archive saves (`Dir`, `Bundle`)** are one save history per game,
-argosy-launcher compatible: file name `<rom stem>.zip`, slot `autosave`,
-`emulator` = the real emulator id. The unit's remote is the slot's newest zip
-from *any* emulator in `save_family`, so Switch saves move between Eden and Ryujinx (their raw
+**argosy shapes.** argosy-launcher has two upload formats: its older
+per-emulator ones, used with RomM before 5.5, and Sigil's units, which it
+sends only to RomM 5.5+ through the snapshots API (`SigilSaveHandler.kt`
+`unitsEnabled`). rommd uploads the older shapes (which Sigil also restores)
+and restores both. Where Sigil spells a zip root differently, `GameSaveDir`
+lists it in `alternatives` (preferred when a zip has both) and the parts of a
+unit this save doesn't hold in `ignored`.
+
+**Archive saves (`Dir`, `Bundle`, `N64`)** are one save history per game:
+file name `<rom stem>.zip` (a lone `.gci`, an N64 `.srm`), slot `autosave`,
+`emulator` = the real emulator id. The unit's remote is the slot's newest
+archive from *any* emulator in `save_family`, so Switch saves move between Eden and Ryujinx (their raw
 contents are identical). A `Dir` zip's entries sit under `archive_root/` (and
 any `extra_roots`); a zip with any other root is refused, a root it lacks
 leaves its directory untouched (empty folders are kept as zip directory
 entries, which don't count towards `content_hash`); a `Bundle` zip is flat and every file must
-pass the matcher (GCI header), so another game's save is never restored.
+pass the matcher (GCI header), so another game's save is never restored. A
+bundle with `FileSet::lone_extension` travels bare while it holds one file
+(GameCube, as argosy uploads a game's only save) and restores a bare file
+under `FileSet::lone_name`.
 
 **Switch (Eden, Ryujinx):** only the active user is synced.
 
 A game's save is either an **Account** save (per user) or a **Device** save
 (one per console, e.g. Animal Crossing). The type found on disk wins, Account
-first; with no local save, `switch::DEVICE_SAVE_TITLES` decides.
+first; with no local save, `switch::DEVICE_SAVE_TITLES` decides. Both upload
+as `<TITLE>/`; Sigil puts a device save at `device/<TITLE>/` and can carry
+both, so restore takes `device/` for a device save and skips it for an
+account save (`switch::sigil_areas`). Save family includes argosy's IDs
+(`eden_duo`, `lemon`, `kenjinx`, `skyline`, `strato`).
 
 - **Eden:** `<nand>/user/save/0000000000000000/<USER_ID>/<TITLE_ID>/`. `<nand>`
   from `[Data%20Storage] nand_directory` in qt-config.ini (default
@@ -279,21 +294,25 @@ first; with no local save, `switch::DEVICE_SAVE_TITLES` decides.
 Linux). `Dolphin.ini` is read from `config_dir/Config/` (macOS, Windows,
 portable) or `~/.config/dolphin-emu/` (Linux XDG split). The disc header magic
 tells GameCube from Wii.
-- **GameCube:** `Bundle` of the game's `.gci` files in `GC/<region>/Card A/`
+Saves from any `dolphin` or `dolphin_*` emulator (argosy's forks) are accepted.
+- **GameCube:** `Bundle` of the game's `.gci` files (header's 4-character game
+  code, as argosy and Sigil group them) in `GC/<region>/Card A/`
   (region from the ID's 4th char: E→USA, J→JAP, else EUR; a card already
   holding the game's saves wins), or `GCIFolderAPath[Override]` when set. Slot
   A must be a GCI folder (`SlotA` = 8 or unset); a raw card (1) holds all
   games in one image and is not synced (argosy does sync them; see the PS2
   memory card entry in `dev/backlog.md`).
-- **Wii:** `Dir` of `<NAND root>/title/00010000/<hex game code>/`, rooted at
-  that folder name like argosy. It only counts as a save once `data/` has files
-  (`required_subdir`), since Dolphin writes `content/title.tmd` on first boot.
+- **Wii:** `Dir` of `<NAND root>/title/00010000/<hex game code>/data/`, rooted
+  at `<code>/data` as Sigil's unit is. The title's `content/` (Dolphin writes
+  `title.tmd` on boot) is not synced; argosy's older uploads carry it, and
+  restore skips it (`ignored`).
 
-**mGBA:** `<rom stem>.sav`. RomM's web player (EmulatorJS) uploads the same
-raw battery save as `<rom stem> [<time>].srm` tagged `mgba`, so the `FileSet`
-maps `.srm` to `.sav` (`remote_extensions`) and saves move between browser and
-desktop. Other libretro cores need a per-emulator check before such a mapping:
-N64's `.srm`, for one, combines several save types in one file.
+**mGBA:** `<rom stem>.sav` (only `.sav`). RomM's web player (EmulatorJS) and
+argosy's libretro cores upload the same raw battery save as `<rom stem>
+[<time>].srm`, so the `FileSet` maps `.srm` to `.sav` (`remote_extensions`) and
+saves move between them and desktop. Save family: GB/GBA libretro cores and
+Pizza Boy. Sigil has no GBA unit; its GB unit (cart RAM and clock apart) is not
+handled yet. argosy's zip of `.srm` + `.rtc` is ignored.
 
 **Azahar (3DS):** `config_dir` is the user dir (`~/.local/share/azahar-emu`);
 qt-config.ini is in `config_dir/config/` (portable, macOS) or
@@ -304,8 +323,10 @@ A save is two trees under `sdmc/Nintendo 3DS/<ID0>/<ID1>/` (all-zero IDs on
 Azahar): `title/<high>/<low>/data/` (the save archive plus its
 `00000001.metadata`) and `extdata/00000000/<low >> 8>/` — some games keep
 progress only in extdata. One zip with roots `data/` and `extdata/`, as
-argosy does; those roots don't name the title, so only RomM's ROM link guards
-against a wrong zip. Title IDs come from the ROM header; update and DLC IDs
+argosy's older uploads are; Sigil's unit puts both under the save ID,
+`<high>/<low>/data/` (lowercase hex), which restore also reads. The older
+roots don't name the title, so only RomM's ROM link guards against a wrong
+zip. Title IDs come from the ROM header; update and DLC IDs
 map to the base title. States are `states/<TITLE ID>.<NN>.cst` (00 is the
 quicksave). Save family: Citra forks (citra, citra_mmj, lime3ds, borked3ds).
 
@@ -324,10 +345,13 @@ CHD/CSO images, which `ps_disc` can't read, get both from PCSX2's
 with the game. Memory cards are not synced: the default cards hold every game's
 saves (`dev/backlog.md`, PS2 memory cards).
 
-**N64 (gopher64, RMG):** saves are a `SaveSet::N64` unit, argosy's
-(Sigil `sync_n64.c`): a zip of the save types the game uses, `eeprom`,
-`pak1`–`pak4`, `sram`, `flash`, each in bus order, so its hash is the same from
-any emulator (save family: every N64 emulator, `n64::SAVE_COMPATIBLE_EMULATORS`).
+**N64 (gopher64, RMG):** saves are a `SaveSet::N64` unit, read region by
+region as Sigil does (`sync_n64.c`): `eeprom`, `pak1`–`pak4`, `sram`, `flash`,
+each in bus order, so the save is the same from any emulator (save family:
+every N64 emulator, `n64::SAVE_COMPATIBLE_EMULATORS`). It uploads as a libretro
+`<rom stem>.srm` (argosy's older format, RomM's web player's; Sigil restores
+it) and its hash is that file's MD5; restore also reads Sigil's unit (a zip of
+the regions).
 On disk each emulator keeps `.eep`, `.sra`, `.fla` and a four-pak `.mpk`;
 mupen64plus reverses each 32-bit word of SRAM and flash (`word_swapped`),
 gopher64 doesn't. A type counts when it holds a byte other than 0x00/0xFF

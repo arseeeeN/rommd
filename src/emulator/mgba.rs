@@ -25,6 +25,24 @@ impl Emulator for MGba {
         &["gb", "gbc", "gba"]
     }
 
+    /// Emulators that keep the same raw battery save: libretro cores as
+    /// RomM's web player and argosy-launcher tag them, and argosy's IDs
+    /// (`EmulatorRegistry.kt`).
+    fn save_family(&self) -> &'static [&'static str] {
+        &[
+            "gpsp",
+            "vba_next",
+            "vbam",
+            "gambatte",
+            "sameboy",
+            "tgbdual",
+            "pizza_boy_gba",
+            "pizza_boy_gba_pro",
+            "pizza_boy_gb",
+            "pizza_boy_gb_pro",
+        ]
+    }
+
     fn config_dir_markers(&self) -> &'static [&'static str] {
         &["config.ini"]
     }
@@ -79,9 +97,11 @@ impl Emulator for MGba {
     }
 
     /// mGBA names saves and states after the ROM file stem (`Game.sav`,
-    /// `Game.ss1`). RomM's web player (EmulatorJS, mGBA core) stores the same
-    /// battery save as `<rom stem>.srm`, so those restore as `.sav` and the
-    /// save moves between the browser and desktop mGBA.
+    /// `Game.ss1`). RomM's web player (EmulatorJS, mGBA core) and libretro
+    /// clients store the same battery save as `<rom stem>.srm`, so those
+    /// restore as `.sav` and the save moves between them and desktop mGBA.
+    /// Only `.sav` is a save: argosy zips a save with its clock (`.srm` and
+    /// `.rtc`) as `<rom stem>.zip`, which mGBA can't read.
     async fn save_layout(
         &self,
         config: &EmulatorConfig,
@@ -97,7 +117,7 @@ impl Emulator for MGba {
         let states_dir = read_path_key(config, "savestatePath")
             .unwrap_or_else(|| config.config_dir.join("states"));
         SaveLayout {
-            saves: FileSet::stem(saves_dir, stem.clone())
+            saves: FileSet::stem_with_extension(saves_dir, stem.clone(), "sav")
                 .map(|set| SaveSet::Files(set.with_remote_extensions(&[("srm", "sav")]))),
             states: FileSet::stem(states_dir, stem),
         }

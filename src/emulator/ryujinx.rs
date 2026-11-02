@@ -122,7 +122,12 @@ async fn game_save_dir(config: &EmulatorConfig, game_id: &str) -> Option<GameSav
     let title_id = u64::from_str_radix(game_id, 16).ok()?;
     let saves_root = config.config_dir.join("bis").join("user").join("save");
     if let Some(slot) = find_save_slot(&saves_root, title_id).await {
-        return Some(slot_save_dir(game_id, &slot, None));
+        let save_type = tokio::fs::read(slot.join("ExtraData0"))
+            .await
+            .ok()
+            .and_then(|d| d.get(0x20).copied());
+        let device = save_type == Some(SAVE_TYPE_DEVICE);
+        return Some(slot_save_dir(game_id, &slot, device, None));
     }
     let root = config.config_dir.clone();
     let pending = tokio::task::spawn_blocking(move || pending_slot(&root, title_id))
@@ -143,6 +148,7 @@ async fn game_save_dir(config: &EmulatorConfig, game_id: &str) -> Option<GameSav
         game_id, pending.id
     );
     let slot = pending.dir(&config.config_dir);
+    let device = pending.attribute[0x20] == SAVE_TYPE_DEVICE;
     let (root, binary) = (config.config_dir.clone(), config.binary.clone());
     let create = CreateDir(Arc::new(move || {
         anyhow::ensure!(
@@ -155,16 +161,24 @@ async fn game_save_dir(config: &EmulatorConfig, game_id: &str) -> Option<GameSav
             &crate::sync::data_dir().join("ryujinx-index-backups"),
         )
     }));
-    Some(slot_save_dir(game_id, &slot, Some(create)))
+    Some(slot_save_dir(game_id, &slot, device, Some(create)))
 }
 
-fn slot_save_dir(game_id: &str, slot: &Path, create: Option<CreateDir>) -> GameSaveDir {
+fn slot_save_dir(
+    game_id: &str,
+    slot: &Path,
+    device: bool,
+    create: Option<CreateDir>,
+) -> GameSaveDir {
+    let title = game_id.to_uppercase();
+    let (alternatives, ignored) = crate::switch::sigil_areas(&title, device);
     GameSaveDir {
         dir: slot.join("0"),
-        archive_root: game_id.to_uppercase(),
+        archive_root: title,
         extra_roots: Vec::new(),
         mirrors: vec![slot.join("1")],
-        required_subdir: None,
+        alternatives,
+        ignored,
         create,
     }
 }

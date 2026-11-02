@@ -110,6 +110,7 @@ impl Emulator for Azahar {
         };
         let (high, low) = ((id >> 32) as u32, id as u32);
         let root = sd_root(config);
+        let sigil = |area: &str| (area.to_owned(), format!("{high:08x}/{low:08x}/{area}"));
         SaveLayout {
             saves: Some(SaveSet::Dir(GameSaveDir {
                 dir: root
@@ -125,7 +126,9 @@ impl Emulator for Azahar {
                         .join(format!("{:08x}", low >> 8)),
                 )],
                 mirrors: Vec::new(),
-                required_subdir: None,
+                // argosy's Sigil unit puts both under the title's save ID.
+                alternatives: vec![sigil("data"), sigil("extdata")],
+                ignored: Vec::new(),
                 create: None,
             })),
             states: FileSet::stem(config.config_dir.join("states"), format!("{:016X}", id)),

@@ -1,10 +1,13 @@
 //! Nintendo 64 cartridges: the ROM's identity and the game's saves.
 //!
-//! Saves sync as argosy-launcher's unit (Sigil `src/n64_save.c` and
-//! `src/sync_n64.c`, `docs/platforms/n64.md`): a zip of the save types the
-//! game uses, `eeprom` (0x200 or 0x800 bytes), `pak1` to `pak4` (0x8000
-//! each), `sram` (0x8000) and `flash` (0x20000), each in the order the N64
-//! reads it, so the same save gives the same unit from any emulator. On disk
+//! A save is read and written as argosy-launcher's Sigil does (`src/n64_save.c`
+//! and `src/sync_n64.c`, `docs/platforms/n64.md`): region by region, `eeprom`
+//! (0x200 or 0x800 bytes), `pak1` to `pak4` (0x8000 each), `sram` (0x8000)
+//! and `flash` (0x20000), each in the order the N64 reads it, so the same save
+//! is the same from any emulator. rommd uploads it as a libretro `.srm`, which
+//! argosy's clients for RomM before 5.5, RomM's web player and Sigil all
+//! read; it restores that, Sigil's unit (a zip of those regions) and the
+//! other shapes clients uploaded before Sigil. On disk
 //! the standalone emulators keep a file per type, `.eep`, `.sra`, `.fla`, and
 //! one `.mpk` holding four paks; mupen64plus (RMG) reverses each 32-bit word
 //! of SRAM and flash, gopher64 keeps them in bus order.
@@ -169,7 +172,8 @@ impl Save {
         self.0.iter().all(Option::is_none)
     }
 
-    /// The unit's members, in region order.
+    /// Sigil's unit's members, in region order.
+    #[cfg(test)]
     pub fn members(&self) -> Vec<(String, Vec<u8>)> {
         self.0
             .iter()
@@ -178,9 +182,25 @@ impl Save {
             .collect()
     }
 
-    /// RomM's `content_hash` of the unit; `None` when the game has no save.
+    /// The save as a libretro `.srm`, what rommd uploads: the form argosy's
+    /// clients for RomM before 5.5 and RomM's web player keep, and one Sigil
+    /// restores (`n64_give_blob` with nothing to keep). A type the game
+    /// doesn't use is blank: 0xFF, a pak formatted.
+    pub fn srm(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(BLOB_SIZE);
+        for region in 0..REGIONS {
+            if self.0[region].is_none() && is_pak(region) {
+                out.extend(pak_formatted());
+            } else {
+                out.extend(self.give(region, true));
+            }
+        }
+        out
+    }
+
+    /// RomM's `content_hash` of the `.srm`; `None` when the game has no save.
     pub fn hash(&self) -> Option<String> {
-        save_archive::members_hash(&self.members())
+        (!self.is_empty()).then(|| save_archive::bytes_md5(&self.srm()))
     }
 }
 
@@ -330,10 +350,10 @@ pub fn local_mtime(files: &N64Files) -> Option<SystemTime> {
         .max()
 }
 
-/// Write the game's save as the unit to `dest`.
-pub fn write_unit(files: &N64Files, dest: &Path) -> Result<()> {
+/// Write the game's save to `dest` as a `.srm` (`Save::srm`).
+pub fn write_srm(files: &N64Files, dest: &Path) -> Result<()> {
     let save = read_local(files, &local_files(files)?)?;
-    save_archive::zip_members(&save.members(), dest)
+    Ok(std::fs::write(dest, save.srm())?)
 }
 
 /// Replace the game's files with the save in `unit`, backing up the current
@@ -493,7 +513,10 @@ pub fn rom_digest<D: Digest>(rom: &Path) -> Option<String> {
         if got == 0 {
             break;
         }
-        let order = *order.get_or_insert(order_of(&buf[..got])?);
+        let order = match order {
+            Some(order) => order,
+            None => *order.insert(order_of(&buf[..got])?),
+        };
         to_z64(&mut buf[..got], order);
         hasher.update(&buf[..got]);
         if got < buf.len() {
@@ -565,7 +588,7 @@ mod tests {
     }
 
     #[test]
-    fn mupen_and_gopher64_files_give_the_same_unit() {
+    fn mupen_and_gopher64_files_give_the_same_srm() {
         let root = TempDir::new("n64-same-unit");
         let (mupen, gopher) = (root.path().join("m"), root.path().join("g"));
         let mut swapped = sram_bus();
@@ -577,9 +600,20 @@ mod tests {
         assert!(hash.is_some());
         assert_eq!(hash, local_hash(&g).unwrap());
 
-        let unit = mupen.join("unit.zip");
-        write_unit(&m, &unit).unwrap();
-        let save = read_unit(&unit).unwrap();
+        let srm = mupen.join("Game.srm");
+        write_srm(&m, &srm).unwrap();
+        let data = std::fs::read(&srm).unwrap();
+        assert_eq!(data.len(), BLOB_SIZE);
+        assert_eq!(
+            &data[BLOB_OFFSETS[SRAM]..BLOB_OFFSETS[SRAM] + SRAM_SIZE],
+            &swapped[..]
+        );
+        assert_eq!(
+            &data[BLOB_OFFSETS[PAK1]..BLOB_OFFSETS[PAK1] + PAK_SIZE],
+            &pak_formatted()[..]
+        );
+        assert_eq!(Some(save_archive::bytes_md5(&data)), hash);
+        let save = read_unit(&srm).unwrap();
         assert_eq!(save.members(), vec![("sram".to_owned(), sram_bus())]);
         assert_eq!(save.hash(), hash);
     }
@@ -617,10 +651,7 @@ mod tests {
             std::fs::read(dir.join("Other-87654321.sra")).unwrap(),
             sram_bus()
         );
-        assert_eq!(
-            local_hash(&set).unwrap(),
-            save_archive::members_hash(&[("sram".into(), sram_bus())])
-        );
+        assert_eq!(local_hash(&set).unwrap(), read_unit(&unit).unwrap().hash());
     }
 
     #[test]
@@ -717,7 +748,8 @@ mod tests {
     #[test]
     fn rom_digest_is_over_the_big_endian_order() {
         let root = TempDir::new("n64-rom");
-        let mut z64 = vec![0u8; 0x1000];
+        // Several read chunks, so only the first is taken for the byte order.
+        let mut z64 = vec![0u8; (1 << 20) * 2 + 0x1000];
         z64[..4].copy_from_slice(&[0x80, 0x37, 0x12, 0x40]);
         z64[0x20..0x25].copy_from_slice(b"HELLO");
         for (i, b) in z64.iter_mut().enumerate().skip(0x40) {

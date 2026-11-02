@@ -295,14 +295,7 @@ impl Local {
         match self {
             Local::File(_) | Local::N64(_) => unreachable!("not archived from files"),
             Local::Dir(s) => {
-                let primary_present = s
-                    .required_subdir
-                    .is_none_or(|sub| save_archive::newest_mtime(&s.dir.join(sub)).is_some());
-                let mut entries = if primary_present {
-                    save_archive::dir_entries(&s.dir, &s.archive_root)?
-                } else {
-                    Vec::new()
-                };
+                let mut entries = save_archive::dir_entries(&s.dir, &s.archive_root)?;
                 for (root, dir) in &s.extra_roots {
                     entries.extend(save_archive::dir_entries(dir, root)?);
                 }
@@ -335,7 +328,23 @@ impl Local {
         Ok(dirs)
     }
 
+    /// The one file a bundle travels as when it holds only that
+    /// (`FileSet::lone_extension`), with that extension.
+    fn lone_file(&self) -> Option<(PathBuf, &'static str)> {
+        let Local::Bundle(set) = self else {
+            return None;
+        };
+        let ext = set.lone_extension()?;
+        match set.files().as_slice() {
+            [only] => Some((only.clone(), ext)),
+            _ => None,
+        }
+    }
+
     fn hash(&self) -> Result<Option<String>> {
+        if let Some((path, _)) = self.lone_file() {
+            return Ok(Some(save_archive::file_md5(&path)?));
+        }
         match self {
             Local::File(p) if p.is_file() => Ok(Some(save_archive::file_md5(p)?)),
             Local::File(_) => Ok(None),
@@ -447,8 +456,8 @@ async fn remote_matches(ctx: &SyncCtx<'_>, unit: &Unit, remote: &Remote, local_h
         Ok(()) => {
             let local = unit.local.clone();
             tokio::task::spawn_blocking(move || match local {
-                Local::File(_) => save_archive::file_md5(&file).ok(),
                 Local::N64(_) => n64::read_unit(&file).ok().and_then(|s| s.hash()),
+                _ if !is_zip(&file) => save_archive::file_md5(&file).ok(),
                 _ => save_archive::zip_content_hash(&file).ok(),
             })
             .await
@@ -475,16 +484,27 @@ async fn upload(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: String) -> Resu
     let result = async {
         let file = match &unit.local {
             Local::File(p) => p.clone(),
+            Local::N64(files) => {
+                let srm = work.join(Path::new(&unit.upload_name).with_extension("srm"));
+                let (files, dest) = (files.clone(), srm.clone());
+                tokio::task::spawn_blocking(move || n64::write_srm(&files, &dest)).await??;
+                srm
+            }
+            lone if let Some((path, ext)) = lone.lone_file() => {
+                // Uploaded under the archive's name, as argosy does.
+                let named = work.join(Path::new(&unit.upload_name).with_extension(ext));
+                tokio::fs::copy(&path, &named).await?;
+                named
+            }
             archive => {
                 let zip = work.join(&unit.upload_name);
                 let (local, dest) = (archive.clone(), zip.clone());
-                tokio::task::spawn_blocking(move || match &local {
-                    Local::N64(files) => n64::write_unit(files, &dest),
-                    _ => save_archive::zip_entries_with_dirs(
+                tokio::task::spawn_blocking(move || {
+                    save_archive::zip_entries_with_dirs(
                         &local.entries()?,
                         &local.empty_dirs()?,
                         &dest,
-                    ),
+                    )
                 })
                 .await??;
                 zip
@@ -567,11 +587,10 @@ fn apply_download(
     backup: &Path,
     expected_hash: Option<&str>,
 ) -> Result<bool> {
-    let actual = match local {
-        Local::File(_) => save_archive::file_md5(downloaded)?,
-        // A save from before Sigil may be a libretro `.srm` or a lone `.eep`.
-        Local::N64(_) if !is_zip(downloaded) => save_archive::file_md5(downloaded)?,
-        _ => save_archive::zip_content_hash(downloaded)?,
+    let actual = if is_zip(downloaded) && !matches!(local, Local::File(_)) {
+        save_archive::zip_content_hash(downloaded)?
+    } else {
+        save_archive::file_md5(downloaded)?
     };
     if expected_hash.is_some_and(|h| h != actual) {
         warn!(
@@ -603,22 +622,52 @@ fn apply_download(
             {
                 (create.0)().with_context(|| format!("creating {}", save.dir.display()))?;
             }
-            let mut primary = vec![save.dir.clone()];
-            primary.extend(save.mirrors.iter().cloned());
-            let mut roots = vec![(save.archive_root.clone(), primary)];
+            let alternatives = |root: &str| -> Vec<String> {
+                save.alternatives
+                    .iter()
+                    .filter(|(r, _)| r == root)
+                    .map(|(_, prefix)| prefix.clone())
+                    .collect()
+            };
+            let mut targets = vec![save.dir.clone()];
+            targets.extend(save.mirrors.iter().cloned());
+            let mut roots = vec![save_archive::ZipRoot {
+                name: save.archive_root.clone(),
+                targets,
+                alternatives: alternatives(&save.archive_root),
+            }];
             roots.extend(
                 save.extra_roots
                     .iter()
-                    .map(|(root, dir)| (root.clone(), vec![dir.clone()])),
+                    .map(|(root, dir)| save_archive::ZipRoot {
+                        name: root.clone(),
+                        targets: vec![dir.clone()],
+                        alternatives: alternatives(root),
+                    }),
             );
-            save_archive::restore_roots(downloaded, &roots, backup)?;
+            save_archive::restore_roots(downloaded, &roots, &save.ignored, backup)?;
         }
         Local::Bundle(set) => {
             let accept = |p: &Path| {
                 let name = p.file_name().unwrap_or_default().to_string_lossy();
                 set.matcher.matches_name(&name) && set.matcher.matches_file(p)
             };
-            save_archive::restore_bundle(downloaded, &set.dir, &set.files(), accept, backup)?;
+            let zip = if is_zip(downloaded) {
+                downloaded.to_owned()
+            } else {
+                // A bare file, as argosy uploads a GameCube game's only save.
+                let data = std::fs::read(downloaded)?;
+                let name = set
+                    .lone_name(&data)
+                    .context("RomM's save is neither a zip nor a file of this game")?;
+                let work = downloaded.with_extension("lone");
+                std::fs::create_dir_all(&work)?;
+                std::fs::write(work.join(&name), &data)?;
+                let zip = downloaded.with_extension("lone.zip");
+                save_archive::zip_entries_with_dirs(&[(work.join(&name), name)], &[], &zip)?;
+                zip
+            };
+            save_archive::restore_bundle(&zip, &set.dir, &set.files(), accept, backup)?;
         }
         Local::N64(files) => n64::restore(files, downloaded, backup)?,
     }
@@ -805,12 +854,18 @@ impl Kind {
     }
 }
 
-/// Whether `r` can be the archive unit `local` syncs with: a zip, or for N64
-/// also the files clients uploaded before Sigil (a libretro `.srm`, RomM's
-/// web player's among them, or an `.eep`).
+/// Whether `r` can be the archive unit `local` syncs with: a zip; a bundle's
+/// bare file (a GameCube game's only `.gci`); for N64 also the files clients
+/// uploaded before Sigil (a libretro `.srm`, RomM's web player's among them,
+/// or an `.eep`).
 fn is_archive_save(r: &Remote, local: &Local) -> bool {
     let name = r.file_name.to_lowercase();
+    let lone = match local {
+        Local::Bundle(set) => set.lone_extension(),
+        _ => None,
+    };
     let shape = name.ends_with(".zip")
+        || lone.is_some_and(|ext| name.ends_with(&format!(".{ext}")))
         || matches!(local, Local::N64(_)) && (name.ends_with(".srm") || name.ends_with(".eep"));
     shape && r.slot.as_deref().is_none_or(|slot| slot == AUTOSAVE_SLOT)
 }

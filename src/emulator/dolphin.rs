@@ -26,6 +26,13 @@ impl Emulator for Dolphin {
         &["ngc", "wii"]
     }
 
+    /// Any Dolphin build: argosy-launcher tags saves `dolphin`,
+    /// `dolphin_handheld`, `dolphin_cs`, or `dolphin_<package>` for other
+    /// forks (`EmulatorRegistry.kt`).
+    fn accepts_saves_from(&self, emulator: Option<&str>) -> bool {
+        emulator.is_some_and(|e| e == "dolphin" || e.starts_with("dolphin_"))
+    }
+
     fn config_dir_markers(&self) -> &'static [&'static str] {
         &["GC", "Wii", "StateSaves"]
     }
@@ -261,8 +268,10 @@ fn gc_region_dir(game_id: &str) -> &'static str {
     }
 }
 
-/// `<NAND root>/title/00010000/<game code as hex>/` — the whole title folder,
-/// the same unit argosy-launcher archives, rooted at its folder name.
+/// `<NAND root>/title/00010000/<game code as hex>/data/`, rooted at
+/// `<code>/data` as argosy-launcher's Sigil unit is. The title folder's
+/// `content/` (Dolphin writes `title.tmd` there on boot) is not the save:
+/// argosy's older uploads carry it, and restore skips it.
 fn wii_save_dir(config: &EmulatorConfig, ini: Option<&IniFile>, game_id: &str) -> GameSaveDir {
     let nand = ini_value(ini, "General", "NANDRootPath")
         .map(PathBuf::from)
@@ -273,11 +282,12 @@ fn wii_save_dir(config: &EmulatorConfig, ini: Option<&IniFile>, game_id: &str) -
         .map(|b| format!("{:02x}", b))
         .collect();
     GameSaveDir {
-        dir: nand.join("title").join("00010000").join(&code),
-        archive_root: code,
+        dir: nand.join("title").join("00010000").join(&code).join("data"),
+        archive_root: format!("{code}/data"),
         extra_roots: Vec::new(),
         mirrors: Vec::new(),
-        required_subdir: Some("data"),
+        alternatives: Vec::new(),
+        ignored: vec![format!("{code}/content")],
         create: None,
     }
 }
@@ -448,8 +458,12 @@ mod tests {
             config_dir: "/d".into(),
         };
         let dir = wii_save_dir(&config, None, "RMGE01");
-        assert_eq!(dir.dir, PathBuf::from("/d/Wii/title/00010000/524d4745"));
-        assert_eq!(dir.archive_root, "524d4745");
+        assert_eq!(
+            dir.dir,
+            PathBuf::from("/d/Wii/title/00010000/524d4745/data")
+        );
+        assert_eq!(dir.archive_root, "524d4745/data");
+        assert_eq!(dir.ignored, ["524d4745/content"]);
     }
 
     #[test]
