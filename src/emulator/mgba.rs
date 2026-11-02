@@ -150,6 +150,9 @@ impl Emulator for MGba {
         Ok((cmd, launch_ctx))
     }
 
+    fn fullscreen_args(&self, fullscreen: bool) -> &'static [&'static str] {
+        if fullscreen { &["-f"] } else { &[] }
+    }
     /// mGBA has no per-game settings — snapshot returns the global config as
     /// the overlay so callers have something to diff against or store as a base.
     async fn snapshot(&self, config: &EmulatorConfig, _game_id: &str) -> Result<ProfileBlob> {

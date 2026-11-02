@@ -25,6 +25,22 @@ pub struct Config {
     pub controllers: HashMap<String, ControllerConfig>,
     #[serde(default)]
     pub updates: crate::update::UpdateConfig,
+    #[serde(default)]
+    pub launch: LaunchConfig,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+pub struct LaunchConfig {
+    /// Start games fullscreen (`true`) or windowed (`false`). Unset: attached
+    /// launches (Steam's Game Mode) fullscreen, others as the emulator is set.
+    pub fullscreen: Option<bool>,
+}
+
+impl LaunchConfig {
+    /// A request's own choice wins, then the config's.
+    pub fn fullscreen(&self, requested: Option<bool>, attach: bool) -> Option<bool> {
+        requested.or(self.fullscreen).or(attach.then_some(true))
+    }
 }
 
 /// Physical controller registered on this machine.
@@ -263,6 +279,12 @@ port = 7497
 #   off    — no background checks; POST /update still installs on request
 [updates]
 mode = "auto"
+
+# Start games fullscreen (true) or windowed (false). Unset: games started
+# with `rommd play --attach` (Steam's Game Mode) are fullscreen, others start
+# as the emulator is set up. `rommd play --fullscreen/--windowed` overrides it.
+# [launch]
+# fullscreen = true
 
 # RomM server connection. Required for remote launch and save sync.
 # [romm]
@@ -517,6 +539,22 @@ pub fn default_config(os: Os, found: &[crate::detect::Found]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_launch_is_fullscreen_as_requested_else_as_configured_else_when_attached() {
+        let unset = LaunchConfig::default();
+        assert_eq!(unset.fullscreen(None, false), None, "the emulator decides");
+        assert_eq!(unset.fullscreen(None, true), Some(true));
+        assert_eq!(unset.fullscreen(Some(false), true), Some(false));
+        let windowed = LaunchConfig {
+            fullscreen: Some(false),
+        };
+        assert_eq!(windowed.fullscreen(None, true), Some(false));
+        assert_eq!(windowed.fullscreen(Some(true), false), Some(true));
+        let config =
+            Config::parse("[launch]\nfullscreen = true\n", Path::new("config.toml")).unwrap();
+        assert_eq!(config.launch.fullscreen, Some(true));
+    }
 
     #[test]
     fn tilde_expanded() {

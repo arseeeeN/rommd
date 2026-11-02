@@ -90,6 +90,13 @@ impl Emulator for DuckStation {
         command.arg(rom_path);
         Ok((command, LaunchContext::default()))
     }
+    fn fullscreen_args(&self, fullscreen: bool) -> &'static [&'static str] {
+        if fullscreen {
+            &["-fullscreen"]
+        } else {
+            &["-nofullscreen"]
+        }
+    }
 
     /// `game_id` is the disc serial (e.g. "SLUS-00255").
     async fn snapshot(&self, config: &EmulatorConfig, game_id: &str) -> Result<ProfileBlob> {

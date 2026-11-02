@@ -70,6 +70,19 @@ impl LaunchCommand {
         self
     }
 
+    /// Start fullscreen or windowed as `emulator` can. The options go first,
+    /// since some commands end their options before the ROM (PCSX2's `--`).
+    pub fn set_fullscreen(&mut self, emulator: &dyn Emulator, fullscreen: bool) {
+        let args = emulator.fullscreen_args(fullscreen);
+        if args.is_empty() && fullscreen {
+            tracing::info!(
+                "{} can't be told to start fullscreen; its own setting applies",
+                emulator.display_name()
+            );
+        }
+        self.args.splice(0..0, args.iter().map(|a| a.to_string()));
+    }
+
     #[cfg_attr(windows, allow(dead_code))] // only mGBA, which takes options on Windows
     pub fn env(&mut self, name: &'static str, value: impl AsRef<OsStr>) -> &mut Self {
         debug_assert!(
@@ -133,6 +146,13 @@ pub trait Emulator: Send + Sync {
         game_id: Option<&str>,
         profile: Option<&ProfileBlob>,
     ) -> Result<(LaunchCommand, LaunchContext)>;
+
+    /// Options that start the game fullscreen, or with `false` windowed even
+    /// when the emulator's own setting is fullscreen. Empty when its command
+    /// line can't.
+    fn fullscreen_args(&self, _fullscreen: bool) -> &'static [&'static str] {
+        &[]
+    }
 
     /// Read the emulator's current per-game config for `game_id`, clean it,
     /// and return a portable profile blob. For DuckStation, `game_id` is the disc serial.

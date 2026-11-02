@@ -73,7 +73,7 @@ since its layout changes between releases.
 
 `src/emulator/<name>.rs`, implementing `Emulator` (`src/emulator/mod.rs`):
 `id`, `display_name`, `platforms` (RomM's canonical slug), `command`,
-`snapshot` (`bail!` until profiles are supported), `game_id_for_rom`,
+`fullscreen_args` (from the emulator's help or source), `snapshot` (`bail!` until profiles are supported), `game_id_for_rom`,
 `save_layout`, `save_family` (IDs whose saves this emulator can restore),
 `config_dir_markers` and `config_dir_hint`, `mac_app`, `linux_app`,
 `windows_app`. Detection types are in `src/detect/`; extend them when an

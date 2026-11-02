@@ -95,6 +95,13 @@ enum Command {
         /// Game Mode, Steam only shows and controls games it started.
         #[arg(long)]
         attach: bool,
+        /// Start the game fullscreen. The default with --attach, otherwise
+        /// `[launch] fullscreen` in the config or the emulator's own setting.
+        #[arg(long, conflicts_with = "windowed")]
+        fullscreen: bool,
+        /// Start the game in a window.
+        #[arg(long)]
+        windowed: bool,
         #[arg(required = true, num_args = 1.., value_name = "QUERY")]
         query: Vec<String>,
     },
@@ -136,8 +143,13 @@ fn main() -> Result<()> {
         Some(Command::Play {
             first,
             attach,
+            fullscreen,
+            windowed,
             query,
-        }) => tokio::runtime::Runtime::new()?.block_on(cli::play(&query, first, attach)),
+        }) => {
+            let fullscreen = (fullscreen || windowed).then_some(fullscreen);
+            tokio::runtime::Runtime::new()?.block_on(cli::play(&query, first, attach, fullscreen))
+        }
         Some(Command::Service { action }) => match action {
             ServiceAction::Install => service::install(),
             ServiceAction::Start => control(service::Control::Start),

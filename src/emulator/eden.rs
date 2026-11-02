@@ -106,6 +106,10 @@ impl Emulator for Eden {
         Ok((command, LaunchContext::default()))
     }
 
+    fn fullscreen_args(&self, fullscreen: bool) -> &'static [&'static str] {
+        if fullscreen { &["-f"] } else { &[] }
+    }
+
     async fn snapshot(&self, _config: &EmulatorConfig, _game_id: &str) -> Result<ProfileBlob> {
         anyhow::bail!("Eden does not support per-game profiles")
     }

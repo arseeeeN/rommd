@@ -29,6 +29,11 @@ pub struct LaunchRequest {
     /// Game Mode). Answered with 202 at once.
     #[serde(default)]
     pub attach: bool,
+    /// Start the game fullscreen (`true`) or windowed (`false`), where the
+    /// emulator's command line allows it. Omitted: `[launch] fullscreen` in
+    /// the config, else fullscreen for attached launches and the emulator's
+    /// own setting otherwise.
+    pub fullscreen: Option<bool>,
 }
 
 /// Exactly one of `pid` and `error`.

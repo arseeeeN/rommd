@@ -11,6 +11,10 @@ port = 7497
 #   Windows: %LOCALAPPDATA%\rommd\roms
 roms_dir = "~/Roms"
 
+# Start games fullscreen (true) or windowed (false); see README.
+[launch]
+fullscreen = true
+
 # ── RomM ──────────────────────────────────────────────────────────────────────
 
 [romm]

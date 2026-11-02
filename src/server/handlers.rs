@@ -263,7 +263,7 @@ impl Launch {
             None => Default::default(),
         };
 
-        let (command, launch_ctx) = emulator
+        let (mut command, launch_ctx) = emulator
             .command(
                 emu_config,
                 &rom_path,
@@ -271,6 +271,9 @@ impl Launch {
                 req.profile.as_ref(),
             )
             .await?;
+        if let Some(fullscreen) = config.launch.fullscreen(req.fullscreen, req.attach) {
+            command.set_fullscreen(emulator.as_ref(), fullscreen);
+        }
         let started = if req.attach {
             attached(&state, id, command).await
         } else {
@@ -922,7 +925,11 @@ mod tests {
         let command: crate::emulator::LaunchCommand =
             serde_json::from_value(info["command"].clone()).unwrap();
         assert_eq!(command.program, dir.path().join("no-ryujinx"));
-        assert_eq!(command.args, [rom.display().to_string()]);
+        assert_eq!(
+            command.args,
+            ["--fullscreen".to_owned(), rom.display().to_string()],
+            "attached launches are fullscreen unless asked otherwise"
+        );
         assert!(
             get(&http, format!("{base}/status")).await["running"]
                 .as_array()

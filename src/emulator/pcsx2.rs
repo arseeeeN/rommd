@@ -93,6 +93,14 @@ impl Emulator for Pcsx2 {
         Ok((command, LaunchContext::default()))
     }
 
+    fn fullscreen_args(&self, fullscreen: bool) -> &'static [&'static str] {
+        if fullscreen {
+            &["-fullscreen"]
+        } else {
+            &["-nofullscreen"]
+        }
+    }
+
     async fn snapshot(&self, _config: &EmulatorConfig, _game_id: &str) -> Result<ProfileBlob> {
         anyhow::bail!("PCSX2 per-game profiles are not supported yet")
     }
@@ -316,5 +324,22 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(command.args, ["-batch", "--", "/roms/-game.iso"]);
+    }
+
+    #[tokio::test]
+    async fn fullscreen_options_go_before_the_end_of_options() {
+        let config = EmulatorConfig {
+            binary: "pcsx2-qt".into(),
+            config_dir: "/data".into(),
+        };
+        let (mut command, _) = Pcsx2
+            .command(&config, Path::new("/roms/game.iso"), None, None)
+            .await
+            .unwrap();
+        command.set_fullscreen(&Pcsx2, true);
+        assert_eq!(
+            command.args,
+            ["-fullscreen", "-batch", "--", "/roms/game.iso"]
+        );
     }
 }

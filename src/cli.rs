@@ -32,7 +32,13 @@ pub async fn search(words: &[String], limit: u32) -> Result<()> {
     Ok(())
 }
 
-pub async fn play(words: &[String], first: bool, attach: bool) -> Result<()> {
+/// `fullscreen`: `--fullscreen` or `--windowed`; neither leaves it to the daemon.
+pub async fn play(
+    words: &[String],
+    first: bool,
+    attach: bool,
+    fullscreen: Option<bool>,
+) -> Result<()> {
     let daemon = Daemon::new()?;
     let query = query_string(words);
     let found = daemon.games(&query, PLAY_CHOICES).await?;
@@ -52,9 +58,9 @@ pub async fn play(words: &[String], first: bool, attach: bool) -> Result<()> {
         game.name, game.platform_name, emulator, game.emulator_reason
     );
     if attach {
-        return play_attached(&daemon, game, emulator).await;
+        return play_attached(&daemon, game, emulator, fullscreen).await;
     }
-    let pid = launch_showing_progress(&daemon, game, emulator).await?;
+    let pid = launch_showing_progress(&daemon, game, emulator, fullscreen).await?;
     println!("Running (pid {pid}). Saves sync when the game exits.");
     Ok(())
 }
@@ -66,9 +72,17 @@ pub async fn play(words: &[String], first: bool, attach: bool) -> Result<()> {
 /// maps the controller, and Steam shows it as playing until it ends. The
 /// daemon tracks the game as usual and syncs after it exits, even when this
 /// process is killed first.
-async fn play_attached(daemon: &Daemon, game: &GameMatch, emulator: &str) -> Result<()> {
+async fn play_attached(
+    daemon: &Daemon,
+    game: &GameMatch,
+    emulator: &str,
+    fullscreen: Option<bool>,
+) -> Result<()> {
     let config = Config::read(&Config::path()).context("reading the config")?;
-    let id = match daemon.launch(game.rom_id, emulator, true).await? {
+    let id = match daemon
+        .launch(game.rom_id, emulator, true, fullscreen)
+        .await?
+    {
         Launched::Downloading(id) => id,
         Launched::Started(_) => anyhow::bail!("rommd started the game itself; is it up to date?"),
     };
@@ -189,9 +203,14 @@ fn termination_signals() -> tokio::sync::mpsc::UnboundedReceiver<()> {
 /// first, the daemon answers at once and the download is followed here;
 /// Ctrl+C then cancels it. Otherwise the game is already starting, and Ctrl+C
 /// only stops waiting.
-async fn launch_showing_progress(daemon: &Daemon, game: &GameMatch, emulator: &str) -> Result<u64> {
+async fn launch_showing_progress(
+    daemon: &Daemon,
+    game: &GameMatch,
+    emulator: &str,
+    fullscreen: Option<bool>,
+) -> Result<u64> {
     tokio::select! {
-        launched = daemon.launch(game.rom_id, emulator, false) => match launched? {
+        launched = daemon.launch(game.rom_id, emulator, false, fullscreen) => match launched? {
             Launched::Started(pid) => Ok(pid),
             Launched::Downloading(id) => match follow(daemon, id, false).await? {
                 Followed::Started(pid) => Ok(pid),
@@ -624,11 +643,22 @@ impl Daemon {
     /// ROM first, which can take minutes.
     /// Not time-limited: for a ROM that is already here the daemon answers
     /// once the saves are synced and the emulator started.
-    async fn launch(&self, rom_id: i64, emulator: &str, attach: bool) -> Result<Launched> {
+    async fn launch(
+        &self,
+        rom_id: i64,
+        emulator: &str,
+        attach: bool,
+        fullscreen: Option<bool>,
+    ) -> Result<Launched> {
         let request = self
             .client
             .post(format!("{}/launch", self.base))
-            .json(&serde_json::json!({ "rom_id": rom_id, "emulator": emulator, "attach": attach }));
+            .json(&serde_json::json!({
+                "rom_id": rom_id,
+                "emulator": emulator,
+                "attach": attach,
+                "fullscreen": fullscreen,
+            }));
         let response = self.send(request).await?;
         let accepted = response.status() == reqwest::StatusCode::ACCEPTED;
         let body: serde_json::Value = response.json().await?;

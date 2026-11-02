@@ -98,6 +98,10 @@ impl Emulator for Ryujinx {
         Ok((command, LaunchContext::default()))
     }
 
+    fn fullscreen_args(&self, fullscreen: bool) -> &'static [&'static str] {
+        if fullscreen { &["--fullscreen"] } else { &[] }
+    }
+
     async fn snapshot(&self, _config: &EmulatorConfig, _game_id: &str) -> Result<ProfileBlob> {
         anyhow::bail!("Ryujinx does not support per-game profiles")
     }

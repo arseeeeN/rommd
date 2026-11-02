@@ -253,6 +253,13 @@ as its launch options (an `id:` query, since there is no terminal to pick
 from a list). It only runs the emulator binary in your config. Not yet
 tested on a Steam Deck.
 
+Games started with `--attach` start fullscreen; others start as the emulator
+is set up. `--fullscreen` and `--windowed` choose for one launch, and
+`[launch] fullscreen = true` (or `false`) in the config for every launch. rommd
+passes this on the emulator's command line, so its own settings are never
+changed. mGBA, Azahar, Eden and Ryujinx can only be told to start
+fullscreen; for them, windowed means as the emulator is set up.
+
 ## Launch button in RomM (temporary)
 
 Until RomM itself can call rommd, a userscript adds a **Launch** button next

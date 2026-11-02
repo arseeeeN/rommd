@@ -122,6 +122,16 @@ impl Emulator for Dolphin {
         Ok((command, LaunchContext::default()))
     }
 
+    /// `-C` settings live in a layer Dolphin never saves, so the user's own
+    /// fullscreen setting stays as it was.
+    fn fullscreen_args(&self, fullscreen: bool) -> &'static [&'static str] {
+        if fullscreen {
+            &["-C", "Dolphin.Display.Fullscreen=True"]
+        } else {
+            &["-C", "Dolphin.Display.Fullscreen=False"]
+        }
+    }
+
     async fn snapshot(&self, config: &EmulatorConfig, game_id: &str) -> Result<ProfileBlob> {
         let path = game_settings_path(config, game_id);
         let overlay = if path.exists() {

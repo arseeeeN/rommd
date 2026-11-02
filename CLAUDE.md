@@ -44,6 +44,12 @@ is killed. No report within 60 s fails the launch. The CLI runs only the
 anything could be listening on the port; it forwards termination signals as
 a stop (polite, then killed) and exits when the game's tree is gone.
 
+Fullscreen: the request's `fullscreen`, else `[launch] fullscreen`, else on
+for attached launches; with none of them rommd adds nothing and the
+emulator's own setting applies. Only command-line options
+(`Emulator::fullscreen_args`, put before the ROM and any `--`), never the
+emulator's settings files.
+
 ROM downloads (`romm::RommClient::fetch_to`) go through `<file>.part` and
 resume: a `.part` from an earlier attempt is continued with a range request,
 a dropped connection (sleep, Wi-Fi) is retried for about a minute and
@@ -166,6 +172,8 @@ Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
   can be wrong and would silently sync saves for the wrong game
 - `snapshot` / `command` — profile overlay, and the `LaunchCommand` that
   starts the game (run by the daemon, or by the client of an attached launch)
+- `fullscreen_args` — the options for fullscreen / windowed, from the
+  emulator's own help or source; empty where it has none
 
 Adding a new emulator: follow `dev/adding-an-emulator.md`. It starts with how
 argosy-launcher stores the system's saves (below), which decides the save
