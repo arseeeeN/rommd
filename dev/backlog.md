@@ -111,7 +111,10 @@ re-downloads that platform's games into a new folder and orphans the old one.
 Keying the cache on the canonical `slug` avoids that, at the cost of moving
 existing caches once. Check how RomM's custom folder structure support (the
 release after 5.2) reports `slug` and `fs_slug` before deciding. Emulator
-choice already uses `slug` (`Emulator::platforms`).
+choice already uses `slug` (`Emulator::platforms`). Until then, `[platforms]
+<slug> folder` pins a platform's folder, so a rename on the server doesn't
+move it. Detecting EmuDeck / ES-DE folder names (`gc`, `n3ds`) on their own
+when `roms_dir` is such a folder is a later idea.
 
 ## MCP server for assistants
 

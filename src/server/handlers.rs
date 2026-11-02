@@ -231,7 +231,11 @@ impl Launch {
                 let client = romm.as_ref().expect("checked by the handler");
                 let _awake = keep_awake_while_downloading(&transfer, rom);
                 client
-                    .download_rom_to_dir(rom, &config.roms_dir(), &transfer)
+                    .download_rom(
+                        rom,
+                        &config.platform_dir(&rom.platform_slug, &rom.platform_fs_slug),
+                        &transfer,
+                    )
                     .await?
             }
             (None, local) => PathBuf::from(local.as_deref().unwrap_or_default()),

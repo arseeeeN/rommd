@@ -118,7 +118,11 @@ pub fn choose_emulator(
         anyhow::ensure!(runs(id), "{id} doesn't run {platform} games");
         return Ok(choice(id, "requested".into()));
     }
-    if let Some(id) = config.platforms.get(platform) {
+    if let Some(id) = config
+        .platforms
+        .get(platform)
+        .and_then(|p| p.emulator.as_deref())
+    {
         anyhow::ensure!(
             runs(id),
             "[platforms] {platform} = \"{id}\" is not a configured emulator for {platform}"

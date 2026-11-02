@@ -163,8 +163,8 @@ impl RommClient {
             .context("parsing ROM search results")
     }
 
-    /// Ensure the ROM is present in `roms_dir/{platform_fs_slug}/` and return
-    /// the path to launch.
+    /// Ensure the ROM is present in `platform_dir` (`Config::platform_dir`)
+    /// and return the path to launch.
     ///
     /// - `fs_name` is not a zip → download directly, done.
     /// - `fs_name` is a zip, `files.len() <= 1` → download the zip as-is, extract.
@@ -173,13 +173,12 @@ impl RommClient {
     ///
     /// `transfer` reports progress and can cancel the download; extracting a
     /// finished download is not cancelled.
-    pub async fn download_rom_to_dir(
+    pub async fn download_rom(
         &self,
         rom: &RomDetail,
-        roms_dir: &Path,
+        platform_dir: &Path,
         transfer: &Transfer,
     ) -> Result<PathBuf> {
-        let platform_dir = roms_dir.join(local_file_name(&rom.platform_fs_slug));
         let local_name = local_file_name(&rom.fs_name);
 
         // A ROM made of several files (a game and its update, the discs of a
@@ -821,7 +820,7 @@ impl Transfer {
 /// characters it rejects or treats specially (`:` would write to an NTFS
 /// alternate data stream instead of the file), no trailing dots or spaces
 /// (Windows drops them) and no device name such as `CON`.
-fn local_file_name(name: &str) -> String {
+pub(crate) fn local_file_name(name: &str) -> String {
     let reserved = |c: char| {
         c == '/'
             || c == '\0'
@@ -1384,7 +1383,7 @@ mod tests {
         let transfer = Transfer::default();
 
         let launch = romm
-            .download_rom_to_dir(&rom, dir.path(), &transfer)
+            .download_rom(&rom, &dir.path().join(&rom.platform_fs_slug), &transfer)
             .await
             .unwrap();
         let game_dir = dir.path().join("switch/Game");
@@ -1412,7 +1411,11 @@ mod tests {
         );
 
         let again = romm
-            .download_rom_to_dir(&rom, dir.path(), &Transfer::default())
+            .download_rom(
+                &rom,
+                &dir.path().join(&rom.platform_fs_slug),
+                &Transfer::default(),
+            )
             .await
             .unwrap();
         assert_eq!(again, launch);
@@ -1437,7 +1440,11 @@ mod tests {
         crate::testing::write(&game_dir.join("update/Update.nsp"), b"up");
         crate::testing::write(&game_dir.join("Game.m3u"), b"Game.xci\n");
         let launch = romm
-            .download_rom_to_dir(&rom, dir.path(), &Transfer::default())
+            .download_rom(
+                &rom,
+                &dir.path().join(&rom.platform_fs_slug),
+                &Transfer::default(),
+            )
             .await
             .unwrap();
         assert_eq!(launch, game_dir.join("Game.xci"));
@@ -1460,7 +1467,11 @@ mod tests {
         ]);
         let dir = TempDir::new("rom-discs");
         let launch = romm
-            .download_rom_to_dir(&rom, dir.path(), &Transfer::default())
+            .download_rom(
+                &rom,
+                &dir.path().join(&rom.platform_fs_slug),
+                &Transfer::default(),
+            )
             .await
             .unwrap();
         assert_eq!(launch, dir.path().join("switch/Game/Game.m3u"));
@@ -1517,9 +1528,13 @@ mod tests {
         let dest = dir.path().join("ngc/Game.rvz");
 
         crate::testing::write(&dest, &data);
-        romm.download_rom_to_dir(&rom, dir.path(), &Transfer::default())
-            .await
-            .unwrap();
+        romm.download_rom(
+            &rom,
+            &dir.path().join(&rom.platform_fs_slug),
+            &Transfer::default(),
+        )
+        .await
+        .unwrap();
         assert!(
             files.log.lock().unwrap().is_empty(),
             "the right size is complete"
@@ -1527,7 +1542,11 @@ mod tests {
 
         crate::testing::write(&dest, b"cut short by a copy");
         let launch = romm
-            .download_rom_to_dir(&rom, dir.path(), &Transfer::default())
+            .download_rom(
+                &rom,
+                &dir.path().join(&rom.platform_fs_slug),
+                &Transfer::default(),
+            )
             .await
             .unwrap();
         assert_eq!(launch, dest);
@@ -1546,8 +1565,8 @@ mod tests {
         let transfer = Transfer::default();
         let download = {
             let transfer = transfer.clone();
-            let roms = dir.path().to_owned();
-            tokio::spawn(async move { romm.download_rom_to_dir(&rom, &roms, &transfer).await })
+            let roms = dir.path().join(&rom.platform_fs_slug);
+            tokio::spawn(async move { romm.download_rom(&rom, &roms, &transfer).await })
         };
         while transfer.progress().done == 0 {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;

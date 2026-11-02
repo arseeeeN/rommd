@@ -186,6 +186,19 @@ shows them):
 switch = "eden"
 ```
 
+Downloaded ROMs go in `roms_dir`, one folder per platform named as on your
+RomM server. To use other folder names, e.g. to share ROMs with EmuDeck or
+ES-DE, set `folder` per platform: relative to `roms_dir`, or a full path.
+ROMs already in that folder are used without downloading them again when
+their name and size match RomM's.
+
+```toml
+[platforms]
+switch = "eden"
+ngc = { folder = "gc" }
+3ds = { emulator = "azahar", folder = "n3ds" }
+```
+
 ## Running
 
 `rommd service install` starts rommd at login: a systemd user service on

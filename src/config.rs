@@ -17,16 +17,82 @@ pub struct Config {
     /// used unless `platforms` names one.
     #[serde(default)]
     pub emulators: IndexMap<String, EmulatorConfig>,
-    /// RomM platform slug → emulator ID, for platforms several configured
-    /// emulators can run.
+    /// By RomM platform slug: the emulator, for platforms several configured
+    /// emulators can run, and the ROM folder.
     #[serde(default)]
-    pub platforms: IndexMap<String, String>,
+    pub platforms: IndexMap<String, PlatformConfig>,
     #[serde(default)]
     pub controllers: HashMap<String, ControllerConfig>,
     #[serde(default)]
     pub updates: crate::update::UpdateConfig,
     #[serde(default)]
     pub launch: LaunchConfig,
+}
+
+/// `[platforms]` entry: `switch = "eden"`, or a table such as
+/// `ngc = { folder = "gc" }`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(try_from = "PlatformEntry", into = "PlatformEntry")]
+pub struct PlatformConfig {
+    /// The emulator for this platform's games.
+    pub emulator: Option<String>,
+    /// Where its ROMs go: relative to `roms_dir`, or absolute. Unset: the
+    /// platform's folder name on the RomM server.
+    pub folder: Option<PathBuf>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(
+    untagged,
+    expecting = "an emulator ID, or a table of `emulator` and `folder`"
+)]
+enum PlatformEntry {
+    Emulator(String),
+    Settings(PlatformSettings),
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PlatformSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    emulator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    folder: Option<PathBuf>,
+}
+
+impl TryFrom<PlatformEntry> for PlatformConfig {
+    type Error = String;
+
+    fn try_from(entry: PlatformEntry) -> Result<Self, String> {
+        let PlatformSettings { emulator, folder } = match entry {
+            PlatformEntry::Emulator(id) => PlatformSettings {
+                emulator: Some(id),
+                folder: None,
+            },
+            PlatformEntry::Settings(settings) => settings,
+        };
+        if emulator.as_deref() == Some("") {
+            return Err("emulator is empty".into());
+        }
+        if folder.as_ref().is_some_and(|f| f.as_os_str().is_empty()) {
+            return Err("folder is empty".into());
+        }
+        Ok(PlatformConfig { emulator, folder })
+    }
+}
+
+impl From<PlatformConfig> for PlatformEntry {
+    fn from(p: PlatformConfig) -> Self {
+        match p {
+            PlatformConfig {
+                emulator: Some(id),
+                folder: None,
+            } => PlatformEntry::Emulator(id),
+            PlatformConfig { emulator, folder } => {
+                PlatformEntry::Settings(PlatformSettings { emulator, folder })
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
@@ -201,6 +267,16 @@ impl Config {
         self.roms_dir.clone().unwrap_or_else(default_roms_dir)
     }
 
+    /// Where a platform's ROMs go: its `[platforms]` folder, else the folder
+    /// RomM keeps them in (`fs_slug`), under `roms_dir`.
+    pub fn platform_dir(&self, slug: &str, fs_slug: &str) -> PathBuf {
+        let roms = self.roms_dir();
+        match self.platforms.get(slug).and_then(|p| p.folder.as_ref()) {
+            Some(folder) => roms.join(folder),
+            None => roms.join(crate::romm::local_file_name(fs_slug)),
+        }
+    }
+
     /// Expand `~` and `%VARNAME%` in all path fields after deserialization.
     fn expand_paths(mut self) -> Self {
         if let Some(p) = self.roms_dir {
@@ -209,6 +285,9 @@ impl Config {
         for cfg in self.emulators.values_mut() {
             cfg.binary = expand_path(std::mem::take(&mut cfg.binary));
             cfg.config_dir = expand_path(std::mem::take(&mut cfg.config_dir));
+        }
+        for platform in self.platforms.values_mut() {
+            platform.folder = platform.folder.take().map(expand_path);
         }
         self
     }
@@ -263,8 +342,9 @@ fn expand_percent_vars(s: &str) -> String {
 const TEMPLATE_HEAD: &str = r#"# rommd configuration — edit to match your setup.
 # Both ~ and %ENVVAR% are expanded in path fields.
 
-# ROMs are stored under roms_dir/<platform_slug>/<rom_file>, by default in
-# {ROMS_DIR}.
+# ROMs are stored under roms_dir/<platform folder>/<rom_file>, by default in
+# {ROMS_DIR}. The platform folder is the one RomM uses, unless
+# [platforms] below names another.
 # roms_dir = "~/Roms"
 
 [server]
@@ -307,10 +387,13 @@ mode = "auto"
 
 /// The end of the config written on first run, after the emulators.
 const TEMPLATE_TAIL: &str = r#"# ── Platforms ─────────────────────────────────────────────────────────────────
-# Which emulator runs a platform's games when several can, by RomM platform
-# slug (switch, ngc, wii, 3ds, psx, gba, ...; `rommd search` shows them):
+# Per platform, by RomM platform slug (switch, ngc, wii, 3ds, psx, gba, ...;
+# `rommd search` shows them): which emulator runs its games when several can,
+# and the folder its ROMs go in (relative to roms_dir, or a full path):
 # [platforms]
 # switch = "eden"
+# ngc = { folder = "gc" }
+# 3ds = { emulator = "azahar", folder = "n3ds" }
 
 # ── Controllers ───────────────────────────────────────────────────────────────
 # Register physical controllers here. The id (e.g. "dualshock_mine") is what
@@ -554,6 +637,44 @@ mod tests {
         let config =
             Config::parse("[launch]\nfullscreen = true\n", Path::new("config.toml")).unwrap();
         assert_eq!(config.launch.fullscreen, Some(true));
+    }
+
+    #[test]
+    fn platforms_name_an_emulator_a_folder_or_both() {
+        let toml = r#"roms_dir = "/roms"
+[platforms]
+switch = "eden"
+ngc = { folder = "gc" }
+3ds = { emulator = "azahar", folder = "n3ds" }
+[platforms.wii]
+folder = "/mnt/sd/wii"
+"#;
+        let config = Config::parse(toml, Path::new("config.toml")).unwrap();
+        let emulator = |slug: &str| config.platforms[slug].emulator.as_deref();
+        assert_eq!(emulator("switch"), Some("eden"));
+        assert_eq!(emulator("ngc"), None);
+        assert_eq!(emulator("3ds"), Some("azahar"));
+
+        let dir = |slug, fs_slug| config.platform_dir(slug, fs_slug);
+        assert_eq!(dir("switch", "switch"), Path::new("/roms/switch"));
+        assert_eq!(dir("ngc", "ngc"), Path::new("/roms/gc"));
+        assert_eq!(dir("3ds", "3ds"), Path::new("/roms/n3ds"));
+        assert_eq!(dir("wii", "wii"), Path::new("/mnt/sd/wii"));
+        assert_eq!(dir("psx", "PlayStation"), Path::new("/roms/PlayStation"));
+
+        let round_trip: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(round_trip.platforms, config.platforms);
+
+        for bad in [
+            "[platforms]\nngc = { folder = \"\" }\n",
+            "[platforms]\nngc = { fodler = \"gc\" }\n",
+            "[platforms]\nngc = \"\"\n",
+        ] {
+            assert!(
+                Config::parse(bad, Path::new("config.toml")).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

@@ -4,7 +4,8 @@
 [server]
 port = 7497
 
-# ROMs are stored under roms_dir/<platform_slug>/<rom_file>.
+# ROMs are stored under roms_dir/<platform folder>/<rom_file>: the folder RomM
+# uses, or the one [platforms] names.
 # Defaults to the platform data directory if not set:
 #   Linux:   ~/.local/share/rommd/roms
 #   macOS:   ~/Library/Application Support/rommd/roms

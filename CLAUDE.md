@@ -63,7 +63,9 @@ so nothing is extracted and folders from older bundle downloads match. A failed 
 cancelled download removes the folders it left empty. A game
 is complete when every file exists with RomM's size; a single-file ROM of the
 wrong size is downloaded again too (the old file stays until the new one is
-whole). Extracted `.zip` ROMs can't be size-checked; extraction is staged. Launch file: an `.m3u`
+whole). A platform's folder is `Config::platform_dir`: `[platforms] <slug>
+folder` (relative to `roms_dir`, or absolute; for EmuDeck's `gc`, `n3ds`), else
+`roms_dir/<fs_slug>`. Extracted `.zip` ROMs can't be size-checked; extraction is staged. Launch file: an `.m3u`
 rommd writes for multi-disc games (several `.cue`, else disc images; an
 existing one, e.g. RomM's, is kept), else the one top-level file RomM's
 `category` calls `game`, else `find_launch_file`.
