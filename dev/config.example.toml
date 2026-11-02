@@ -50,6 +50,10 @@ config_dir = "~/Library/Application Support/Ryujinx"
 binary     = "/Applications/PCSX2.app/Contents/MacOS/PCSX2"
 config_dir = "~/Library/Application Support/PCSX2"
 
+[emulators.gopher64]
+binary     = "/Applications/Gopher64.app/Contents/MacOS/gopher64"
+config_dir = "~/Library/Application Support/gopher64"
+
 # ── Controllers ───────────────────────────────────────────────────────────────
 # The id (e.g. "dualshock_mine") is what you reference in launch requests.
 # These entries are machine-local and are never sent to RomM.

@@ -77,6 +77,7 @@ existing one, e.g. RomM's, is kept), else the one top-level file RomM's
 - **`src/live.rs`** — the running config, reloaded when its file changes
 - **`src/switch.rs`** — Switch title ID extraction from NSP and XCI (ticket + NCA header decryption)
 - **`src/n3ds.rs`** — 3DS title ID extraction (NCSD / NCCH headers, CIA TMD; no keys)
+- **`src/n64.rs`** — N64 ROM byte orders and hashes, and the N64 save unit (collect, restore)
 - **`src/sync/`** — save/state sync engine, three-way decision, persistent sync state
 - **`src/save_archive.rs`** — zip/restore and RomM-compatible hashing of directory saves
 - **`src/profile.rs`** — portable settings overlay (ProfileBlob)
@@ -322,6 +323,28 @@ CHD/CSO images, which `ps_disc` can't read, get both from PCSX2's
 `cache/gamelist.cache` (version 34 only). Launched with `-batch` so PCSX2 quits
 with the game. Memory cards are not synced: the default cards hold every game's
 saves (`dev/backlog.md`, PS2 memory cards).
+
+**N64 (gopher64, RMG):** saves are a `SaveSet::N64` unit, argosy's
+(Sigil `sync_n64.c`): a zip of the save types the game uses, `eeprom`,
+`pak1`–`pak4`, `sram`, `flash`, each in bus order, so its hash is the same from
+any emulator (save family: every N64 emulator, `n64::SAVE_COMPATIBLE_EMULATORS`).
+On disk each emulator keeps `.eep`, `.sra`, `.fla` and a four-pak `.mpk`;
+mupen64plus reverses each 32-bit word of SRAM and flash (`word_swapped`),
+gopher64 doesn't. A type counts when it holds a byte other than 0x00/0xFF
+(a pak: a note in its index). Restore also reads what clients uploaded before
+Sigil (a libretro `.srm`, RomM's web player's included; a lone `.eep`; a zip
+of emulator files), removes the file of a type the unit lacks, and keeps
+unused paks in the `.mpk`. A file not there yet takes the name of the game's
+other files, else `N64Files::new_stem`; with neither, restore refuses and the
+post-exit pass (fresh start) restores into what the game created.
+- **gopher64:** `config_dir` is the data folder; `saves/<header name>-<SHA-256
+  of the ROM>.<ext>`, states `states/…state<N>`. Launched with `--`.
+- **RMG:** `config_dir` holds `mupen64plus.cfg`, whose `[Core] SaveSRAMPath` /
+  `SaveStatePath` are the folders (relative = the program's folder, portable).
+  Files are `<GoodName, 32 bytes>-<MD5[:8]>`, matched by the MD5 part
+  (`FileMatcher::Tagged`); the GoodName comes from `mupen64plus.ini` installed
+  with RMG (by MD5, `RefMD5`, else a unique CRC pair). States `.st<N>`.
+  Launched with `--quit-after-emulation --`.
 
 **Single files:** RomM stores names with an upload timestamp
 (`anguna [2026-05-05 13-07-23-697].srm`); `local_file_name` strips it so RomM

@@ -2,10 +2,12 @@ pub mod azahar;
 pub mod dolphin;
 pub mod duckstation;
 pub mod eden;
+pub mod gopher64;
 mod layout;
 pub mod mgba;
 pub mod pcsx2;
 pub mod ps_disc;
+pub mod rmg;
 pub mod ryujinx;
 
 use anyhow::Result;
@@ -19,7 +21,7 @@ use tokio::process::Child;
 
 use crate::config::EmulatorConfig;
 use crate::profile::ProfileBlob;
-pub use layout::{CreateDir, FileSet, GameSaveDir, SaveLayout, SaveSet};
+pub use layout::{CreateDir, FileSet, GameSaveDir, N64Files, SaveLayout, SaveSet};
 
 /// Every supported emulator. To add one, implement `Emulator` in its own
 /// module here and list it.
@@ -32,6 +34,8 @@ pub fn all() -> Vec<Arc<dyn Emulator>> {
         Arc::new(eden::Eden),
         Arc::new(azahar::Azahar),
         Arc::new(pcsx2::Pcsx2),
+        Arc::new(gopher64::Gopher64),
+        Arc::new(rmg::Rmg),
     ]
 }
 

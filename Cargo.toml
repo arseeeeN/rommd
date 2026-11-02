@@ -27,6 +27,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 aes = "0.8"
 md-5 = "0.10"
+sha2 = "0.10"
 utoipa = { version = "5", features = ["indexmap"] }
 clap = { version = "4", features = ["derive"] }
 semver = "1"

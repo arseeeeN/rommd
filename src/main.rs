@@ -10,6 +10,7 @@ mod ini;
 mod launches;
 mod live;
 mod n3ds;
+mod n64;
 mod process;
 mod profile;
 mod romm;

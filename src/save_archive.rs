@@ -81,6 +81,35 @@ pub fn zip_content_hash(zip_path: &Path) -> Result<String> {
     Ok(finalize_hash(lines))
 }
 
+/// RomM's `content_hash` for a zip of these in-memory members (see
+/// `entries_hash`). `None` when there are none.
+pub fn members_hash(members: &[(String, Vec<u8>)]) -> Option<String> {
+    (!members.is_empty()).then(|| {
+        finalize_hash(
+            members
+                .iter()
+                .map(|(name, data)| (name.clone(), hex(&md5::Md5::digest(data))))
+                .collect(),
+        )
+    })
+}
+
+/// Write a zip of these in-memory members to `dest`.
+pub fn zip_members(members: &[(String, Vec<u8>)], dest: &Path) -> Result<()> {
+    anyhow::ensure!(!members.is_empty(), "no files to archive");
+    let out =
+        std::fs::File::create(dest).with_context(|| format!("creating {}", dest.display()))?;
+    let mut zip = zip::ZipWriter::new(out);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    for (name, data) in members {
+        zip.start_file(name.as_str(), opts)?;
+        zip.write_all(data)?;
+    }
+    zip.finish()?;
+    Ok(())
+}
+
 pub fn file_md5(path: &Path) -> Result<String> {
     let mut ctx = md5::Md5::new();
     std::io::copy(&mut std::fs::File::open(path)?, &mut ctx)?;

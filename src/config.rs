@@ -461,7 +461,8 @@ impl Os {
                 "# Write Windows paths in single quotes: in double quotes a backslash starts\n\
                  # an escape sequence. Portable installs keep config_dir next to the program\n\
                  # (DuckStation, mGBA and PCSX2: its folder; Dolphin, Eden, Azahar:\n\
-                 # \"User\"/\"user\"; Ryujinx: \"portable\").\n#\n"
+                 # \"User\"/\"user\"; Ryujinx: \"portable\"; gopher64: \"portable_data\\data\";\n\
+                 # RMG: \"Config\").\n#\n"
             }
             _ => "",
         }
@@ -502,6 +503,11 @@ impl Os {
                     r#""/Applications/PCSX2.app/Contents/MacOS/PCSX2""#,
                     r#""~/Library/Application Support/PCSX2""#,
                 ),
+                (
+                    "gopher64",
+                    r#""/Applications/Gopher64.app/Contents/MacOS/gopher64""#,
+                    r#""~/Library/Application Support/gopher64""#,
+                ),
             ],
             Self::Windows => &[
                 (
@@ -539,6 +545,16 @@ impl Os {
                     r"'C:\Program Files\PCSX2\pcsx2-qt.exe'",
                     r"'~\Documents\PCSX2'",
                 ),
+                (
+                    "gopher64",
+                    r"'C:\Program Files\gopher64\gopher64-windows-x86_64.exe'",
+                    r"'%APPDATA%\gopher64'",
+                ),
+                (
+                    "rmg",
+                    r"'C:\Program Files\RMG\RMG.exe'",
+                    r"'%APPDATA%\RMG\Config'",
+                ),
             ],
             Self::Linux => &[
                 (
@@ -554,6 +570,12 @@ impl Os {
                 ),
                 ("ryujinx", r#""/usr/bin/Ryujinx""#, r#""~/.config/Ryujinx""#),
                 ("pcsx2", r#""/usr/bin/pcsx2-qt""#, r#""~/.config/PCSX2""#),
+                (
+                    "gopher64",
+                    r#""/usr/bin/gopher64""#,
+                    r#""~/.local/share/gopher64""#,
+                ),
+                ("rmg", r#""/usr/bin/RMG""#, r#""~/.config/RMG""#),
             ],
         }
     }

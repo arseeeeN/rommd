@@ -37,6 +37,20 @@ pub enum SaveSet {
     Files(FileSet),
     /// Several files synced together as one flat zip (GameCube `.gci` saves).
     Bundle(FileSet),
+    /// An N64 cartridge's save files, synced as argosy-launcher's unit (`n64`).
+    N64(N64Files),
+}
+
+/// A game's N64 save files (`.eep`, `.sra`, `.fla`, `.mpk`) in one folder.
+#[derive(Debug, Clone)]
+pub struct N64Files {
+    pub set: FileSet,
+    /// What a file the emulator hasn't created yet is named, without its
+    /// extension; `None` when it can't be spelled. A file of the game
+    /// already there gives the name first.
+    pub new_stem: Option<String>,
+    /// SRAM and flash are stored with each 32-bit word reversed (mupen64plus).
+    pub word_swapped: bool,
 }
 
 /// A game's save stored as whole directories.
@@ -114,6 +128,21 @@ impl FileSet {
         })
     }
 
+    /// Files whose names end in `tag` and one of `extensions`, for emulators
+    /// that name a game's files after a ROM hash. `None` for an empty tag.
+    pub fn tagged(
+        dir: PathBuf,
+        tag: impl Into<String>,
+        extensions: &'static [&'static str],
+    ) -> Option<Self> {
+        let tag = tag.into();
+        (!tag.is_empty()).then_some(Self {
+            dir,
+            matcher: FileMatcher::Tagged(tag, extensions),
+            remote_extensions: &[],
+        })
+    }
+
     pub fn gci(dir: PathBuf, game_id: impl Into<String>) -> Self {
         Self {
             dir,
@@ -166,6 +195,9 @@ pub enum FileMatcher {
     Stem(String),
     /// As `Stem`, and the name ends in `.<extension>` (case-insensitive).
     StemExtension(String, &'static str),
+    /// `<anything><tag>.<extension>`, the extension one of these
+    /// (case-insensitive): `Zelda-5BF45B7E.eep` for the tag `-5BF45B7E`.
+    Tagged(String, &'static [&'static str]),
     /// A GameCube save (`*.gci`) whose header starts with this 6-character game
     /// ID (4-character game code + 2-character maker code).
     Gci(String),
@@ -184,6 +216,12 @@ impl FileMatcher {
                         .rsplit_once('.')
                         .is_some_and(|(_, e)| e.eq_ignore_ascii_case(ext))
             }
+            FileMatcher::Tagged(tag, extensions) => {
+                name.rsplit_once('.').is_some_and(|(stem, ext)| {
+                    stem.ends_with(tag.as_str())
+                        && extensions.iter().any(|e| e.eq_ignore_ascii_case(ext))
+                })
+            }
             FileMatcher::Gci(_) => name.to_ascii_lowercase().ends_with(".gci"),
         }
     }
@@ -192,7 +230,7 @@ impl FileMatcher {
     /// not enough.
     pub fn matches_file(&self, path: &Path) -> bool {
         match self {
-            FileMatcher::Stem(_) | FileMatcher::StemExtension(..) => true,
+            FileMatcher::Stem(_) | FileMatcher::StemExtension(..) | FileMatcher::Tagged(..) => true,
             FileMatcher::Gci(id) => {
                 let mut header = [0u8; 6];
                 std::fs::File::open(path)
@@ -207,6 +245,7 @@ impl FileMatcher {
         match self {
             FileMatcher::Stem(stem) => stem.clone(),
             FileMatcher::StemExtension(stem, ext) => format!("{}.{}", stem, ext),
+            FileMatcher::Tagged(tag, _) => format!("*{}", tag),
             FileMatcher::Gci(id) => format!("gci:{}", id),
         }
     }
@@ -231,6 +270,13 @@ mod tests {
         assert!(m.matches_name("SLUS-20811 (CB99CD12).resume.p2s"));
         assert!(!m.matches_name("SLUS-20811 (CB99CD12).01.p2s.backup"));
         assert!(!m.matches_name("SLUS-20811 (00000000).01.p2s"));
+
+        let m = FileMatcher::Tagged("-5BF45B7E".into(), &["eep", "mpk"]);
+        assert!(m.matches_name("Legend of Zelda, The - Ocarina-5BF45B7E.eep"));
+        assert!(m.matches_name("ZELDA-5BF45B7E.MPK"));
+        assert!(!m.matches_name("ZELDA-5BF45B7E.st0"));
+        assert!(!m.matches_name("ZELDA-5BF45B7F.eep"));
+        assert!(FileSet::tagged(PathBuf::from("/x"), "", &["eep"]).is_none());
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use super::*;
-use crate::emulator::{CreateDir, FileSet, GameSaveDir, SaveLayout, SaveSet};
+use crate::emulator::{CreateDir, FileSet, GameSaveDir, N64Files, SaveLayout, SaveSet};
 use crate::testing::fake_romm::{FakeRomm, content_hash};
 use crate::testing::{TempDir, TestEmulator, age, write, zip_bytes};
 
@@ -31,6 +31,14 @@ const MGBA: TestEmulator = TestEmulator {
 const DOLPHIN: TestEmulator = TestEmulator {
     id: "dolphin",
     family: &[],
+};
+const RMG: TestEmulator = TestEmulator {
+    id: "rmg",
+    family: crate::n64::SAVE_COMPATIBLE_EMULATORS,
+};
+const GOPHER64: TestEmulator = TestEmulator {
+    id: "gopher64",
+    family: crate::n64::SAVE_COMPATIBLE_EMULATORS,
 };
 
 struct Device {
@@ -101,6 +109,21 @@ impl Device {
             saves: FileSet::stem(self.path("saves"), "Game")
                 .map(|s| SaveSet::Files(s.with_remote_extensions(&[("srm", "sav")]))),
             states: FileSet::stem(self.path("states"), "Game"),
+        }
+    }
+
+    /// An N64 game's files, `<name>-12345678.<ext>` in `n64/`.
+    fn n64(&self, word_swapped: bool, new_stem: Option<&str>) -> SaveLayout {
+        SaveLayout {
+            saves: FileSet::tagged(self.path("n64"), "-12345678", &["eep", "sra", "fla", "mpk"])
+                .map(|set| {
+                    SaveSet::N64(N64Files {
+                        set,
+                        new_stem: new_stem.map(str::to_owned),
+                        word_swapped,
+                    })
+                }),
+            states: None,
         }
     }
 
@@ -692,4 +715,103 @@ async fn empty_folders_in_a_save_survive_the_round_trip() {
     b.sync(&fake, &EDEN, &b.switch(), None).await;
     assert!(b.path("save/00000001").is_dir());
     assert_eq!(read(b.path("save/00000001.metadata")), b"format info");
+}
+
+// ── N64 ───────────────────────────────────────────────────────────────────────
+
+/// 32 KiB of SRAM in bus order, and as mupen64plus stores it.
+fn n64_sram(fill: u8) -> (Vec<u8>, Vec<u8>) {
+    let mut bus = vec![0xFF; 0x8000];
+    bus[..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, fill]);
+    let mut swapped = bus.clone();
+    swapped
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .for_each(|w| w.reverse());
+    (bus, swapped)
+}
+
+#[tokio::test]
+async fn n64_saves_move_between_rmg_and_gopher64() {
+    let fake = FakeRomm::start().await;
+    let (a, b) = (Device::new("n64-rmg"), Device::new("n64-gopher64"));
+    let (bus, swapped) = n64_sram(1);
+    write(&a.path("n64/GOOD NAME-12345678.sra"), &swapped);
+
+    a.sync(&fake, &RMG, &a.n64(true, None), None).await;
+    let up = fake.saves(ROM).pop().unwrap();
+    assert_eq!(up.slot.as_deref(), Some("autosave"));
+    assert_eq!(zip_names(&up.data), ["sram"]);
+    let unit = crate::n64::read_unit(&{
+        let path = a.path("unit.zip");
+        write(&path, &up.data);
+        path
+    })
+    .unwrap();
+    assert_eq!(unit.members(), [("sram".to_owned(), bus.clone())]);
+    assert_eq!(unit.hash().as_deref(), Some(up.content_hash.as_str()));
+
+    b.sync(&fake, &GOPHER64, &b.n64(false, Some("GAME-12345678")), None)
+        .await;
+    assert_eq!(read(b.path("n64/GAME-12345678.sra")), bus);
+
+    let writes = fake.writes().len();
+    a.sync(&fake, &RMG, &a.n64(true, None), None).await;
+    b.sync(&fake, &GOPHER64, &b.n64(false, Some("GAME-12345678")), None)
+        .await;
+    assert_eq!(fake.writes().len(), writes, "the same save on both sides");
+
+    let (bus2, _) = n64_sram(2);
+    write(&b.path("n64/GAME-12345678.sra"), &bus2);
+    b.sync(&fake, &GOPHER64, &b.n64(false, Some("GAME-12345678")), None)
+        .await;
+    a.sync(&fake, &RMG, &a.n64(true, None), None).await;
+    let (_, swapped2) = n64_sram(2);
+    assert_eq!(read(a.path("n64/GOOD NAME-12345678.sra")), swapped2);
+}
+
+#[tokio::test]
+async fn n64_restores_the_web_players_srm() {
+    let fake = FakeRomm::start().await;
+    let (bus, swapped) = n64_sram(1);
+    let mut srm = vec![0xFF; 0x48800];
+    srm[0x20800..0x28800].copy_from_slice(&swapped);
+    fake.seed_save(
+        ROM,
+        "Game [2026-05-05 13-07-23-697].srm",
+        "mupen64plus_next",
+        None,
+        &srm,
+    );
+    let d = Device::new("n64-srm");
+    d.sync(&fake, &GOPHER64, &d.n64(false, Some("GAME-12345678")), None)
+        .await;
+    assert_eq!(read(d.path("n64/GAME-12345678.sra")), bus);
+    d.sync(&fake, &GOPHER64, &d.n64(false, Some("GAME-12345678")), None)
+        .await;
+    assert!(fake.writes().is_empty());
+}
+
+#[tokio::test]
+async fn an_n64_save_rommd_cant_name_is_restored_after_the_first_session() {
+    let fake = FakeRomm::start().await;
+    let (_, swapped) = n64_sram(1);
+    let a = Device::new("n64-first");
+    write(&a.path("n64/GOOD NAME-12345678.sra"), &swapped);
+    a.sync(&fake, &RMG, &a.n64(true, None), None).await;
+
+    // No database to spell the name: nothing to restore into before launch.
+    let d = Device::new("n64-unnamed");
+    let present = d.sync(&fake, &RMG, &d.n64(true, None), None).await;
+    assert!(present.is_empty());
+    assert!(!d.path("n64").exists());
+
+    // The game saves under its own name; RomM's save wins over the new one.
+    let (_, fresh) = n64_sram(9);
+    write(&d.path("n64/GOOD NAME-12345678.sra"), &fresh);
+    d.sync(&fake, &RMG, &d.n64(true, None), Some(&present))
+        .await;
+    assert_eq!(read(d.path("n64/GOOD NAME-12345678.sra")), swapped);
+    assert_eq!(d.store.conflicts().await[0].kept, "remote");
 }

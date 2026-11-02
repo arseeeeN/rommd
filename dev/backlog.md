@@ -95,6 +95,19 @@ are Sigil's unit formats a stable, versioned spec rommd can follow, and is
 building Sigil's CLI in CI as a test oracle (same file name and `content_hash`
 for the same fixture saves; no runtime C dependency) welcome?
 
+## N64 saves rommd doesn't find yet
+
+- RMG's AppImage: its `mupen64plus.ini` is inside the image, so a save RMG
+  hasn't created on this computer can't be named before the first launch
+  (it is restored after the game first saves). Reading the image (squashfs)
+  or RMG's ROM cache would fix it.
+- mupen64plus's `SaveFilenameFormat = 0` (header name only) and the pre-2.6
+  `<GoodName>.<ext>` files it still reads: not synced.
+- gopher64's `.img` (SC64 SD card) and `.romsave` (homebrew ROM writes), and
+  64DD disk saves: not in argosy's unit, not synced.
+- ROMs inside `.zip`/`.7z` given as the launch file: rommd hashes only raw
+  `.z64`/`.v64`/`.n64` files (its own zip downloads are extracted).
+
 ## PCSX2 per-game settings
 
 PCSX2 keeps per-game settings in `gamesettings/<SERIAL>_<CRC>.ini` (CRC as

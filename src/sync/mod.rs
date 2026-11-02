@@ -1,8 +1,8 @@
 //! Save and state sync with RomM.
 //!
 //! Every save is a *unit* paired with at most one RomM entry: a single file, a
-//! directory (Switch, Wii) or a bundle of files (GameCube), the latter two as
-//! one argosy-compatible zip. Each unit is synced
+//! directory (Switch, Wii), a bundle of files (GameCube) or an N64 cartridge's
+//! save files, the latter three as one argosy-compatible zip. Each unit is synced
 //! by a three-way comparison of its local content hash, the RomM entry, and
 //! the state both were in at the last sync (`SyncStore`). The same logic runs
 //! before launch and after exit.
@@ -23,10 +23,10 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tracing::{debug, info, warn};
 
-use crate::emulator::{Emulator, FileSet, GameSaveDir, SaveLayout, SaveSet};
+use crate::emulator::{Emulator, FileSet, GameSaveDir, N64Files, SaveLayout, SaveSet};
 use crate::romm::RommClient;
 use crate::romm::types::{SaveSchema, StateSchema};
-use crate::save_archive;
+use crate::{n64, save_archive};
 use decide::{Action, RemoteView, decide};
 pub use state::{ConflictRecord, SyncBase, SyncStore};
 
@@ -115,6 +115,7 @@ async fn units_for_saves(
         SaveSet::Files(set) => return flat_units(ctx, Kind::Save, set).await,
         SaveSet::Dir(dir) => Local::Dir(dir.clone()),
         SaveSet::Bundle(set) => Local::Bundle(set.clone()),
+        SaveSet::N64(files) => Local::N64(files.clone()),
     };
     let mut unit = Unit {
         kind: Kind::Save,
@@ -135,11 +136,10 @@ async fn units_for_saves(
     };
     // One archive per game: the slot's newest zip from any compatible emulator
     // is the current save. Uploads add a version to the slot.
-    unit.remote =
-        newest(remotes.iter().filter(|r| {
-            is_archive_save(r) && ctx.emulator.accepts_saves_from(r.emulator.as_deref())
-        }))
-        .cloned();
+    unit.remote = newest(remotes.iter().filter(|r| {
+        is_archive_save(r, &unit.local) && ctx.emulator.accepts_saves_from(r.emulator.as_deref())
+    }))
+    .cloned();
     Ok(vec![unit])
 }
 
@@ -277,6 +277,7 @@ enum Local {
     File(PathBuf),
     Dir(GameSaveDir),
     Bundle(FileSet),
+    N64(N64Files),
 }
 
 impl Local {
@@ -285,13 +286,14 @@ impl Local {
             Local::File(p) => p,
             Local::Dir(s) => &s.dir,
             Local::Bundle(set) => &set.dir,
+            Local::N64(files) => &files.set.dir,
         }
     }
 
     /// Archive entries (local file, name in the zip) for archive saves.
     fn entries(&self) -> Result<Vec<(PathBuf, String)>> {
         match self {
-            Local::File(_) => unreachable!("single files are not archived"),
+            Local::File(_) | Local::N64(_) => unreachable!("not archived from files"),
             Local::Dir(s) => {
                 let primary_present = s
                     .required_subdir
@@ -337,6 +339,7 @@ impl Local {
         match self {
             Local::File(p) if p.is_file() => Ok(Some(save_archive::file_md5(p)?)),
             Local::File(_) => Ok(None),
+            Local::N64(files) => n64::local_hash(files),
             _ => save_archive::entries_hash(&self.entries()?),
         }
     }
@@ -344,6 +347,7 @@ impl Local {
     fn mtime(&self) -> Option<SystemTime> {
         match self {
             Local::File(p) => std::fs::metadata(p).and_then(|m| m.modified()).ok(),
+            Local::N64(files) => n64::local_mtime(files),
             _ => save_archive::entries_mtime(&self.entries().ok()?),
         }
     }
@@ -357,6 +361,7 @@ async fn local_hash(local: &Local) -> Result<Option<String>> {
 fn unit_key(ctx: &SyncCtx<'_>, unit: &Unit) -> String {
     let local = match &unit.local {
         Local::Bundle(set) => format!("{}#{}", set.dir.display(), set.matcher.label()),
+        Local::N64(files) => format!("{}#{}", files.set.dir.display(), files.set.matcher.label()),
         other => other.path().display().to_string(),
     };
     format!(
@@ -443,6 +448,7 @@ async fn remote_matches(ctx: &SyncCtx<'_>, unit: &Unit, remote: &Remote, local_h
             let local = unit.local.clone();
             tokio::task::spawn_blocking(move || match local {
                 Local::File(_) => save_archive::file_md5(&file).ok(),
+                Local::N64(_) => n64::read_unit(&file).ok().and_then(|s| s.hash()),
                 _ => save_archive::zip_content_hash(&file).ok(),
             })
             .await
@@ -472,12 +478,13 @@ async fn upload(ctx: &SyncCtx<'_>, unit: &Unit, key: &str, hash: String) -> Resu
             archive => {
                 let zip = work.join(&unit.upload_name);
                 let (local, dest) = (archive.clone(), zip.clone());
-                tokio::task::spawn_blocking(move || {
-                    save_archive::zip_entries_with_dirs(
+                tokio::task::spawn_blocking(move || match &local {
+                    Local::N64(files) => n64::write_unit(files, &dest),
+                    _ => save_archive::zip_entries_with_dirs(
                         &local.entries()?,
                         &local.empty_dirs()?,
                         &dest,
-                    )
+                    ),
                 })
                 .await??;
                 zip
@@ -562,6 +569,8 @@ fn apply_download(
 ) -> Result<bool> {
     let actual = match local {
         Local::File(_) => save_archive::file_md5(downloaded)?,
+        // A save from before Sigil may be a libretro `.srm` or a lone `.eep`.
+        Local::N64(_) if !is_zip(downloaded) => save_archive::file_md5(downloaded)?,
         _ => save_archive::zip_content_hash(downloaded)?,
     };
     if expected_hash.is_some_and(|h| h != actual) {
@@ -611,6 +620,7 @@ fn apply_download(
             };
             save_archive::restore_bundle(downloaded, &set.dir, &set.files(), accept, backup)?;
         }
+        Local::N64(files) => n64::restore(files, downloaded, backup)?,
     }
     if let Some(parent) = backup.parent() {
         prune_backups(parent);
@@ -795,9 +805,21 @@ impl Kind {
     }
 }
 
-fn is_archive_save(r: &Remote) -> bool {
-    r.file_name.to_lowercase().ends_with(".zip")
-        && r.slot.as_deref().is_none_or(|slot| slot == AUTOSAVE_SLOT)
+/// Whether `r` can be the archive unit `local` syncs with: a zip, or for N64
+/// also the files clients uploaded before Sigil (a libretro `.srm`, RomM's
+/// web player's among them, or an `.eep`).
+fn is_archive_save(r: &Remote, local: &Local) -> bool {
+    let name = r.file_name.to_lowercase();
+    let shape = name.ends_with(".zip")
+        || matches!(local, Local::N64(_)) && (name.ends_with(".srm") || name.ends_with(".eep"));
+    shape && r.slot.as_deref().is_none_or(|slot| slot == AUTOSAVE_SLOT)
+}
+
+fn is_zip(path: &Path) -> bool {
+    let mut magic = [0u8; 4];
+    std::fs::File::open(path)
+        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut magic))
+        .is_ok_and(|_| &magic == b"PK\x03\x04")
 }
 
 fn newest<'a>(remotes: impl Iterator<Item = &'a Remote>) -> Option<&'a Remote> {
