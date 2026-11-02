@@ -44,13 +44,25 @@ pub fn decide(
     let remote_changed = remote.id != base.remote_id
         || match (remote.hash, base.remote_hash.as_deref()) {
             (Some(now), Some(then)) => now != then,
-            _ => remote.updated_at != base.remote_updated_at,
+            _ => !same_instant(remote.updated_at, &base.remote_updated_at),
         };
     match (local_changed, remote_changed) {
         (false, false) => Action::Nothing,
         (true, false) => Action::Upload,
         (false, true) => Action::Download,
         (true, true) => Action::Conflict,
+    }
+}
+
+/// RomM writes `updated_at` in UTC when answering an upload and in its own
+/// time zone when listing, so equal instants can differ as text.
+fn same_instant(a: &str, b: &str) -> bool {
+    match (
+        chrono::DateTime::parse_from_rfc3339(a),
+        chrono::DateTime::parse_from_rfc3339(b),
+    ) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
     }
 }
 
@@ -80,6 +92,19 @@ mod tests {
             hash,
             updated_at: at,
         })
+    }
+
+    #[test]
+    fn times_compare_as_instants() {
+        assert!(same_instant(
+            "2026-11-02T09:35:17.562170+00:00",
+            "2026-11-02T10:35:17.562170+01:00"
+        ));
+        assert!(!same_instant(
+            "2026-11-02T09:35:17.562170+00:00",
+            "2026-11-02T09:35:17.562171+00:00"
+        ));
+        assert!(same_instant("not a time", "not a time"));
     }
 
     #[test]

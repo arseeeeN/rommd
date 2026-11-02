@@ -625,6 +625,28 @@ async fn a_3ds_save_carries_title_data_and_extdata_separately() {
     );
 }
 
+/// RomM answers uploads with `updated_at` in UTC and lists it in its own time
+/// zone (the fake: +01:00). The same instant written differently is no change:
+/// an untouched state is left alone, and one changed only here is uploaded
+/// without a conflict.
+#[tokio::test]
+async fn states_are_unchanged_when_romm_writes_the_time_differently() {
+    let fake = FakeRomm::start().await;
+    let d = Device::new("states-tz");
+    write(&d.path("states/Game.ss1"), b"state 1");
+    write(&d.path("states/Game.ss2"), b"untouched");
+    d.sync(&fake, &MGBA, &d.gba(), None).await;
+    write(&d.path("states/Game.ss1"), b"state 1, later");
+    d.sync(&fake, &MGBA, &d.gba(), None).await;
+
+    let conflicts = d.store.conflicts().await;
+    assert!(conflicts.is_empty(), "{conflicts:?}");
+    assert_eq!(d.backups(), Vec::<PathBuf>::new(), "nothing was downloaded");
+    let writes = fake.writes();
+    assert_eq!(writes.len(), 3, "{writes:?}");
+    assert!(writes[2].starts_with("PUT state "), "{writes:?}");
+}
+
 #[tokio::test]
 async fn states_without_history_are_compared_by_content() {
     // RomM has no content hash for states, so a device meeting RomM's states

@@ -253,7 +253,20 @@ fn tag_with_time(name: &str, at: i64) -> String {
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-fn save_json(e: &Entry) -> serde_json::Value {
+/// RomM answers an upload or update with `updated_at` in UTC but lists
+/// entries in the server's time zone, so one instant reaches rommd written two
+/// ways; listings here use +01:00 (a server in Central Europe) to keep that.
+fn timestamp(secs: i64, listing: bool) -> String {
+    let utc = chrono::DateTime::from_timestamp(secs, 0).unwrap();
+    if listing {
+        let cet = chrono::FixedOffset::east_opt(3600).unwrap();
+        utc.with_timezone(&cet).to_rfc3339()
+    } else {
+        utc.to_rfc3339()
+    }
+}
+
+fn save_json(e: &Entry, listing: bool) -> serde_json::Value {
     serde_json::json!({
         "id": e.id,
         "rom_id": e.rom_id,
@@ -262,12 +275,12 @@ fn save_json(e: &Entry) -> serde_json::Value {
         "emulator": e.emulator,
         "slot": e.slot,
         "download_path": format!("/api/saves/{}/content", e.id),
-        "updated_at": chrono::DateTime::from_timestamp(e.updated_at, 0).unwrap().to_rfc3339(),
+        "updated_at": timestamp(e.updated_at, listing),
         "content_hash": e.content_hash,
     })
 }
 
-fn state_json(e: &Entry) -> serde_json::Value {
+fn state_json(e: &Entry, listing: bool) -> serde_json::Value {
     serde_json::json!({
         "id": e.id,
         "rom_id": e.rom_id,
@@ -275,7 +288,7 @@ fn state_json(e: &Entry) -> serde_json::Value {
         "file_size_bytes": e.data.len(),
         "emulator": e.emulator,
         "download_path": format!("/api/states/{}/content", e.id),
-        "updated_at": chrono::DateTime::from_timestamp(e.updated_at, 0).unwrap().to_rfc3339(),
+        "updated_at": timestamp(e.updated_at, listing),
     })
 }
 
@@ -307,7 +320,7 @@ async fn list_saves(State(s): State<Shared>, Query(q): Params) -> Response {
         s.saves
             .iter()
             .filter(|e| e.rom_id == rom)
-            .map(save_json)
+            .map(|e| save_json(e, true))
             .collect::<Vec<_>>(),
     )
     .into_response()
@@ -339,7 +352,7 @@ async fn add_save(
             .iter()
             .find(|e| e.rom_id == rom && e.slot.as_ref() == Some(slot) && e.content_hash == hash)
     {
-        return Json(save_json(existing));
+        return Json(save_json(existing, false));
     }
     let at = s.tick();
     let file_name = if slot.is_some() {
@@ -386,7 +399,7 @@ async fn add_save(
         let doomed: Vec<i64> = in_slot.iter().skip(limit).map(|(_, id)| *id).collect();
         s.saves.retain(|e| !doomed.contains(&e.id));
     }
-    Json(save_json(&result))
+    Json(save_json(&result, false))
 }
 
 async fn update_save(State(s): State<Shared>, Path(id): Path<i64>, form: Multipart) -> Response {
@@ -399,7 +412,7 @@ async fn update_save(State(s): State<Shared>, Path(id): Path<i64>, form: Multipa
             e.content_hash = content_hash(&data);
             e.data = data;
             e.updated_at = at;
-            Json(save_json(e)).into_response()
+            Json(save_json(e, false)).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
     }
@@ -422,7 +435,7 @@ async fn list_states(State(s): State<Shared>, Query(q): Params) -> Response {
         s.states
             .iter()
             .filter(|e| e.rom_id == rom)
-            .map(state_json)
+            .map(|e| state_json(e, true))
             .collect::<Vec<_>>(),
     )
     .into_response()
@@ -467,7 +480,7 @@ async fn add_state(
             e
         }
     };
-    Json(state_json(&result))
+    Json(state_json(&result, false))
 }
 
 async fn update_state(State(s): State<Shared>, Path(id): Path<i64>, form: Multipart) -> Response {
@@ -480,7 +493,7 @@ async fn update_state(State(s): State<Shared>, Path(id): Path<i64>, form: Multip
             e.content_hash = content_hash(&data);
             e.data = data;
             e.updated_at = at;
-            Json(state_json(e)).into_response()
+            Json(state_json(e, false)).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
     }
