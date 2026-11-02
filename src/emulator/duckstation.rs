@@ -4,7 +4,9 @@ use indexmap::IndexMap;
 use std::path::{Path, PathBuf};
 use tracing::debug;
 
-use super::{Emulator, FileSet, LaunchCommand, LaunchContext, SaveLayout, SaveSet, ps_disc};
+use super::{
+    Emulator, FileSet, LaunchCommand, LaunchContext, Ps1Cards, SaveLayout, SaveSet, ps_disc,
+};
 use crate::config::EmulatorConfig;
 use crate::ini::IniFile;
 use crate::profile::{ProfileBlob, SnapshotCleaner};
@@ -115,6 +117,18 @@ impl Emulator for DuckStation {
         Ok(ProfileBlob::new(cleaned))
     }
 
+    /// argosy-launcher's PS1 emulators and libretro cores
+    /// (`EmulatorRegistry.kt`); every one keeps a raw card.
+    fn save_family(&self) -> &'static [&'static str] {
+        &[
+            "swanstation",
+            "pcsx_rearmed",
+            "mednafen_psx_hw",
+            "mednafen_psx",
+            "armsx1",
+        ]
+    }
+
     fn game_id_for_rom(&self, config: &EmulatorConfig, rom_path: &Path) -> Option<String> {
         let serial = ps_disc::read_serial(rom_path).or_else(|| {
             let cache = config.config_dir.join("cache").join("gamelist.cache");
@@ -135,7 +149,7 @@ impl Emulator for DuckStation {
     /// cards follow the card naming mode in settings.ini (`Card1Type`, which
     /// almost all games use): by serial, by ROM file name, or by default by the
     /// game's save title (`<Title>_1.mcd`). A game's cards (`_1`, `_2`) sync
-    /// as one bundle so they stay consistent and keep a version history.
+    /// as one card of its saves, argosy-launcher's unit (`ps1_card`).
     async fn save_layout(
         &self,
         config: &EmulatorConfig,
@@ -153,8 +167,13 @@ impl Emulator for DuckStation {
         };
         let cards = read_folder(config, "MemoryCards", "Directory", "memcards");
         let states = read_folder(config, "Folders", "SaveStates", "savestates");
+        let saves = (!card_name.is_empty()).then(|| {
+            SaveSet::Ps1Cards(Ps1Cards {
+                cards: [1, 2].map(|slot| cards.join(format!("{card_name}_{slot}.mcd"))),
+            })
+        });
         SaveLayout {
-            saves: FileSet::stem(cards, card_name).map(SaveSet::Bundle),
+            saves,
             states: FileSet::stem(states, serial),
         }
     }

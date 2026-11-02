@@ -13,6 +13,7 @@ mod n3ds;
 mod n64;
 mod process;
 mod profile;
+mod ps1_card;
 mod romm;
 mod save_archive;
 mod server;

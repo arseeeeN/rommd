@@ -78,6 +78,7 @@ existing one, e.g. RomM's, is kept), else the one top-level file RomM's
 - **`src/switch.rs`** — Switch title ID extraction from NSP and XCI (ticket + NCA header decryption)
 - **`src/n3ds.rs`** — 3DS title ID extraction (NCSD / NCCH headers, CIA TMD; no keys)
 - **`src/n64.rs`** — N64 ROM byte orders and hashes, and the N64 save unit (collect, restore)
+- **`src/ps1_card.rs`** — PS1 memory cards (list, format, inject) and the per-game card unit
 - **`src/sync/`** — save/state sync engine, three-way decision, persistent sync state
 - **`src/save_archive.rs`** — zip/restore and RomM-compatible hashing of directory saves
 - **`src/profile.rs`** — portable settings overlay (ProfileBlob)
@@ -331,7 +332,16 @@ map to the base title. States are `states/<TITLE ID>.<NN>.cst` (00 is the
 quicksave). Save family: Citra forks (citra, citra_mmj, lime3ds, borked3ds).
 
 **DuckStation:** states are `<serial>_N.sav`. A game's memory cards (`_1`,
-`_2`) are one `Bundle`, so they stay consistent and keep a history. Cards in the default
+`_2`) sync as one `Ps1Cards` unit, argosy's (`ps1_card`, Sigil `card_ps1.c`):
+a freshly formatted raw card holding the saves of both cards, slot 1 first,
+uploaded as `<rom stem>.mcd` with its MD5 as hash, byte for byte what Sigil
+builds from the same saves. Every save on the game's cards counts as its own
+(Sigil filters by product code; they differ only when a card holds another
+game's save). Restore reads any raw card (argosy's, a libretro `.srm`),
+`.gme`, `.vmp`, or rommd's earlier zip of the cards; a save goes back to the
+slot 2 card when that card has one of its name, else to slot 1, and each card
+is rebuilt with only its saves. Save family: PS1 libretro cores and `armsx1`.
+Cards in the default
 per-game-title mode are named by the *save title* from DuckStation's game
 database (`cache/gamedb.cache`: length-prefixed serial, title, sort title,
 localized title, save title), falling back to the gamelist cache title.

@@ -47,6 +47,9 @@ launch requests. Things to know:
   RomM save is there on the first launch. It only does this while Ryujinx is
   closed; if Ryujinx is open (even with another game), the save is restored
   after you quit and appears from the next launch.
+- **PlayStation:** a game's saves sync as one memory card, the same as
+  argosy-launcher's, so they move to and from argosy and RomM's in-browser
+  player.
 - **GameCube:** memory card slot A must be a GCI folder (Dolphin's default).
   A raw memory card image holds every game's saves in one file and is not
   synced.

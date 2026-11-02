@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use super::*;
-use crate::emulator::{CreateDir, FileSet, GameSaveDir, N64Files, SaveLayout, SaveSet};
+use crate::emulator::{CreateDir, FileSet, GameSaveDir, N64Files, Ps1Cards, SaveLayout, SaveSet};
 use crate::testing::fake_romm::{FakeRomm, content_hash};
 use crate::testing::{TempDir, TestEmulator, age, write, zip_bytes};
 
@@ -31,6 +31,10 @@ const MGBA: TestEmulator = TestEmulator {
 const DOLPHIN: TestEmulator = TestEmulator {
     id: "dolphin",
     family: &[],
+};
+const DUCKSTATION: TestEmulator = TestEmulator {
+    id: "duckstation",
+    family: &["swanstation"],
 };
 const RMG: TestEmulator = TestEmulator {
     id: "rmg",
@@ -952,4 +956,53 @@ async fn an_n64_save_rommd_cant_name_is_restored_after_the_first_session() {
         .await;
     assert_eq!(read(d.path("n64/GOOD NAME-12345678.sra")), swapped);
     assert_eq!(d.store.conflicts().await[0].kept, "remote");
+}
+
+// ── PS1 ───────────────────────────────────────────────────────────────────────
+
+fn ps1(d: &Device) -> SaveLayout {
+    SaveLayout {
+        saves: Some(SaveSet::Ps1Cards(Ps1Cards {
+            cards: [d.path("memcards/Game_1.mcd"), d.path("memcards/Game_2.mcd")],
+        })),
+        states: None,
+    }
+}
+
+#[tokio::test]
+async fn ps1_saves_travel_as_one_card_both_ways() {
+    use crate::ps1_card::tests::{card, save};
+    let fake = FakeRomm::start().await;
+    let (a, b) = (Device::new("ps1-a"), Device::new("ps1-b"));
+    let (one, two) = (save("BASLUS-00594AAA", 1, 1), save("BASLUS-00594BBB", 2, 2));
+    write(
+        &a.path("memcards/Game_1.mcd"),
+        &card(std::slice::from_ref(&one)),
+    );
+    write(
+        &a.path("memcards/Game_2.mcd"),
+        &card(std::slice::from_ref(&two)),
+    );
+
+    a.sync(&fake, &DUCKSTATION, &ps1(&a), None).await;
+    let up = fake.saves(ROM).pop().unwrap();
+    assert!(up.file_name.ends_with("].mcd"), "{}", up.file_name);
+    assert_eq!(up.data, card(&[one.clone(), two.clone()]), "Sigil's unit");
+    assert_eq!(up.content_hash, content_hash(&up.data));
+
+    // A libretro core's raw card (argosy, RomM's web player) restores too.
+    let three = save("BASLUS-00594CCC", 1, 3);
+    fake.seed_save(
+        ROM,
+        "Game.srm",
+        "swanstation",
+        None,
+        &card(std::slice::from_ref(&three)),
+    );
+    b.sync(&fake, &DUCKSTATION, &ps1(&b), None).await;
+    assert_eq!(read(b.path("memcards/Game_1.mcd")), card(&[three]));
+    assert!(!b.path("memcards/Game_2.mcd").exists());
+    let writes = fake.writes().len();
+    b.sync(&fake, &DUCKSTATION, &ps1(&b), None).await;
+    assert_eq!(fake.writes().len(), writes, "in sync after the restore");
 }

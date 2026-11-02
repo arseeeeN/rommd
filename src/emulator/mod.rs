@@ -21,7 +21,7 @@ use tokio::process::Child;
 
 use crate::config::EmulatorConfig;
 use crate::profile::ProfileBlob;
-pub use layout::{CreateDir, FileSet, GameSaveDir, N64Files, SaveLayout, SaveSet};
+pub use layout::{CreateDir, FileSet, GameSaveDir, N64Files, Ps1Cards, SaveLayout, SaveSet};
 
 /// Every supported emulator. To add one, implement `Emulator` in its own
 /// module here and list it.

@@ -39,6 +39,15 @@ pub enum SaveSet {
     Bundle(FileSet),
     /// An N64 cartridge's save files, synced as argosy-launcher's unit (`n64`).
     N64(N64Files),
+    /// A PlayStation game's memory cards, synced as one card of its saves
+    /// (`ps1_card`).
+    Ps1Cards(Ps1Cards),
+}
+
+/// The game's memory cards in slot 1 and slot 2; either may not exist.
+#[derive(Debug, Clone)]
+pub struct Ps1Cards {
+    pub cards: [PathBuf; 2],
 }
 
 /// A game's N64 save files (`.eep`, `.sra`, `.fla`, `.mpk`) in one folder.
