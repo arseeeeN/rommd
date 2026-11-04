@@ -35,9 +35,17 @@ pub struct View {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
-    Play { rom_id: i64, emulator: String },
-    Stop { pid: u32 },
-    CancelDownload { launch_id: u64 },
+    Play {
+        rom_id: i64,
+        emulator: String,
+        fullscreen: Option<bool>,
+    },
+    Stop {
+        pid: u32,
+    },
+    CancelDownload {
+        launch_id: u64,
+    },
     CheckUpdate,
     InstallUpdate,
     SteamSync,
@@ -154,6 +162,7 @@ pub fn menu(view: &View) -> Vec<Entry> {
                     Action::Play {
                         rom_id: g.rom_id,
                         emulator: g.emulator.clone(),
+                        fullscreen: g.fullscreen,
                     },
                 )
             })
@@ -212,12 +221,14 @@ async fn refresh(daemon: &Daemon, view: &mut View) {
 /// Do what the user chose; a line for the menu on how it went.
 async fn perform(daemon: &Daemon, action: Action) -> Option<String> {
     let result: Result<Option<String>> = match action {
-        Action::Play { rom_id, emulator } => {
-            match daemon.launch(rom_id, &emulator, false, None).await {
-                Ok(Launched::Started(_) | Launched::Downloading(_)) => Ok(None),
-                Err(e) => Err(e),
-            }
-        }
+        Action::Play {
+            rom_id,
+            emulator,
+            fullscreen,
+        } => match daemon.launch(rom_id, &emulator, false, fullscreen).await {
+            Ok(Launched::Started(_) | Launched::Downloading(_)) => Ok(None),
+            Err(e) => Err(e),
+        },
         Action::Stop { pid } => daemon.stop(pid).await.map(|_| None),
         Action::CancelDownload { launch_id } => daemon.cancel(launch_id).await.map(|cancelled| {
             (!cancelled).then(|| "Too late to cancel: the download had finished".to_owned())
@@ -326,6 +337,7 @@ mod tests {
             platform: "Nintendo 64".into(),
             emulator: "rmg".into(),
             played_at: 0,
+            fullscreen: Some(true),
         }]
     }
 
@@ -402,7 +414,8 @@ mod tests {
                 "Super Mario 64 (Nintendo 64)",
                 Action::Play {
                     rom_id: 35,
-                    emulator: "rmg".into()
+                    emulator: "rmg".into(),
+                    fullscreen: Some(true),
                 }
             )]
         );

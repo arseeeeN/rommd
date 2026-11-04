@@ -17,6 +17,11 @@ pub struct RecentGame {
     pub emulator: String,
     /// When it was last started, Unix seconds.
     pub played_at: u64,
+    /// Whether it was started fullscreen (`None`: as the emulator is set),
+    /// so starting it again looks the same: a Steam shortcut's launch is
+    /// fullscreen, a plain one follows the config.
+    #[serde(default)]
+    pub fullscreen: Option<bool>,
 }
 
 pub struct RecentGames {
@@ -81,6 +86,7 @@ mod tests {
             platform: "Nintendo 64".into(),
             emulator: "rmg".into(),
             played_at,
+            fullscreen: None,
         }
     }
 

@@ -275,7 +275,8 @@ impl Launch {
                 req.profile.as_ref(),
             )
             .await?;
-        if let Some(fullscreen) = config.launch.fullscreen(req.fullscreen, req.attach) {
+        let fullscreen = config.launch.fullscreen(req.fullscreen, req.attach);
+        if let Some(fullscreen) = fullscreen {
             command.set_fullscreen(emulator.as_ref(), fullscreen);
         }
         let started = if req.attach {
@@ -304,6 +305,7 @@ impl Launch {
                 played_at: started_at
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs()),
+                fullscreen,
             });
         }
 
