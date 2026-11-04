@@ -52,7 +52,7 @@ pub struct UpdateConfig {
     pub repository: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdateStatus {
     pub current_version: String,
     /// Newest release found by the last check.

@@ -103,7 +103,7 @@ pub struct GameMatch {
 
 // ── /status ───────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct StatusResponse {
     pub running: Vec<RunningGameInfo>,
     /// Launches in progress (with download progress) and those that
@@ -111,7 +111,7 @@ pub struct StatusResponse {
     pub launches: Vec<crate::launches::LaunchInfo>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RunningGameInfo {
     pub pid: u32,
     pub rom_id: i64,

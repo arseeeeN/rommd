@@ -7,9 +7,10 @@ use std::io::{BufRead, IsTerminal, Write};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::{Config, ServerConfig};
+use crate::client::{Daemon, Launched};
+use crate::config::Config;
 use crate::emulator::{Emulator, LaunchCommand};
-use crate::launches::{LaunchInfo, LaunchState};
+use crate::launches::LaunchState;
 use crate::server::types::{GameMatch, GamesResponse};
 
 const PLAY_CHOICES: u32 = 10;
@@ -507,11 +508,6 @@ fn home_relative(path: &std::path::Path) -> String {
     }
 }
 
-enum Launched {
-    Started(u64),
-    Downloading(u64),
-}
-
 enum Pick<'a> {
     Game(&'a GameMatch),
     Ask,
@@ -611,127 +607,6 @@ fn query_string(words: &[String]) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-struct Daemon {
-    client: reqwest::Client,
-    base: String,
-}
-
-impl Daemon {
-    fn new() -> Result<Self> {
-        let port = Config::load_or_create().map_or(ServerConfig::default().port, |c| c.server.port);
-        Ok(Self {
-            client: reqwest::Client::builder()
-                .connect_timeout(Duration::from_secs(3))
-                .build()?,
-            base: format!("http://127.0.0.1:{port}"),
-        })
-    }
-
-    async fn games(&self, query: &str, limit: u32) -> Result<GamesResponse> {
-        let request = self
-            .client
-            .get(format!("{}/games", self.base))
-            .query(&[("q", query), ("limit", &limit.to_string())])
-            .timeout(Duration::from_secs(30));
-        let response = self.send(request).await?;
-        response.json().await.context("reading the search results")
-    }
-
-    /// Returns the emulator's PID. Not time-limited: the daemon downloads the
-    /// ROM first, which can take minutes.
-    /// Not time-limited: for a ROM that is already here the daemon answers
-    /// once the saves are synced and the emulator started.
-    async fn launch(
-        &self,
-        rom_id: i64,
-        emulator: &str,
-        attach: bool,
-        fullscreen: Option<bool>,
-    ) -> Result<Launched> {
-        let request = self
-            .client
-            .post(format!("{}/launch", self.base))
-            .json(&serde_json::json!({
-                "rom_id": rom_id,
-                "emulator": emulator,
-                "attach": attach,
-                "fullscreen": fullscreen,
-            }));
-        let response = self.send(request).await?;
-        let accepted = response.status() == reqwest::StatusCode::ACCEPTED;
-        let body: serde_json::Value = response.json().await?;
-        let field = |name: &str| {
-            body[name]
-                .as_u64()
-                .ok_or_else(|| anyhow::anyhow!("unexpected launch response: {body}"))
-        };
-        Ok(if accepted {
-            Launched::Downloading(field("launch_id")?)
-        } else {
-            Launched::Started(field("pid")?)
-        })
-    }
-
-    async fn launch_info(&self, id: u64) -> Result<LaunchInfo> {
-        let request = self
-            .client
-            .get(format!("{}/launches/{id}", self.base))
-            .timeout(Duration::from_secs(5));
-        Ok(self.send(request).await?.json().await?)
-    }
-
-    /// Report on an attached launch: the game's PID, or why it didn't start.
-    async fn attached(&self, id: u64, started: std::result::Result<u32, String>) -> Result<()> {
-        let body = match started {
-            Ok(pid) => serde_json::json!({ "pid": pid }),
-            Err(error) => serde_json::json!({ "error": error }),
-        };
-        let request = self
-            .client
-            .post(format!("{}/launches/{id}/attached", self.base))
-            .json(&body)
-            .timeout(Duration::from_secs(5));
-        self.send(request).await.map(|_| ())
-    }
-
-    /// False when it was too late: the download had finished.
-    async fn cancel(&self, id: u64) -> Result<bool> {
-        let response = self
-            .client
-            .delete(format!("{}/launches/{id}", self.base))
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await
-            .context("talking to rommd")?;
-        match response.status() {
-            reqwest::StatusCode::NO_CONTENT => Ok(true),
-            reqwest::StatusCode::CONFLICT => Ok(false),
-            status => anyhow::bail!("rommd answered {status}"),
-        }
-    }
-
-    async fn send(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
-        let response = request.send().await.map_err(|e| {
-            if e.is_connect() {
-                anyhow::anyhow!(
-                    "rommd is not running; start it with `rommd service start` (or run `rommd`)"
-                )
-            } else {
-                anyhow::Error::new(e).context("talking to rommd")
-            }
-        })?;
-        if response.status().is_success() {
-            return Ok(response);
-        }
-        let status = response.status();
-        let body: serde_json::Value = response.json().await.unwrap_or_default();
-        match body["error"].as_str() {
-            Some(error) => anyhow::bail!("{error}"),
-            None => anyhow::bail!("rommd answered {status}"),
-        }
-    }
 }
 
 #[cfg(test)]

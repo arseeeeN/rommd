@@ -1,5 +1,6 @@
 mod awake;
 mod cli;
+mod client;
 mod config;
 mod config_edit;
 mod detect;
