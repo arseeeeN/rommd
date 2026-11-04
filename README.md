@@ -358,3 +358,14 @@ cargo run      # runs the daemon in the foreground
 
 `CLAUDE.md` describes the architecture and the reasoning behind the save sync.
 `dev/releasing.md` covers cutting a release.
+
+## License
+
+rommd is licensed under the [Mozilla Public License 2.0](LICENSE).
+
+The save formats for PS1 and PS2 memory cards and N64 cartridges are ported
+from [Sigil](https://github.com/rommapp/argosy-sigil) (argosy-launcher's save
+library, also MPL-2.0): `src/ps1_card.rs`, `src/ps2_card/` and `src/n64.rs`.
+
+The tray icon (`assets/rommd-tray.svg`) is derived from
+[RomM](https://github.com/rommapp/romm)'s logo.

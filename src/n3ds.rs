@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! 3DS title ID extraction. Every supported container carries the title ID in
 //! plaintext, so no keys are needed.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Keeping the computer from idle sleep while a ROM downloads. Only idle
 //! sleep: a deliberate one (power button, closing the lid) still happens, and
 //! the download resumes afterwards.

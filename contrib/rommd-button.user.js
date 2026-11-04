@@ -1,6 +1,7 @@
 // ==UserScript==
 // @name         rommd: Launch button
 // @namespace    https://github.com/arseeeeN/rommd
+// @license      MPL-2.0
 // @version      0.4.0
 // @description  Adds a Launch button to the action bar of RomM game pages that starts the game on this PC through the local rommd daemon.
 // @match        https://romm.example.com/*

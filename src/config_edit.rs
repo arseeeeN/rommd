@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Changes rommd makes to the user's config file. The file is for people
 //! first, so an edit keeps every comment, blank line and value it doesn't
 //! touch exactly as written (`toml_edit`).

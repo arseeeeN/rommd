@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! A client of the running daemon, for `rommd search` / `rommd play` and the
 //! tray: the same HTTP API anything else uses.
 

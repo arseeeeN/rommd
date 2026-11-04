@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! End-to-end sync scenarios against the fake RomM (`testing::fake_romm`).
 //! Each test drives one or more simulated devices — a save directory and a
 //! sync-state store each — through `sync_layout`, as launch and exit would.

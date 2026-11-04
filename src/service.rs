@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! `rommd service install|start|stop|restart|uninstall`: start rommd at login
 //! with the platform's own mechanism, so it runs without a terminal and
 //! restarts after updates, and control it there. The systemd and launchd

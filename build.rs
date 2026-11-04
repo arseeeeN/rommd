@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Records the build target for the updater (it downloads the release asset
 //! for the same target) and embeds the release signing key from
 //! `minisign.pub` when present. Builds without the key cannot install updates.

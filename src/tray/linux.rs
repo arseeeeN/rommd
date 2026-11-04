@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! The tray on Linux: a StatusNotifierItem over D-Bus (`ksni`, pure Rust),
 //! which KDE Plasma (the Steam Deck's desktop), Xfce and others show; GNOME
 //! needs the AppIndicator extension.
@@ -13,6 +14,9 @@ use super::{Action, Entry, View, menu, tooltip};
 struct Item {
     view: View,
     actions: UnboundedSender<Action>,
+    /// The icon theme folder holding `rommd`; `None` when it couldn't be
+    /// written, and a stock icon stands in.
+    icon_theme: Option<std::path::PathBuf>,
 }
 
 impl ksni::Tray for Item {
@@ -24,9 +28,21 @@ impl ksni::Tray for Item {
         "rommd".into()
     }
 
-    /// A freedesktop icon every theme has, until rommd has one of its own.
+    fn icon_theme_path(&self) -> String {
+        self.icon_theme
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    }
+
+    /// rommd's own, or a freedesktop icon every theme has.
     fn icon_name(&self) -> String {
-        "input-gaming".into()
+        if self.icon_theme.is_some() {
+            "rommd"
+        } else {
+            "input-gaming"
+        }
+        .into()
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
@@ -72,10 +88,14 @@ fn to_ksni(entry: Entry) -> MenuItem<Item> {
 pub struct Tray(ksni::Handle<Item>);
 
 impl Tray {
-    pub async fn spawn(actions: UnboundedSender<Action>) -> Result<Self> {
+    pub async fn spawn(
+        actions: UnboundedSender<Action>,
+        icon_theme: Option<std::path::PathBuf>,
+    ) -> Result<Self> {
         let item = Item {
             view: View::default(),
             actions,
+            icon_theme,
         };
         let handle = item
             .spawn()

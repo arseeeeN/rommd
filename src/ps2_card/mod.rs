@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! PS2 saves on memory cards every game shares, synced as argosy-launcher's
 //! Sigil does (`src/sync_cards.c`, `src/sync_units.c`,
 //! `docs/platforms/ps2.md`).

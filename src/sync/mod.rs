@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Save and state sync with RomM.
 //!
 //! Every save is a *unit* paired with at most one RomM entry: a single file, a

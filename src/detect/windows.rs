@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Windows: emulators come as installers, zips extracted anywhere, winget
 //! and Scoop packages. A candidate is any program with the emulator's file
 //! name in a place programs live; it is recognised from its own file, never

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 use indexmap::IndexMap;
 
 /// A parsed INI file with ordered sections and ordered key-value pairs.

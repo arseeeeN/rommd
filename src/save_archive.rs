@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Zip archives for saves made of several files, in argosy-launcher's layouts so
 //! saves round-trip between rommd and argosy:
 //!

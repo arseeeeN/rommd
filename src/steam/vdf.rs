@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Steam's binary VDF, the format of `shortcuts.vdf`: nested maps of named
 //! values, each a type byte, a NUL-terminated name, then the value. Read and
 //! written whole, so entries rommd doesn't know about survive a rewrite.

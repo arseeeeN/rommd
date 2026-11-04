@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! The PS2 memory card filesystem, ported from argosy-launcher's Sigil
 //! (`src/card_ps2.c`); layout notes in mymc's `ps2mc.py` and
 //! <https://ps2savetools.com/ps2memcardformat.html>.

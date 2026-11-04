@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! The running config, reloaded when its file changes.
 //!
 //! The config directory is watched with the OS's file events (inotify,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Finding games in the library and picking the emulator that runs them: the
 //! query language behind `GET /games`, `rommd search` and `rommd play`.
 //!

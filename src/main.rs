@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 mod awake;
 mod cli;
 mod client;

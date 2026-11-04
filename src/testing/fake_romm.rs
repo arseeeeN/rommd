@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! An in-process fake of the RomM save and state API, reproducing the
 //! behaviour of RomM 5.2.0's `endpoints/saves.py` and `endpoints/states.py`
 //! that rommd relies on:

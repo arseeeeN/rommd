@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

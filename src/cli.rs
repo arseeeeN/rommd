@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! `rommd search` and `rommd play`: a terminal client of the running daemon,
 //! which does the searching (`GET /games`) and launching (`POST /launch`), so
 //! a game started here is tracked and synced like any other.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Finding installed emulators. Each emulator declares how its install is
 //! recognised on each OS (`Emulator::mac_app`, `Emulator::linux_app`,
 //! `Emulator::windows_app`); the OS modules look for them.

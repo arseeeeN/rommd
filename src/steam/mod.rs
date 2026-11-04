@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Steam shortcuts: one non-Steam game per RomM game, running `rommd play
 //! --attach id:N` (in Game Mode Steam only shows and controls the processes
 //! it starts), with RomM's cover as its portrait art and its platform as its

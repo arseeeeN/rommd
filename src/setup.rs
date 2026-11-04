@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! `rommd setup`: the questions a new user would otherwise answer by editing
 //! the config file. The install scripts run it, so a fresh install ends with
 //! rommd connected to RomM and knowing the emulators here.

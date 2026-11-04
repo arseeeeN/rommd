@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Self-update from GitHub Releases.
 //!
 //! A release carries one raw binary per target (`rommd-<target>[.exe]`) and a

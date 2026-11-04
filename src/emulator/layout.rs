@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Where a game's saves and save states live on disk — what each emulator
 //! reports through `Emulator::save_layout` and the sync engine works from.
 

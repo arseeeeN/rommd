@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Linux: emulators come as distribution packages, Flatpaks and AppImages,
 //! and where an emulator keeps its data depends on which. Each candidate is
 //! recognised from its own files:

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Launches as they progress, so `POST /launch` can return while the ROM
 //! downloads instead of holding the request open (browsers give up on a
 //! response after a few minutes). Clients follow a launch through

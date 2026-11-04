@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Who may talk to the daemon. rommd listens on localhost only, but any web
 //! page in the user's browser can still send requests to `localhost:7497`, so
 //! three checks keep other sites out:

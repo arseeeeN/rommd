@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 use axum::{Json, http::StatusCode, response::IntoResponse};
 
 pub struct AppError(anyhow::Error);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 use super::state::SyncBase;
 
 /// The RomM side of a save, as far as the decision needs it.

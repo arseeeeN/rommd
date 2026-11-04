@@ -482,6 +482,7 @@ A new sync rule gets a scenario; a new emulator gets a layout test.
 ## Conventions
 
 - `cargo test` before committing
+- MPL-2.0: every new `.rs` file starts with `// SPDX-License-Identifier: MPL-2.0`
 - No comments unless the why is non-obvious
 - No filename-based game ID inference (see game_id_for_rom note above)
 - `SaveLayout.states` being `None` is the correct signal for "no states"

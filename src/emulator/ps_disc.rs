@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! PlayStation and PlayStation 2 disc images (ISO 9660, cooked or raw
 //! sectors): the serial from `SYSTEM.CNF`, and for PCSX2 the CRC of the boot
 //! program. Compressed images (CHD, CSO) are not read.

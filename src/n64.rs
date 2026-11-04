@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Nintendo 64 cartridges: the ROM's identity and the game's saves.
 //!
 //! A save is read and written as argosy-launcher's Sigil does (`src/n64_save.c`

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 use anyhow::{Context, Result};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;

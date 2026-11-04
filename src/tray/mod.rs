@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! `rommd tray`: an icon in the system tray, a client of the running daemon
 //! like `rommd play`. It shows what the daemon is doing (a game running, a
 //! ROM downloading), offers the games played last and the update, and runs
@@ -287,6 +288,28 @@ fn open(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+// ── The icon ──────────────────────────────────────────────────────────────────
+
+/// rommd's tray icon: one colour, which KDE's tray recolours to the panel's
+/// text colour (the SVG's `ColorScheme-Text` class); white elsewhere.
+const ICON: &str = include_str!("../../assets/rommd-tray.svg");
+
+/// The folder holding rommd's icon as an icon theme (`<dir>/hicolor/
+/// scalable/apps/rommd.svg`), written when it is missing or outdated.
+fn icon_theme() -> Result<std::path::PathBuf> {
+    let theme = crate::sync::data_dir().join("icons");
+    let file = icon_file(&theme);
+    if std::fs::read_to_string(&file).ok().as_deref() != Some(ICON) {
+        std::fs::create_dir_all(file.parent().unwrap_or(&theme))?;
+        std::fs::write(&file, ICON)?;
+    }
+    Ok(theme)
+}
+
+fn icon_file(theme: &std::path::Path) -> std::path::PathBuf {
+    theme.join("hicolor/scalable/apps/rommd.svg")
+}
+
 // ── Starting at login ─────────────────────────────────────────────────────────
 
 /// Whether this OS has the tray.
@@ -325,9 +348,13 @@ pub fn apply_autostart(enabled: bool) -> Result<()> {
         }
     }
     let exe = std::env::current_exe()?.canonicalize()?;
+    let icon = icon_theme().map_or_else(
+        |_| "input-gaming".into(),
+        |t| icon_file(&t).display().to_string(),
+    );
     let text = format!(
         "[Desktop Entry]\nType=Application\nName=rommd\nComment=rommd in the system tray\n\
-         Exec=\"{}\" tray\nIcon=input-gaming\nTerminal=false\nNoDisplay=true\n\
+         Exec=\"{}\" tray\nIcon={icon}\nTerminal=false\nNoDisplay=true\n\
          X-GNOME-Autostart-enabled=true\n",
         exe.display()
     );
@@ -379,7 +406,10 @@ pub async fn run() -> Result<()> {
             return Ok(());
         }
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let tray = linux::Tray::spawn(tx).await?;
+        let theme = icon_theme()
+            .inspect_err(|e| tracing::warn!("writing the tray icon: {e:#}"))
+            .ok();
+        let tray = linux::Tray::spawn(tx, theme).await?;
         let daemon = Daemon::new()?;
         let mut view = View::default();
         let mut ticker = tokio::time::interval(REFRESH);

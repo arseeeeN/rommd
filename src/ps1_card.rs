@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! PlayStation memory cards: a game's saves taken off its cards and put back,
 //! as argosy-launcher's Sigil does (`src/card_ps1.c`, `src/sync_units.c`,
 //! `docs/platforms/psx.md`).

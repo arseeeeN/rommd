@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! The games played last, newest first, for clients to offer again (the
 //! tray's menu). Kept in `recent.json` beside the sync state.
 

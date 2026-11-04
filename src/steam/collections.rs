@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Steam collections, one per platform, written as Steam ROM Manager writes
 //! its own (`src/lib/category-manager.ts`): into the account's
 //! `cloudstorage/cloud-storage-namespace-<n>.json`, a JSON list of `[key,

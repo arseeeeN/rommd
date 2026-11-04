@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! Test support: a fake RomM server, a stand-in emulator, and scratch dirs.
 
 pub mod fake_romm;

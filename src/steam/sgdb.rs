@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! SteamGridDB, where Steam ROM Manager gets its artwork, picked the way SRM
 //! picks it by default (`src/core/artwork-providers.ts`): the first game the
 //! title search finds, then per kind the first static image that is neither

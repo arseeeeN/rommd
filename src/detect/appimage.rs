@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! What an AppImage says about itself, read from the file without running
 //! it: the names at the root of its embedded filesystem, which by the AppImage
 //! spec include the app's desktop file and icon (named after its app ID, e.g.

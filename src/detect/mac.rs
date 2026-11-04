@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 //! macOS: apps are recognised by the bundle identifier in their
 //! `Contents/Info.plist`.
 
