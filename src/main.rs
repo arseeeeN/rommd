@@ -212,7 +212,7 @@ fn main() -> Result<()> {
             };
             tokio::runtime::Runtime::new()?.block_on(steam::run(remove, options))
         }
-        Some(Command::Tray) => tokio::runtime::Runtime::new()?.block_on(tray::run()),
+        Some(Command::Tray) => tray::run(),
         Some(Command::Service { action }) => match action {
             ServiceAction::Install => service::install(),
             ServiceAction::Start => control(service::Control::Start),

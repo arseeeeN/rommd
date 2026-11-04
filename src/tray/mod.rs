@@ -5,11 +5,18 @@
 //! a Steam shortcut sync. A process of its own, never part of the daemon:
 //! the daemon runs without a display, and stops nothing when the tray quits.
 //!
-//! This module is what the tray shows and does; `linux.rs` puts it on
-//! screen. Windows and macOS have no tray yet.
+//! This module is what the tray shows and does; `linux.rs` and `macos.rs`
+//! put it on screen. Windows has no tray yet.
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(target_os = "linux")]
+use linux::Tray;
+#[cfg(target_os = "macos")]
+use macos::Tray;
 
 use anyhow::{Context, Result};
 use std::time::Duration;
@@ -292,10 +299,12 @@ fn open(path: &std::path::Path) -> Result<()> {
 
 /// rommd's tray icon: one colour, which KDE's tray recolours to the panel's
 /// text colour (the SVG's `ColorScheme-Text` class); white elsewhere.
+#[cfg(target_os = "linux")]
 const ICON: &str = include_str!("../../assets/rommd-tray.svg");
 
 /// The folder holding rommd's icon as an icon theme (`<dir>/hicolor/
 /// scalable/apps/rommd.svg`), written when it is missing or outdated.
+#[cfg(target_os = "linux")]
 fn icon_theme() -> Result<std::path::PathBuf> {
     let theme = crate::sync::data_dir().join("icons");
     let file = icon_file(&theme);
@@ -306,6 +315,7 @@ fn icon_theme() -> Result<std::path::PathBuf> {
     Ok(theme)
 }
 
+#[cfg(target_os = "linux")]
 fn icon_file(theme: &std::path::Path) -> std::path::PathBuf {
     theme.join("hicolor/scalable/apps/rommd.svg")
 }
@@ -314,11 +324,16 @@ fn icon_file(theme: &std::path::Path) -> std::path::PathBuf {
 
 /// Whether this OS has the tray.
 pub fn supported() -> bool {
-    cfg!(target_os = "linux")
+    cfg!(any(target_os = "linux", target_os = "macos"))
 }
 
 /// Whether there is a desktop to show a tray icon on.
 pub fn desktop_session() -> bool {
+    if cfg!(target_os = "macos") {
+        // A logged-in Mac always has a menu bar, but a program started over
+        // SSH can't reach it.
+        return std::env::var_os("SSH_CONNECTION").is_none();
+    }
     supported()
         && ["WAYLAND_DISPLAY", "DISPLAY"]
             .iter()
@@ -326,6 +341,7 @@ pub fn desktop_session() -> bool {
 }
 
 /// The XDG autostart entry desktops (KDE, GNOME, Xfce) start at login.
+#[cfg(target_os = "linux")]
 fn autostart_entry() -> Option<std::path::PathBuf> {
     let config = std::env::var_os("XDG_CONFIG_HOME")
         .map(std::path::PathBuf::from)
@@ -337,9 +353,19 @@ fn autostart_entry() -> Option<std::path::PathBuf> {
 /// Start the tray at login, or with `enabled` false no longer; for
 /// `[tray] enabled`. Nothing on an OS without the tray.
 pub fn apply_autostart(enabled: bool) -> Result<()> {
-    if !supported() {
-        return Ok(());
+    #[cfg(target_os = "linux")]
+    return xdg_autostart(enabled);
+    #[cfg(target_os = "macos")]
+    return crate::service::tray_agent(enabled);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = enabled;
+        Ok(())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn xdg_autostart(enabled: bool) -> Result<()> {
     let entry = autostart_entry().context("finding the autostart folder")?;
     if !enabled {
         match std::fs::remove_file(&entry) {
@@ -399,44 +425,65 @@ pub fn start_now() -> Result<()> {
 }
 
 /// Run the tray until the user quits it.
-pub async fn run() -> Result<()> {
-    #[cfg(target_os = "linux")]
+pub fn run() -> Result<()> {
+    if !supported() {
+        anyhow::bail!("rommd tray only runs on Linux and macOS so far");
+    }
+    if other_tray_running() {
+        return Ok(());
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        if other_tray_running() {
-            return Ok(());
-        }
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let theme = icon_theme()
-            .inspect_err(|e| tracing::warn!("writing the tray icon: {e:#}"))
-            .ok();
-        let tray = linux::Tray::spawn(tx, theme).await?;
         let daemon = Daemon::new()?;
-        let mut view = View::default();
-        let mut ticker = tokio::time::interval(REFRESH);
-        loop {
-            tokio::select! {
-                _ = ticker.tick() => {}
-                action = rx.recv() => match action {
-                    None | Some(Action::Quit) => break,
-                    Some(action) => {
-                        if action != Action::Refresh {
-                            view.note = Some("Working…".into());
-                            tray.show(view.clone()).await;
-                            view.note = perform(&daemon, action).await;
-                        }
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        #[cfg(target_os = "linux")]
+        return tokio::runtime::Runtime::new()?.block_on(async {
+            let theme = icon_theme()
+                .inspect_err(|e| tracing::warn!("writing the tray icon: {e:#}"))
+                .ok();
+            let tray = linux::Tray::spawn(tx, theme).await?;
+            serve(&tray, &daemon, rx).await;
+            Ok(())
+        });
+        // AppKit takes the main thread; the loop runs beside it.
+        #[cfg(target_os = "macos")]
+        return macos::run(tx, move |tray| {
+            tokio::runtime::Runtime::new()?.block_on(serve(&tray, &daemon, rx));
+            Ok(())
+        });
+    }
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
+/// The tray's loop: refresh every `REFRESH` and whenever the menu opens, and
+/// do what the user chooses, until "Quit".
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn serve(
+    tray: &Tray,
+    daemon: &Daemon,
+    mut actions: tokio::sync::mpsc::UnboundedReceiver<Action>,
+) {
+    let mut view = View::default();
+    let mut ticker = tokio::time::interval(REFRESH);
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {}
+            action = actions.recv() => match action {
+                None | Some(Action::Quit) => break,
+                Some(action) => {
+                    if action != Action::Refresh {
+                        view.note = Some("Working…".into());
+                        tray.show(view.clone()).await;
+                        view.note = perform(daemon, action).await;
                     }
-                },
-            }
-            refresh(&daemon, &mut view).await;
-            tray.show(view.clone()).await;
+                }
+            },
         }
-        tray.shutdown().await;
-        Ok(())
+        refresh(daemon, &mut view).await;
+        tray.show(view.clone()).await;
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        anyhow::bail!("rommd tray only runs on Linux so far")
-    }
+    tray.shutdown().await;
 }
 
 #[cfg(test)]

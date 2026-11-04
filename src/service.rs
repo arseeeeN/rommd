@@ -385,7 +385,55 @@ mod platform {
         println!("rommd no longer starts automatically.");
         Ok(())
     }
+
+    const TRAY_LABEL: &str = "io.github.rommd.tray";
+
+    /// The tray's launch agent: `rommd tray` at login, in the GUI session
+    /// only, and not restarted, so "Quit" stays quit.
+    pub fn tray_plist(exe: &Path, log: &Path) -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{TRAY_LABEL}</string>
+  <key>ProgramArguments</key><array><string>{exe}</string><string>tray</string></array>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>{log}</string>
+  <key>StandardErrorPath</key><string>{log}</string>
+</dict>
+</plist>
+"#,
+            exe = xml_escape(&exe.display().to_string()),
+            log = xml_escape(&log.display().to_string()),
+        )
+    }
+
+    /// Start the tray at login, or with `enabled` false no longer. Like the
+    /// Linux autostart entry this only writes the file; launchd loads it at
+    /// the next login, and `tray::start_now` starts the tray this time.
+    pub fn tray_agent(enabled: bool) -> Result<()> {
+        let home = dirs::home_dir().context("no home dir")?;
+        let path = home
+            .join("Library/LaunchAgents")
+            .join(format!("{TRAY_LABEL}.plist"));
+        if !enabled {
+            return match std::fs::remove_file(&path) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+                _ => Ok(()),
+            };
+        }
+        let exe = std::env::current_exe()?.canonicalize()?;
+        write(
+            &path,
+            &tray_plist(&exe, &home.join("Library/Logs/rommd-tray.log")),
+        )
+    }
 }
+
+#[cfg(target_os = "macos")]
+pub use platform::tray_agent;
 
 #[cfg(windows)]
 mod platform {
@@ -594,6 +642,23 @@ mod windows_tests {
         assert!(xml.contains("<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>"));
         assert!(xml.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
         assert!(xml.contains("<Priority>5</Priority>"));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    #[test]
+    fn tray_agent_starts_at_login_and_stays_quit() {
+        let plist = super::platform::tray_plist(
+            std::path::Path::new("/Users/a&b/.local/bin/rommd"),
+            std::path::Path::new("/Users/a&b/Library/Logs/rommd-tray.log"),
+        );
+        assert!(plist.contains(
+            "<array><string>/Users/a&amp;b/.local/bin/rommd</string><string>tray</string></array>"
+        ));
+        assert!(plist.contains("<key>RunAtLoad</key><true/>"));
+        assert!(plist.contains("<string>Aqua</string>"));
+        assert!(!plist.contains("KeepAlive"));
     }
 }
 
