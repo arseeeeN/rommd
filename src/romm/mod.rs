@@ -12,8 +12,8 @@ use tracing::{debug, warn};
 use crate::config::RommConfig;
 use auth::TokenManager;
 use types::{
-    CollectionSchema, LibraryPage, LibraryRom, PlatformSchema, RomDetail, RomFileSchema, RomPage,
-    SaveSchema, StateSchema,
+    CollectionSchema, LibraryPage, PlatformSchema, RomDetail, RomFileSchema, RomPage, SaveSchema,
+    StateSchema,
 };
 
 pub struct RommClient {
@@ -139,8 +139,9 @@ impl RommClient {
             .context("parsing platforms")
     }
 
-    /// Every ROM on `platforms`, page by page.
-    pub async fn library(&self, platforms: &[i64]) -> Result<Vec<LibraryRom>> {
+    /// Every ROM on `platforms`, page by page. Their `files` are empty;
+    /// `get_rom` has them.
+    pub async fn library(&self, platforms: &[i64]) -> Result<Vec<RomDetail>> {
         const PAGE: usize = 500;
         let mut roms = Vec::new();
         loop {
@@ -1010,10 +1011,12 @@ pub fn is_downloaded(rom: &RomDetail, platform_dir: &Path) -> bool {
     non_empty_dir(&platform_dir.join(&stem))
 }
 
-/// RomM's size for a ROM that is one file, to check the download.
+/// RomM's size for a ROM that is one file, to check the download; from a
+/// library listing, which has no `files`, its own size.
 fn single_size(rom: &RomDetail) -> Option<u64> {
     match rom.files.as_slice() {
         [only] => only.file_size_bytes,
+        [] if !rom.has_multiple_files => rom.fs_size_bytes,
         _ => None,
     }
 }

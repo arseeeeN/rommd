@@ -11,7 +11,7 @@ pub struct TokenResponse {
     pub refresh_expires: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RomDetail {
     pub id: i64,
     pub fs_name: String,
@@ -34,9 +34,19 @@ pub struct RomDetail {
     /// RomM's copies of the game's screenshots.
     #[serde(default)]
     pub merged_screenshots: Vec<String>,
+    /// The game on SteamGridDB, when RomM's scan matched it (with
+    /// SteamGridDB enabled in RomM).
+    #[serde(default)]
+    pub sgdb_id: Option<i64>,
+    /// Whether it is several files. A library listing leaves `files`
+    /// empty, so this and `fs_size_bytes` stand in for them there.
+    #[serde(default)]
+    pub has_multiple_files: bool,
+    #[serde(default)]
+    pub fs_size_bytes: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RomFileSchema {
     pub id: i64,
     pub file_name: String,
@@ -107,18 +117,9 @@ pub struct RomSummary {
     pub platform_display_name: Option<String>,
 }
 
-/// One ROM of a library listing: enough to tell where it would be on disk.
-#[derive(Debug, Clone, Deserialize)]
-pub struct LibraryRom {
-    pub id: i64,
-    pub fs_name: String,
-    pub platform_slug: String,
-    pub platform_fs_slug: String,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct LibraryPage {
-    pub items: Vec<LibraryRom>,
+    pub items: Vec<RomDetail>,
     pub total: i64,
 }
 

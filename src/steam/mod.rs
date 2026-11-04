@@ -15,6 +15,7 @@ pub mod sgdb;
 pub mod vdf;
 
 use anyhow::{Context, Result, bail};
+use futures_util::{StreamExt, stream};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
@@ -25,6 +26,11 @@ use crate::romm::RommClient;
 use crate::romm::types::RomDetail;
 use sgdb::Kind;
 use vdf::{Map, Value};
+
+/// How many ROMs' details are fetched from RomM at once.
+const ROMM_AT_ONCE: usize = 8;
+/// How many games' artwork is fetched at once.
+const ART_AT_ONCE: usize = 6;
 
 /// What a shortcut of rommd's runs, before the ROM's ID.
 const LAUNCH_PREFIX: &str = "play --attach id:";
@@ -39,6 +45,8 @@ pub struct Game {
     pub cover: Option<String>,
     /// RomM's path of its first screenshot.
     pub screenshot: Option<String>,
+    /// Its SteamGridDB game, as RomM matched it.
+    pub sgdb_id: Option<i64>,
 }
 
 /// The games `[steam]` asks for, by ROM ID, on platforms an emulator runs.
@@ -51,22 +59,38 @@ pub async fn games(config: &Config, romm: &RommClient, emulators: &Emulators) ->
         .into_iter()
         .filter(|p| runnable(&p.slug))
         .collect();
+    if platforms.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<i64> = platforms.iter().map(|p| p.id).collect();
+    // The listing has all a shortcut needs but a multi-file ROM's files.
+    let library: BTreeMap<i64, RomDetail> = romm
+        .library(&ids)
+        .await?
+        .into_iter()
+        .map(|rom| (rom.id, rom))
+        .collect();
     let mut details: BTreeMap<i64, RomDetail> = BTreeMap::new();
 
-    if steam.downloaded && !platforms.is_empty() {
-        let ids: Vec<i64> = platforms.iter().map(|p| p.id).collect();
-        for rom in romm.library(&ids).await? {
+    if steam.downloaded {
+        let mut several_files = Vec::new();
+        for rom in library.values() {
             let dir = config.platform_dir(&rom.platform_slug, &rom.platform_fs_slug);
-            // Only ROMs with something where the download would be are
-            // looked at closely: a library can hold thousands.
-            let name = crate::romm::local_file_name(&rom.fs_name);
-            let stem = Path::new(&name).file_stem().unwrap_or_default();
-            if !dir.join(&name).exists() && !dir.join(stem).exists() {
-                continue;
+            if rom.has_multiple_files && !rom.fs_name.ends_with(".zip") {
+                // Only those with something where the download would be.
+                let name = crate::romm::local_file_name(&rom.fs_name);
+                let stem = Path::new(&name).file_stem().unwrap_or_default();
+                if dir.join(stem).exists() {
+                    several_files.push(rom.id);
+                }
+            } else if crate::romm::is_downloaded(rom, &dir) {
+                details.insert(rom.id, rom.clone());
             }
-            let detail = romm.get_rom(rom.id).await?;
+        }
+        for detail in fetch_roms(romm, several_files).await? {
+            let dir = config.platform_dir(&detail.platform_slug, &detail.platform_fs_slug);
             if crate::romm::is_downloaded(&detail, &dir) {
-                details.insert(rom.id, detail);
+                details.insert(detail.id, detail);
             }
         }
     }
@@ -88,19 +112,12 @@ pub async fn games(config: &Config, romm: &RommClient, emulators: &Emulators) ->
                     .iter()
                     .any(|w| w.eq_ignore_ascii_case(&c.name))
         });
-        let ids: BTreeSet<i64> = chosen.flat_map(|c| c.rom_ids.iter().copied()).collect();
-        for id in ids {
-            if details.contains_key(&id) {
-                continue;
-            }
-            let detail = romm.get_rom(id).await?;
-            if runnable(&detail.platform_slug) {
-                details.insert(id, detail);
+        for id in chosen.flat_map(|c| c.rom_ids.iter()) {
+            // Not in the listing: on a platform no emulator runs.
+            if let Some(rom) = library.get(id) {
+                details.entry(*id).or_insert_with(|| rom.clone());
             } else {
-                debug!(
-                    "ROM {id} is on {}, which no emulator runs",
-                    detail.platform_slug
-                );
+                debug!("ROM {id} is on a platform no emulator runs");
             }
         }
     }
@@ -122,6 +139,7 @@ pub async fn games(config: &Config, romm: &RommClient, emulators: &Emulators) ->
                 .unwrap_or_else(|| rom.platform_slug.clone()),
             cover: rom.path_cover_large.clone(),
             screenshot: rom.merged_screenshots.first().cloned(),
+            sgdb_id: rom.sgdb_id,
         })
         .collect();
     games.sort_by(|a, b| a.name.cmp(&b.name).then(a.platform.cmp(&b.platform)));
@@ -185,6 +203,17 @@ pub async fn run(remove: bool, options: Options) -> Result<()> {
         println!("Start Steam to see them.");
     }
     Ok(())
+}
+
+/// The details of `ids`, a few at a time.
+async fn fetch_roms(romm: &RommClient, ids: Vec<i64>) -> Result<Vec<RomDetail>> {
+    stream::iter(ids)
+        .map(|id| romm.get_rom(id))
+        .buffer_unordered(ROMM_AT_ONCE)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect()
 }
 
 // ── Finding Steam ─────────────────────────────────────────────────────────────
@@ -502,8 +531,9 @@ fn art_file(grid: &Path, id: u32, kind: Kind) -> Option<PathBuf> {
 }
 
 /// A shortcut's artwork, each kind it lacks (all of them with `refresh`):
-/// SteamGridDB's when there is a key and it has one, else RomM's cover for
-/// the portrait and the first screenshot for the banner and hero.
+/// SteamGridDB's when there is a key and it has one (for the game RomM
+/// matched, else the title's first search hit), else RomM's cover for the
+/// portrait and the first screenshot for the banner and hero.
 async fn art(
     romm: &RommClient,
     sgdb: Option<&sgdb::Client>,
@@ -518,9 +548,12 @@ async fn art(
     if missing.is_empty() {
         return Ok(());
     }
-    let game = match sgdb {
-        Some(client) => client.game(&p.game.name).await?,
-        None => None,
+    // RomM's own match when its scan made one: it weighs all of the
+    // game's names, where the title search takes its first hit.
+    let game = match (sgdb, p.game.sgdb_id) {
+        (Some(_), Some(id)) => Some(id),
+        (Some(client), None) => client.game(&p.game.name).await?,
+        (None, _) => None,
     };
     for kind in missing {
         let mut image = None;
@@ -611,8 +644,14 @@ pub async fn sync(
         remove_art(&grid, id, &Kind::ALL);
     }
     let planned = plan(games, &quoted(exe));
-    for p in &planned {
-        if let Err(e) = art(romm, sgdb, &grid, p, refresh_art).await {
+    let grid_dir = grid.as_path();
+    let results: Vec<_> = stream::iter(&planned)
+        .map(|p| async move { (p, art(romm, sgdb, grid_dir, p, refresh_art).await) })
+        .buffer_unordered(ART_AT_ONCE)
+        .collect()
+        .await;
+    for (p, result) in results {
+        if let Err(e) = result {
             warn!("artwork for {}: {e:#}", p.name);
         }
     }
@@ -657,6 +696,7 @@ mod tests {
             platform: platform.into(),
             cover: None,
             screenshot: None,
+            sgdb_id: None,
         }
     }
 
