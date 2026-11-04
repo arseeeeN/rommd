@@ -303,7 +303,8 @@ account save (`switch::sigil_areas`). Save family includes argosy's IDs
 **Dolphin:** `config_dir` is the user dir (`~/.local/share/dolphin-emu` on
 Linux). `Dolphin.ini` is read from `config_dir/Config/` (macOS, Windows,
 portable) or `~/.config/dolphin-emu/` (Linux XDG split). The disc header magic
-tells GameCube from Wii.
+tells GameCube from Wii. Launched with `-b -e <rom>`: batch mode has no main
+window and quits when the game stops, so the session (and its sync) ends there.
 Saves from any `dolphin` or `dolphin_*` emulator (argosy's forks) are accepted.
 - **GameCube:** `Bundle` of the game's `.gci` files (header's 4-character game
   code, as argosy and Sigil group them) in `GC/<region>/Card A/`

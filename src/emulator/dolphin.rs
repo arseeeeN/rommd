@@ -124,8 +124,12 @@ impl Emulator for Dolphin {
             _ => {}
         }
 
+        // `-b` (batch): no main window, and Dolphin quits when the game is
+        // stopped, so the session ends there and its saves sync at once,
+        // rather than when Dolphin's window is closed (and no other game is
+        // started from that window, untracked).
         let mut command = LaunchCommand::new(&config.binary);
-        command.arg("-e").arg(rom_path);
+        command.arg("-b").arg("-e").arg(rom_path);
         Ok((command, LaunchContext::default()))
     }
 
@@ -527,5 +531,28 @@ mod tests {
             b"GALP01 pal save on a usa card",
         );
         assert_eq!(dir_for(&config), root.path().join("GC/USA/Card A"));
+    }
+
+    #[tokio::test]
+    async fn launches_in_batch_mode_so_dolphin_quits_with_the_game() {
+        let config = EmulatorConfig {
+            binary: "dolphin-emu".into(),
+            config_dir: "/d".into(),
+        };
+        let (mut command, _) = Dolphin
+            .command(&config, Path::new("/roms/gc/Game.rvz"), None, None)
+            .await
+            .unwrap();
+        command.set_fullscreen(&Dolphin, true);
+        assert_eq!(
+            command.args,
+            [
+                "-C",
+                "Dolphin.Display.Fullscreen=True",
+                "-b",
+                "-e",
+                "/roms/gc/Game.rvz"
+            ]
+        );
     }
 }
