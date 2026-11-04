@@ -593,8 +593,11 @@ mod platform {
 pub mod console {
     use std::os::windows::io::IntoRawHandle;
     use windows_sys::Win32::System::Console::{
-        FreeConsole, GetConsoleWindow, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
-        SetStdHandle,
+        FreeConsole, GetConsoleProcessList, GetConsoleWindow, STD_ERROR_HANDLE, STD_INPUT_HANDLE,
+        STD_OUTPUT_HANDLE, SetStdHandle,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MB_ICONERROR, MB_SETFOREGROUND, MB_TOPMOST, MessageBoxW,
     };
 
     /// Detach from the console and point the std handles at `NUL`. They would
@@ -617,6 +620,29 @@ pub mod console {
             // SAFETY: a valid handle that stays open for the process lifetime.
             unsafe { SetStdHandle(std, handle) };
         }
+    }
+
+    /// Whether this process is the only one in its console: Windows made the
+    /// console for it, rather than it being started from a terminal.
+    pub fn is_own() -> bool {
+        let mut pids = [0u32; 2];
+        // SAFETY: a buffer of the length given.
+        unsafe { GetConsoleProcessList(pids.as_mut_ptr(), pids.len() as u32) == 1 }
+    }
+
+    /// Show an error to a user without a console.
+    pub fn error_box(title: &str, text: &str) {
+        let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+        let (title, text) = (wide(title), wide(text));
+        // SAFETY: NUL-terminated strings; no owner window.
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                text.as_ptr(),
+                title.as_ptr(),
+                MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST,
+            )
+        };
     }
 
     pub fn has_window() -> bool {

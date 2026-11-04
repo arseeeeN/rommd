@@ -44,7 +44,9 @@ processes), and the daemon tracks it by process group / job
 is killed. No report within 60 s fails the launch. The CLI runs only the
 `binary` its own config names and only `LaunchCommand::ENV` variables, since
 anything could be listening on the port; it forwards termination signals as
-a stop (polite, then killed) and exits when the game's tree is gone.
+a stop (polite, then killed) and exits when the game's tree is gone. On Windows, started with a console of its own (by Steam, not from a
+terminal), it detaches from it at once, so no window stays open for the
+game's length, and shows a failure in a message box.
 
 Fullscreen: the request's `fullscreen`, else `[launch] fullscreen`, else on
 for attached launches; with none of them rommd adds nothing and the

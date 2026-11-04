@@ -41,6 +41,29 @@ pub async fn play(
     attach: bool,
     fullscreen: Option<bool>,
 ) -> Result<()> {
+    // Started by Steam, rommd (a console program) gets a console window of
+    // its own, open for as long as the game runs. Without it, an error would
+    // vanish with the window, so it goes to a message box.
+    #[cfg(windows)]
+    let windowless = attach && crate::service::console::is_own();
+    #[cfg(windows)]
+    if windowless {
+        crate::service::console::detach();
+    }
+    let result = play_game(words, first, attach, fullscreen).await;
+    #[cfg(windows)]
+    if windowless && let Err(e) = &result {
+        crate::service::console::error_box("rommd", &format!("{e:#}"));
+    }
+    result
+}
+
+async fn play_game(
+    words: &[String],
+    first: bool,
+    attach: bool,
+    fullscreen: Option<bool>,
+) -> Result<()> {
     let daemon = Daemon::new()?;
     let query = query_string(words);
     let found = daemon.games(&query, PLAY_CHOICES).await?;
