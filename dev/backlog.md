@@ -184,8 +184,8 @@ backups, and the update. No native UI code; the tray's "Open rommd" opens it.
 It is an origin of its own, so it may only use the actions the API already
 has, never the config.
 
-**3. A tray item, `rommd tray`** (done on Linux and macOS; Windows: see
-"The tray on Windows"): a separate process and a client of the
+**3. A tray item, `rommd tray`** (done on Linux, macOS and Windows; what
+is left: "The tray on Windows"): a separate process and a client of the
 daemon over HTTP, like `rommd play`, started at login by its own autostart
 entry; `[tray] enabled = false` (or no autostart entry) leaves the daemon on
 its own. Never part of the daemon: the daemon runs without a display (systemd
@@ -207,88 +207,17 @@ have native APIs. Menu: status, recent games, "Update available, install",
 
 ## The tray on Windows
 
-`rommd tray` runs on Linux (`src/tray/linux.rs`, `ksni`) and macOS
-(`src/tray/macos.rs`, `tray-icon`). The user is writing the Windows version
-on that machine. `macos.rs` is the model: the same crate, the same split of
-threads. What is shared and what Windows needs (the macOS notes are kept as
-a record of what was done):
-
-**Shared already, keep it so.** `src/tray/mod.rs` decides everything: what
-the menu shows (`menu(&View) -> Vec<Entry>`, unit-tested), the tooltip, what
-an `Action` does (`perform`, over `client::Daemon`), and the loop (`serve`:
-the 10 s refresh, the refresh when the menu opens, `Action::Refresh`). A
-platform file only turns `Entry`s into native items, sends chosen `Action`s
-down the channel, and replaces the view on `show`. Its `Tray` has `show(View)`
-and `shutdown()`; `run()` grows one `cfg` per OS. Until Windows has its tray,
-clippy fails there on dead code (`serve`'s helpers, `client::Daemon`'s
-methods), as it did on macOS before.
-
-**Crate.** `tray-icon` + `muda` (Tauri's) for both; native on Windows
-(Shell_NotifyIcon) and macOS (NSStatusItem), no C libraries. Gated with
-`[target.'cfg(any(windows, target_os = "macos"))'.dependencies]` (done, with
-`png` to decode the icon): its Linux
-backend needs GTK, which the static musl build can't link, so Linux stays
-on `ksni`. Writing Shell_NotifyIcon by hand with `windows-sys` (already a
-dependency) is the fallback if `tray-icon` pulls in too much.
-
-**Event loop: the main difference from Linux.** `ksni` runs on tokio;
-`tray-icon` needs the OS loop on the thread that created the icon, and on
-macOS that must be the *main* thread (AppKit). `tray::run()` is sync; on
-macOS (done) `macos::run` keeps AppKit on main and runs `serve` on tokio in
-a spawned thread. Chosen items reach tokio through `MenuEvent`'s handler
-(called on main), views come back through a std channel plus
-`DispatchQueue::main().exec_async`, and the AppKit objects live in a
-main-thread `thread_local`. On Windows any one thread with a message pump
-works, but the same split keeps the code alike: the pump instead of
-`NSApplication::run`, a posted message instead of the dispatch queue.
-
-**Icon.** `assets/rommd-tray.svg` is a single-colour 24×24 shape (fill
-`currentColor`); neither OS takes SVG in the tray. Pre-render PNGs into
-`assets/` (e.g. `rsvg-convert -w 32`/`-w 64`) and `include_bytes!` them; no
-SVG renderer at runtime.
-- macOS (done): `assets/rommd-tray-mac.png`, black on transparent, 44 px
-  (tray-icon caps the height at 22 pt; Retina), set with
-  `with_icon_templated` so the menu bar recolours it.
-- Windows: 16 and 32 px (more at high DPI). The tray doesn't recolour, so
-  white for the default dark taskbar, or follow the
-  `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`
-  `SystemUsesLightTheme` value (black on light) and re-read it on
-  `WM_SETTINGCHANGE`.
-
-**Starting at login** (`apply_autostart(enabled)`, called by `rommd service
-install`/`uninstall` and `rommd setup`; must also remove what it made):
-- Windows: an `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value
-  `rommd tray` → `"<exe>" tray`, or a second logon task like the daemon's
-  (`service.rs`). The exe is a console-subsystem binary, so the tray must
-  detach from its console as `--background` does for the daemon (or the
-  user sees a window at login); log to `<data dir>/rommd-tray.log` then.
-- macOS (done): `service::tray_agent`, a second LaunchAgent
-  (`io.github.rommd.tray`, `RunAtLoad`, `LimitLoadToSessionType` Aqua, no
-  `KeepAlive`, log `~/Library/Logs/rommd-tray.log`). Like Linux it only
-  writes or removes the file; `start_now()` starts the tray this time.
-
-**Other bits that are Unix-specific in `mod.rs` today:**
-- `supported()` is Linux and macOS; `desktop_session()` checks
-  `DISPLAY`/`WAYLAND_DISPLAY` on Linux and the absence of `SSH_CONNECTION`
-  on macOS; on Windows a logged-in user always has a desktop.
-- `other_tray_running()` uses `pgrep -f "rommd tray$"`: fine on macOS; on
-  Windows use a named mutex (`CreateMutexW` `Local\rommd-tray`,
-  `ERROR_ALREADY_EXISTS` = another runs).
-- `start_now()` spawns `rommd tray` detached via a Unix process group; on
-  Windows `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` (and no console).
-- `open()` already uses `open` / `explorer`.
-- `Action::Quit` must end the OS loop too, not only the tokio side
-  (`Tray::shutdown`; macOS terminates `NSApplication`).
-
-**Menu behaviour to keep:** refresh when the menu opens (macOS, done:
-tray-icon sends the click event before it opens the menu, so the handler
-sends `Action::Refresh` and waits up to 300 ms for the view; Windows: on the
-click / `WM_CONTEXTMENU`, the same way), and
-"Working…" while an action runs. Submenus (`Entry::Submenu`, the recent
-games' fullscreen / windowed) map to `muda::Submenu`. muda reads `&` as an
-access key mark, so labels double it (`macos::escape`). A menu replaced
-while it is open stays on screen, so its items' actions are kept until the
-next change (`State::previous`).
+Done (`src/tray/windows.rs`, `tray-icon` as on macOS). Left over:
+- The Run value starts a console program, so a console window flashes at
+  login until `--background` closes it (the daemon's logon task does the
+  same). A second, GUI-subsystem binary or `conhost.exe --headless` would
+  avoid it.
+- A view posted while the menu is open goes to the menu's modal loop, which
+  drops thread messages; it shows with the next view (10 s), on hover or
+  on the next click. A message-only window of rommd's own would get it.
+- The icon size is read once, at the primary monitor's scaling
+  (`SM_CXSMICON`); a taskbar on a monitor of another scaling, or a scaling
+  changed later, gets it resized by Windows until the tray restarts.
 
 ## Emulators that stay open after the game
 

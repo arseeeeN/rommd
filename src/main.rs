@@ -212,7 +212,20 @@ fn main() -> Result<()> {
             };
             tokio::runtime::Runtime::new()?.block_on(steam::run(remove, options))
         }
-        Some(Command::Tray) => tray::run(),
+        Some(Command::Tray) => {
+            // The tray's own log: from the Windows Run value, which starts
+            // `rommd --background tray`.
+            if cli.background {
+                init_logging(Some(sync::data_dir().join("rommd-tray.log")))?;
+            }
+            let result = tray::run();
+            if cli.background
+                && let Err(e) = &result
+            {
+                tracing::error!("{:#}", e);
+            }
+            result
+        }
         Some(Command::Service { action }) => match action {
             ServiceAction::Install => service::install(),
             ServiceAction::Start => control(service::Control::Start),
@@ -240,16 +253,16 @@ pub fn log_path() -> PathBuf {
 
 const LOG_ROTATE_BYTES: u64 = 10 * 1024 * 1024;
 
-fn init_logging(background: bool) -> Result<()> {
+/// Log to the terminal, or with `file` there, closing the console on Windows.
+fn init_logging(file: Option<PathBuf>) -> Result<()> {
     let fmt = tracing_subscriber::fmt().with_env_filter(
         tracing_subscriber::EnvFilter::from_default_env()
             .add_directive("rommd=debug".parse().unwrap()),
     );
-    if !background {
+    let Some(path) = file else {
         fmt.init();
         return Ok(());
-    }
-    let path = log_path();
+    };
     let file = open_log(&path).with_context(|| format!("opening {}", path.display()))?;
     fmt.with_ansi(false)
         .with_writer(std::sync::Mutex::new(file))
@@ -280,7 +293,7 @@ fn open_log(path: &Path) -> std::io::Result<std::fs::File> {
 }
 
 async fn run_daemon(background: bool) -> Result<()> {
-    init_logging(background)?;
+    init_logging(background.then(log_path))?;
 
     let config = Config::load_or_create().context("loading config")?;
     info!(

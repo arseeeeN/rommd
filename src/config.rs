@@ -100,7 +100,7 @@ impl From<PlatformConfig> for PlatformEntry {
     }
 }
 
-/// `[tray]`: whether `rommd tray` starts at login (Linux).
+/// `[tray]`: whether `rommd tray` starts at login.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct TrayConfig {

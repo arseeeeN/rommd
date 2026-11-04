@@ -5,18 +5,22 @@
 //! a Steam shortcut sync. A process of its own, never part of the daemon:
 //! the daemon runs without a display, and stops nothing when the tray quits.
 //!
-//! This module is what the tray shows and does; `linux.rs` and `macos.rs`
-//! put it on screen. Windows has no tray yet.
+//! This module is what the tray shows and does; `linux.rs`, `macos.rs` and
+//! `windows.rs` put it on screen.
 
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(windows)]
+mod windows;
 
 #[cfg(target_os = "linux")]
 use linux::Tray;
 #[cfg(target_os = "macos")]
 use macos::Tray;
+#[cfg(windows)]
+use windows::Tray;
 
 use anyhow::{Context, Result};
 use std::time::Duration;
@@ -324,7 +328,7 @@ fn icon_file(theme: &std::path::Path) -> std::path::PathBuf {
 
 /// Whether this OS has the tray.
 pub fn supported() -> bool {
-    cfg!(any(target_os = "linux", target_os = "macos"))
+    cfg!(any(target_os = "linux", target_os = "macos", windows))
 }
 
 /// Whether there is a desktop to show a tray icon on.
@@ -333,6 +337,9 @@ pub fn desktop_session() -> bool {
         // A logged-in Mac always has a menu bar, but a program started over
         // SSH can't reach it.
         return std::env::var_os("SSH_CONNECTION").is_none();
+    }
+    if cfg!(windows) {
+        return true;
     }
     supported()
         && ["WAYLAND_DISPLAY", "DISPLAY"]
@@ -357,7 +364,9 @@ pub fn apply_autostart(enabled: bool) -> Result<()> {
     return xdg_autostart(enabled);
     #[cfg(target_os = "macos")]
     return crate::service::tray_agent(enabled);
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(windows)]
+    return windows::autostart(enabled);
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         let _ = enabled;
         Ok(())
@@ -392,6 +401,13 @@ fn xdg_autostart(enabled: bool) -> Result<()> {
 }
 
 /// Whether another `rommd tray` runs.
+#[cfg(windows)]
+fn other_tray_running() -> bool {
+    windows::other_tray_running()
+}
+
+/// Whether another `rommd tray` runs.
+#[cfg(not(windows))]
 fn other_tray_running() -> bool {
     let Ok(out) = std::process::Command::new("pgrep")
         .args(["-f", "rommd tray$"])
@@ -413,6 +429,17 @@ pub fn start_now() -> Result<()> {
     }
     let exe = std::env::current_exe()?;
     let mut command = std::process::Command::new(exe);
+    // rommd is a console program: without a console of its own, and logging
+    // to a file.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x8;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x200;
+        command
+            .arg("--background")
+            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
     command
         .arg("tray")
         .stdin(std::process::Stdio::null())
@@ -427,12 +454,16 @@ pub fn start_now() -> Result<()> {
 /// Run the tray until the user quits it.
 pub fn run() -> Result<()> {
     if !supported() {
-        anyhow::bail!("rommd tray only runs on Linux and macOS so far");
+        anyhow::bail!("rommd tray only runs on Linux, macOS and Windows");
     }
-    if other_tray_running() {
+    #[cfg(windows)]
+    let another = !windows::claim();
+    #[cfg(not(windows))]
+    let another = other_tray_running();
+    if another {
         return Ok(());
     }
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     {
         let daemon = Daemon::new()?;
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -451,6 +482,12 @@ pub fn run() -> Result<()> {
             tokio::runtime::Runtime::new()?.block_on(serve(&tray, &daemon, rx));
             Ok(())
         });
+        // The icon and its message pump stay here; the loop runs beside them.
+        #[cfg(windows)]
+        return windows::run(tx, move |tray| {
+            tokio::runtime::Runtime::new()?.block_on(serve(&tray, &daemon, rx));
+            Ok(())
+        });
     }
     #[allow(unreachable_code)]
     Ok(())
@@ -458,7 +495,7 @@ pub fn run() -> Result<()> {
 
 /// The tray's loop: refresh every `REFRESH` and whenever the menu opens, and
 /// do what the user chooses, until "Quit".
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 async fn serve(
     tray: &Tray,
     daemon: &Daemon,
