@@ -724,6 +724,16 @@ fn resolve_dots(path: &Path) -> PathBuf {
     resolved
 }
 
+/// A registry string value (`REG_EXPAND_SZ` expanded), for other modules.
+#[cfg(windows)]
+pub(crate) fn registry_string(
+    root: windows_sys::Win32::System::Registry::HKEY,
+    key: &str,
+    name: &str,
+) -> Option<String> {
+    registry::string(root, key, name)
+}
+
 #[cfg(windows)]
 mod registry {
     use std::path::PathBuf;

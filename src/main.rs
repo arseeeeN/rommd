@@ -20,6 +20,7 @@ mod save_archive;
 mod server;
 mod service;
 mod setup;
+mod steam;
 mod switch;
 mod sync;
 #[cfg(test)]
@@ -108,10 +109,38 @@ enum Command {
         #[arg(required = true, num_args = 1.., value_name = "QUERY")]
         query: Vec<String>,
     },
+    /// Add your RomM games to Steam as shortcuts, with their covers: every
+    /// game rommd has downloaded and every favorite in RomM (`[steam]` in the
+    /// config chooses). Steam must be closed. Doesn't need rommd running.
+    Steam {
+        #[command(subcommand)]
+        action: SteamAction,
+    },
     /// Run rommd in the background from login, and start, stop or restart it.
     Service {
         #[command(subcommand)]
         action: ServiceAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum SteamAction {
+    /// Make rommd's Steam shortcuts match the games `[steam]` chooses;
+    /// shortcuts rommd didn't make are left alone.
+    Sync {
+        /// Only list what would change.
+        #[arg(long)]
+        dry_run: bool,
+        /// Fetch every shortcut's artwork again, e.g. after setting
+        /// `[steam] steamgriddb_api_key`.
+        #[arg(long)]
+        refresh_art: bool,
+    },
+    /// Remove every Steam shortcut rommd made.
+    Remove {
+        /// Only list what would change.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -152,6 +181,28 @@ fn main() -> Result<()> {
         }) => {
             let fullscreen = (fullscreen || windowed).then_some(fullscreen);
             tokio::runtime::Runtime::new()?.block_on(cli::play(&query, first, attach, fullscreen))
+        }
+        Some(Command::Steam { action }) => {
+            let (remove, options) = match action {
+                SteamAction::Sync {
+                    dry_run,
+                    refresh_art,
+                } => (
+                    false,
+                    steam::Options {
+                        dry_run,
+                        refresh_art,
+                    },
+                ),
+                SteamAction::Remove { dry_run } => (
+                    true,
+                    steam::Options {
+                        dry_run,
+                        refresh_art: false,
+                    },
+                ),
+            };
+            tokio::runtime::Runtime::new()?.block_on(steam::run(remove, options))
         }
         Some(Command::Service { action }) => match action {
             ServiceAction::Install => service::install(),

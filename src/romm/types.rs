@@ -28,6 +28,12 @@ pub struct RomDetail {
     /// Component files for multi-file ROMs. Empty for single-file ROMs.
     #[serde(default)]
     pub files: Vec<RomFileSchema>,
+    /// RomM's copy of the cover, e.g. `/assets/romm/resources/roms/1/107/cover/big.png?ts=…`.
+    #[serde(default)]
+    pub path_cover_large: Option<String>,
+    /// RomM's copies of the game's screenshots.
+    #[serde(default)]
+    pub merged_screenshots: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,6 +105,32 @@ pub struct RomSummary {
     pub platform_slug: String,
     #[serde(default)]
     pub platform_display_name: Option<String>,
+}
+
+/// One ROM of a library listing: enough to tell where it would be on disk.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LibraryRom {
+    pub id: i64,
+    pub fs_name: String,
+    pub platform_slug: String,
+    pub platform_fs_slug: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LibraryPage {
+    pub items: Vec<LibraryRom>,
+    pub total: i64,
+}
+
+/// A RomM collection; the user's favorites are one (`is_favorite`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct CollectionSchema {
+    pub id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub is_favorite: bool,
+    #[serde(default)]
+    pub rom_ids: Vec<i64>,
 }
 
 #[derive(Debug, Deserialize)]

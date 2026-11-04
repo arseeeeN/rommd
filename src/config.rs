@@ -27,6 +27,8 @@ pub struct Config {
     pub updates: crate::update::UpdateConfig,
     #[serde(default)]
     pub launch: LaunchConfig,
+    #[serde(default)]
+    pub steam: SteamConfig,
 }
 
 /// `[platforms]` entry: `switch = "eden"`, or a table such as
@@ -91,6 +93,34 @@ impl From<PlatformConfig> for PlatformEntry {
             PlatformConfig { emulator, folder } => {
                 PlatformEntry::Settings(PlatformSettings { emulator, folder })
             }
+        }
+    }
+}
+
+/// `[steam]`: which games `rommd steam sync` gives a Steam shortcut.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SteamConfig {
+    /// Every game rommd has downloaded.
+    pub downloaded: bool,
+    /// Every game marked as a favorite in RomM, downloaded or not (the
+    /// launch downloads it).
+    pub favorites: bool,
+    /// Every game in these RomM collections, by name, downloaded or not.
+    pub collections: Vec<String>,
+    /// A SteamGridDB API key (steamgriddb.com, Preferences → API): the
+    /// shortcuts' banners, heroes, logos and icons come from there, as Steam
+    /// ROM Manager picks them. Without one, RomM's cover and screenshots.
+    pub steamgriddb_api_key: Option<String>,
+}
+
+impl Default for SteamConfig {
+    fn default() -> Self {
+        Self {
+            downloaded: true,
+            favorites: true,
+            collections: Vec::new(),
+            steamgriddb_api_key: None,
         }
     }
 }

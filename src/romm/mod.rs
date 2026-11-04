@@ -11,7 +11,10 @@ use tracing::{debug, warn};
 
 use crate::config::RommConfig;
 use auth::TokenManager;
-use types::{PlatformSchema, RomDetail, RomFileSchema, RomPage, SaveSchema, StateSchema};
+use types::{
+    CollectionSchema, LibraryPage, LibraryRom, PlatformSchema, RomDetail, RomFileSchema, RomPage,
+    SaveSchema, StateSchema,
+};
 
 pub struct RommClient {
     base_url: String,
@@ -136,6 +139,74 @@ impl RommClient {
             .context("parsing platforms")
     }
 
+    /// Every ROM on `platforms`, page by page.
+    pub async fn library(&self, platforms: &[i64]) -> Result<Vec<LibraryRom>> {
+        const PAGE: usize = 500;
+        let mut roms = Vec::new();
+        loop {
+            let token = self.tokens.get_token().await?;
+            let mut query: Vec<(&str, String)> = vec![
+                ("limit", PAGE.to_string()),
+                ("offset", roms.len().to_string()),
+                ("order_by", "id".into()),
+                ("with_char_index", "false".into()),
+                ("with_filter_values", "false".into()),
+            ];
+            query.extend(platforms.iter().map(|id| ("platform_ids", id.to_string())));
+            let page: LibraryPage = self
+                .client
+                .get(format!("{}/api/roms", self.base_url))
+                .bearer_auth(token)
+                .query(&query)
+                .send()
+                .await
+                .context("GET /api/roms")?
+                .error_for_status()
+                .context("listing ROMs")?
+                .json()
+                .await
+                .context("parsing ROMs")?;
+            let last = page.items.len() < PAGE;
+            roms.extend(page.items);
+            if last || roms.len() as i64 >= page.total {
+                return Ok(roms);
+            }
+        }
+    }
+
+    /// The user's collections, favorites among them.
+    pub async fn collections(&self) -> Result<Vec<CollectionSchema>> {
+        let token = self.tokens.get_token().await?;
+        self.client
+            .get(format!("{}/api/collections", self.base_url))
+            .bearer_auth(token)
+            .send()
+            .await
+            .context("GET /api/collections")?
+            .error_for_status()
+            .context("listing collections")?
+            .json()
+            .await
+            .context("parsing collections")
+    }
+
+    /// A file RomM serves under its own path, such as a cover
+    /// (`RomDetail::path_cover_large`).
+    pub async fn asset(&self, path: &str) -> Result<Vec<u8>> {
+        let token = self.tokens.get_token().await?;
+        let bytes = self
+            .client
+            .get(format!("{}{}", self.base_url, path))
+            .bearer_auth(token)
+            .send()
+            .await
+            .with_context(|| format!("GET {path}"))?
+            .error_for_status()?
+            .bytes()
+            .await?;
+        Ok(bytes.to_vec())
+    }
+
     /// ROMs whose name or file name contains `term`, on `platforms` if any,
     /// sorted by name.
     pub async fn search_roms(&self, term: &str, platforms: &[i64], limit: u32) -> Result<RomPage> {
@@ -201,10 +272,7 @@ impl RommClient {
                 );
             }
             let files = rom_files(rom, &rom_dir)?;
-            let complete = |(f, path): &&(&RomFileSchema, PathBuf)| {
-                std::fs::metadata(path)
-                    .is_ok_and(|m| m.is_file() && f.file_size_bytes.is_none_or(|s| s == m.len()))
-            };
+            let complete = |(f, path): &&(&RomFileSchema, PathBuf)| file_complete(f, path);
             let missing: Vec<_> = files.iter().filter(|f| !complete(f)).collect();
             if missing.is_empty() {
                 debug!("ROM cache hit (multi-file dir): {}", rom_dir.display());
@@ -226,11 +294,7 @@ impl RommClient {
             return launch_file(&rom_dir, &stem, &files).await;
         }
 
-        // RomM's size for a ROM that is one file, to check the download.
-        let single_size = match rom.files.as_slice() {
-            [only] => only.file_size_bytes,
-            _ => None,
-        };
+        let single_size = single_size(rom);
         if !rom.fs_name.ends_with(".zip") {
             // Plain single-file ROM — download directly, no extraction.
             let dest = platform_dir.join(&local_name);
@@ -238,7 +302,7 @@ impl RommClient {
                 .ok()
                 .filter(|m| m.is_file())
                 .map(|m| m.len());
-            if size.is_some() && (single_size.is_none() || size == single_size) {
+            if single_file_complete(size, single_size) {
                 debug!("ROM cache hit: {}", dest.display());
                 return Ok(dest);
             }
@@ -920,6 +984,49 @@ async fn first_m3u_entry(m3u_path: &Path, dir: &Path) -> Option<PathBuf> {
 
 /// Each file of a multi-file ROM with where it goes: its folder on the
 /// server, relative to the ROM's, under `rom_dir`.
+/// Whether `rom` is on disk in `platform_dir` as `RommClient::download_rom`
+/// leaves it, so launching it needs no download.
+pub fn is_downloaded(rom: &RomDetail, platform_dir: &Path) -> bool {
+    let local_name = local_file_name(&rom.fs_name);
+    let stem = Path::new(&local_name)
+        .file_stem()
+        .unwrap_or_else(|| std::ffi::OsStr::new(&local_name))
+        .to_string_lossy()
+        .into_owned();
+    let non_empty_dir = |dir: &Path| std::fs::read_dir(dir).is_ok_and(|mut d| d.next().is_some());
+    if rom.files.len() > 1 && !rom.fs_name.ends_with(".zip") {
+        let rom_dir = platform_dir.join(&stem);
+        return rom_files(rom, &rom_dir)
+            .is_ok_and(|files| files.iter().all(|(f, path)| file_complete(f, path)));
+    }
+    if !rom.fs_name.ends_with(".zip") {
+        let dest = platform_dir.join(&local_name);
+        let size = std::fs::metadata(&dest)
+            .ok()
+            .filter(|m| m.is_file())
+            .map(|m| m.len());
+        return single_file_complete(size, single_size(rom)) || non_empty_dir(&dest);
+    }
+    non_empty_dir(&platform_dir.join(&stem))
+}
+
+/// RomM's size for a ROM that is one file, to check the download.
+fn single_size(rom: &RomDetail) -> Option<u64> {
+    match rom.files.as_slice() {
+        [only] => only.file_size_bytes,
+        _ => None,
+    }
+}
+
+fn single_file_complete(size: Option<u64>, expected: Option<u64>) -> bool {
+    size.is_some() && (expected.is_none() || size == expected)
+}
+
+fn file_complete(file: &RomFileSchema, path: &Path) -> bool {
+    std::fs::metadata(path)
+        .is_ok_and(|m| m.is_file() && file.file_size_bytes.is_none_or(|s| s == m.len()))
+}
+
 fn rom_files<'a>(rom: &'a RomDetail, rom_dir: &Path) -> Result<Vec<(&'a RomFileSchema, PathBuf)>> {
     rom.files
         .iter()

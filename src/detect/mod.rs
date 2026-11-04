@@ -16,6 +16,8 @@ use std::sync::Arc;
 
 pub use linux::{LinuxApp, Sandbox, XdgDir};
 pub use mac::MacApp;
+#[cfg(windows)]
+pub(crate) use windows::registry_string;
 pub use windows::{AppData, Mark, Portable, WindowsApp, WindowsDataDir};
 
 use crate::emulator::Emulator;
