@@ -117,6 +117,9 @@ impl FakeRomm {
             .route("/api/roms", get(search_roms))
             .route("/api/roms/{id}", get(get_rom))
             .route("/api/roms/{id}/content/{name}", get(stalling_rom_content))
+            // RomM takes uploads far larger than axum's 2 MB default: a PS2
+            // card is 8.6 MB.
+            .layer(axum::extract::DefaultBodyLimit::disable())
             .with_state(store.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

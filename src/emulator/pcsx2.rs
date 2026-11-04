@@ -2,7 +2,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 
-use super::{Emulator, FileSet, LaunchCommand, LaunchContext, SaveLayout, ps_disc};
+use super::{
+    Emulator, FileSet, Hook, LaunchCommand, LaunchContext, Ps2Cards, SaveLayout, SaveSet, ps_disc,
+};
 use crate::config::EmulatorConfig;
 use crate::ini::IniFile;
 use crate::profile::ProfileBlob;
@@ -10,10 +12,9 @@ use crate::profile::ProfileBlob;
 /// PCSX2 (PlayStation 2). Data folder rules: `EmuFolders::SetDataDirectory`
 /// in `pcsx2/Pcsx2Config.cpp`; paths and file names below are from v2.8.2.
 ///
-/// Memory cards are not synced yet. PCSX2's default cards (`Mcd001.ps2`,
-/// `Mcd002.ps2`) hold every game's saves, so a game's save must be taken out
-/// of the card's filesystem, as argosy-launcher does (Sigil's `ps2` layout,
-/// one per-game `<rom stem>.ps2` card). See `dev/backlog.md`.
+/// Saves are the game's folders on the memory cards every game shares
+/// (`Mcd001.ps2`, `Mcd002.ps2`), synced as one card of them (`ps2_card`).
+/// Folder cards (a slot whose card is a directory) are not synced yet.
 pub struct Pcsx2;
 
 #[async_trait]
@@ -32,6 +33,12 @@ impl Emulator for Pcsx2 {
 
     fn config_dir_markers(&self) -> &'static [&'static str] {
         &["inis/PCSX2.ini"]
+    }
+
+    /// PCSX2's forks as argosy-launcher names them; all keep its cards
+    /// (Sigil's `pcsx2_standalone` layout).
+    fn save_family(&self) -> &'static [&'static str] {
+        &["aethersx2", "nethersx2", "armsx2", "armsx2_refresh"]
     }
 
     fn config_dir_hint(&self) -> &'static str {
@@ -123,7 +130,7 @@ impl Emulator for Pcsx2 {
     /// Save states are `<serial> (<CRC>).<slot>.p2s` (and `.resume.p2s`) in
     /// the save state folder (`VMManager::GetSaveStateFileName`); the CRC is
     /// the boot program's, so states of another release of the game are not
-    /// matched. Memory cards: see the type's comment.
+    /// matched. Saves are the game's folders on the slots' cards.
     async fn save_layout(
         &self,
         config: &EmulatorConfig,
@@ -142,7 +149,7 @@ impl Emulator for Pcsx2 {
             _ => None,
         };
         SaveLayout {
-            saves: None,
+            saves: game_id.and_then(|serial| memory_cards(config, serial)),
             states,
         }
     }
@@ -159,12 +166,61 @@ fn disc_identity(config: &EmulatorConfig, rom_path: &Path) -> Option<(String, u3
     })
 }
 
+/// The cards in PCSX2's enabled slots (`[MemoryCards] Slot<N>_Enable`,
+/// `Slot<N>_Filename`, in the `MemoryCards` folder). `None` while a slot holds
+/// a folder card, whose saves rommd doesn't sync yet.
+fn memory_cards(config: &EmulatorConfig, serial: &str) -> Option<SaveSet> {
+    let ini = read_ini(config);
+    let dir = folder(config, "MemoryCards", "memcards");
+    let mut cards = Vec::new();
+    for slot in 1..=2 {
+        let key = |name: &str| format!("Slot{slot}_{name}");
+        let get = |name: &str| ini.as_ref().and_then(|i| i.get("MemoryCards", &key(name)));
+        if get("Enable").is_some_and(|v| v.eq_ignore_ascii_case("false")) {
+            continue;
+        }
+        let name = get("Filename")
+            .filter(|n| !n.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("Mcd00{slot}.ps2"));
+        let path = dir.join(name);
+        if path.is_dir() {
+            tracing::warn!(
+                "PCSX2's slot {slot} card {} is a folder card; its saves are not synced yet",
+                path.display()
+            );
+            return None;
+        }
+        cards.push(path);
+    }
+    if cards.is_empty() {
+        return None;
+    }
+    let binary = config.binary.clone();
+    let writable = Hook(std::sync::Arc::new(move || {
+        anyhow::ensure!(
+            !crate::process::program_running(&binary, &["pcsx2-qt", "pcsx2"]),
+            "PCSX2 is running; it keeps the memory cards open and would lose the restored save"
+        );
+        Ok(())
+    }));
+    Some(SaveSet::Ps2Cards(Ps2Cards {
+        cards,
+        game_ids: vec![serial.to_owned()],
+        writable: Some(writable),
+    }))
+}
+
+fn read_ini(config: &EmulatorConfig) -> Option<IniFile> {
+    std::fs::read_to_string(config.config_dir.join("inis/PCSX2.ini"))
+        .map(|t| IniFile::parse(&t))
+        .ok()
+}
+
 /// A `[Folders]` entry of `inis/PCSX2.ini`; relative paths are inside the
 /// data folder.
 fn folder(config: &EmulatorConfig, key: &str, default: &str) -> PathBuf {
-    let ini = std::fs::read_to_string(config.config_dir.join("inis/PCSX2.ini"))
-        .map(|t| IniFile::parse(&t))
-        .ok();
+    let ini = read_ini(config);
     let dir = ini
         .as_ref()
         .and_then(|i| i.get("Folders", key))
@@ -278,7 +334,7 @@ mod tests {
             Some("SLUS-20811")
         );
         let layout = Pcsx2.save_layout(&config, &rom, Some("SLUS-20811")).await;
-        assert!(layout.saves.is_none(), "memory cards are not synced yet");
+        assert!(matches!(layout.saves, Some(SaveSet::Ps2Cards(_))));
         let states = layout.states.unwrap();
         assert_eq!(states.dir, elsewhere);
         assert!(states.matcher.matches_name("SLUS-20811 (CB99CD12).01.p2s"));
@@ -346,5 +402,38 @@ mod tests {
             command.args,
             ["-fullscreen", "-batch", "--", "/roms/game.iso"]
         );
+    }
+
+    #[test]
+    fn saves_are_on_the_enabled_slots_cards() {
+        let root = TempDir::new("pcsx2-cards");
+        let config = EmulatorConfig {
+            binary: "/usr/bin/pcsx2-qt".into(),
+            config_dir: root.path().to_owned(),
+        };
+        let cards = |config: &EmulatorConfig| match memory_cards(config, "SLUS-20152") {
+            Some(SaveSet::Ps2Cards(c)) => Some((c.cards, c.game_ids)),
+            _ => None,
+        };
+        let memcards = root.path().join("memcards");
+        assert_eq!(
+            cards(&config),
+            Some((
+                vec![memcards.join("Mcd001.ps2"), memcards.join("Mcd002.ps2")],
+                vec!["SLUS-20152".to_owned()]
+            )),
+            "PCSX2's defaults"
+        );
+
+        write(
+            &root.path().join("inis/PCSX2.ini"),
+            b"[Folders]\nMemoryCards = cards\n\n[MemoryCards]\nSlot1_Enable = true\n\
+              Slot1_Filename = Mine.ps2\nSlot2_Enable = false\n",
+        );
+        let mine = root.path().join("cards/Mine.ps2");
+        assert_eq!(cards(&config).unwrap().0, vec![mine.clone()]);
+
+        std::fs::create_dir_all(&mine).unwrap();
+        assert_eq!(cards(&config), None, "a folder card");
     }
 }

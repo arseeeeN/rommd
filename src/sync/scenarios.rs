@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use super::*;
-use crate::emulator::{CreateDir, FileSet, GameSaveDir, N64Files, Ps1Cards, SaveLayout, SaveSet};
+use crate::emulator::{FileSet, GameSaveDir, Hook, N64Files, Ps1Cards, SaveLayout, SaveSet};
 use crate::testing::fake_romm::{FakeRomm, content_hash};
 use crate::testing::{TempDir, TestEmulator, age, write, zip_bytes};
 
@@ -35,6 +35,10 @@ const DOLPHIN: TestEmulator = TestEmulator {
 const DUCKSTATION: TestEmulator = TestEmulator {
     id: "duckstation",
     family: &["swanstation"],
+};
+const PCSX2: TestEmulator = TestEmulator {
+    id: "pcsx2",
+    family: &["nethersx2"],
 };
 const RMG: TestEmulator = TestEmulator {
     id: "rmg",
@@ -375,7 +379,7 @@ async fn a_switch_device_save_restores_from_sigils_device_area() {
 /// counts its calls and fails when `refuse` is set.
 fn slot_layout(d: &Device, calls: &Arc<AtomicUsize>, refuse: bool) -> SaveLayout {
     let (slot, calls) = (d.path("slot"), calls.clone());
-    let create = CreateDir(Arc::new(move || {
+    let create = Hook(Arc::new(move || {
         calls.fetch_add(1, Ordering::SeqCst);
         anyhow::ensure!(!refuse, "Ryujinx is running");
         std::fs::create_dir_all(slot.join("0"))?;
@@ -1005,4 +1009,64 @@ async fn ps1_saves_travel_as_one_card_both_ways() {
     let writes = fake.writes().len();
     b.sync(&fake, &DUCKSTATION, &ps1(&b), None).await;
     assert_eq!(fake.writes().len(), writes, "in sync after the restore");
+}
+
+// ── PS2 ───────────────────────────────────────────────────────────────────────
+
+fn ps2(d: &Device) -> SaveLayout {
+    SaveLayout {
+        saves: Some(SaveSet::Ps2Cards(crate::emulator::Ps2Cards {
+            cards: vec![d.path("memcards/Mcd001.ps2"), d.path("memcards/Mcd002.ps2")],
+            game_ids: vec!["SLUS-20152".into()],
+            writable: None,
+        })),
+        states: None,
+    }
+}
+
+#[tokio::test]
+async fn a_ps2_save_moves_between_shared_cards() {
+    use crate::ps2_card::card::{Card, tests::folder};
+    let fake = FakeRomm::start().await;
+    let (a, b) = (Device::new("ps2-a"), Device::new("ps2-b"));
+    let card = |folders: &[&crate::ps2_card::card::Folder]| {
+        let mut c = Card::formatted([0, 0, 0, 0, 1, 1, 0xD0, 0x07]);
+        folders.iter().for_each(|f| c.inject(f).unwrap());
+        c.to_file()
+    };
+    let names = |file: Vec<u8>| -> Vec<String> {
+        Card::load(&file)
+            .unwrap()
+            .list()
+            .unwrap()
+            .0
+            .iter()
+            .map(|s| String::from_utf8_lossy(&s.name).into_owned())
+            .collect()
+    };
+    let game = folder("BASLUS-20152GAME", &[("data", vec![1; 2000])]);
+    let other = folder("BASLUS-99999ZZZ", &[("data", vec![9; 100])]);
+    write(&a.path("memcards/Mcd001.ps2"), &card(&[&other, &game]));
+
+    a.sync(&fake, &PCSX2, &ps2(&a), None).await;
+    let up = fake.saves(ROM).pop().unwrap();
+    assert!(up.file_name.ends_with("].ps2"), "{}", up.file_name);
+    assert_eq!(
+        up.data,
+        card(&[&game]),
+        "only the game's save, as Sigil builds it"
+    );
+    assert_eq!(up.content_hash, content_hash(&up.data));
+
+    let theirs = folder("BASLUS-88888YYY", &[("data", vec![5; 100])]);
+    write(&b.path("memcards/Mcd001.ps2"), &card(&[&theirs]));
+    b.sync(&fake, &PCSX2, &ps2(&b), None).await;
+    assert_eq!(
+        names(read(b.path("memcards/Mcd001.ps2"))),
+        ["BASLUS-88888YYY", "BASLUS-20152GAME"]
+    );
+    let writes = fake.writes().len();
+    b.sync(&fake, &PCSX2, &ps2(&b), None).await;
+    a.sync(&fake, &PCSX2, &ps2(&a), None).await;
+    assert_eq!(fake.writes().len(), writes, "in sync on both sides");
 }

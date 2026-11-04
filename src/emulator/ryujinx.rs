@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use super::{CreateDir, Emulator, GameSaveDir, LaunchCommand, LaunchContext, SaveLayout, SaveSet};
+use super::{Emulator, GameSaveDir, Hook, LaunchCommand, LaunchContext, SaveLayout, SaveSet};
 use crate::config::EmulatorConfig;
 use crate::profile::ProfileBlob;
 
@@ -150,7 +150,7 @@ async fn game_save_dir(config: &EmulatorConfig, game_id: &str) -> Option<GameSav
     let slot = pending.dir(&config.config_dir);
     let device = pending.attribute[0x20] == SAVE_TYPE_DEVICE;
     let (root, binary) = (config.config_dir.clone(), config.binary.clone());
-    let create = CreateDir(Arc::new(move || {
+    let create = Hook(Arc::new(move || {
         anyhow::ensure!(
             !ryujinx_running(&binary),
             "Ryujinx is running; it keeps its save index in memory and would overwrite the new slot"
@@ -164,12 +164,7 @@ async fn game_save_dir(config: &EmulatorConfig, game_id: &str) -> Option<GameSav
     Some(slot_save_dir(game_id, &slot, device, Some(create)))
 }
 
-fn slot_save_dir(
-    game_id: &str,
-    slot: &Path,
-    device: bool,
-    create: Option<CreateDir>,
-) -> GameSaveDir {
+fn slot_save_dir(game_id: &str, slot: &Path, device: bool, create: Option<Hook>) -> GameSaveDir {
     let title = game_id.to_uppercase();
     let (alternatives, ignored) = crate::switch::sigil_areas(&title, device);
     GameSaveDir {
@@ -486,42 +481,7 @@ fn write_replacing(path: &Path, data: &[u8]) -> Result<()> {
 /// Whether Ryujinx is running, by process name: "Ryujinx" or the configured
 /// binary's name. When the check itself fails, Ryujinx counts as running.
 fn ryujinx_running(binary: &Path) -> bool {
-    let mut names = vec!["Ryujinx".to_owned()];
-    if let Some(stem) = binary.file_stem() {
-        names.push(stem.to_string_lossy().into_owned());
-    }
-    names.iter().any(|name| process_running(name))
-}
-
-#[cfg(unix)]
-fn process_running(name: &str) -> bool {
-    // Linux matches against the first 15 bytes of the process name.
-    let name: String = if cfg!(target_os = "linux") {
-        name.chars().take(15).collect()
-    } else {
-        name.to_owned()
-    };
-    match std::process::Command::new("pgrep")
-        .args(["-i", "-x", &name])
-        .output()
-    {
-        Ok(out) => out.status.code() != Some(1),
-        Err(_) => true,
-    }
-}
-
-#[cfg(windows)]
-fn process_running(name: &str) -> bool {
-    let image = format!("{name}.exe");
-    match std::process::Command::new("tasklist")
-        .args(["/FI", &format!("IMAGENAME eq {image}"), "/FO", "CSV", "/NH"])
-        .output()
-    {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
-            .to_lowercase()
-            .contains(&image.to_lowercase()),
-        _ => true,
-    }
+    crate::process::program_running(binary, &["Ryujinx"])
 }
 
 #[cfg(test)]

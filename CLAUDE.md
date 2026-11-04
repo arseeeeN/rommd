@@ -79,6 +79,7 @@ existing one, e.g. RomM's, is kept), else the one top-level file RomM's
 - **`src/n3ds.rs`** — 3DS title ID extraction (NCSD / NCCH headers, CIA TMD; no keys)
 - **`src/n64.rs`** — N64 ROM byte orders and hashes, and the N64 save unit (collect, restore)
 - **`src/ps1_card.rs`** — PS1 memory cards (list, format, inject) and the per-game card unit
+- **`src/ps2_card/`** — PS2 memory cards: the card filesystem (`card.rs`: FAT, directories, ECC; no rommd imports) and the per-game card unit over the shared cards (`mod.rs`)
 - **`src/sync/`** — save/state sync engine, three-way decision, persistent sync state
 - **`src/save_archive.rs`** — zip/restore and RomM-compatible hashing of directory saves
 - **`src/profile.rs`** — portable settings overlay (ProfileBlob)
@@ -140,7 +141,8 @@ Every emulator implements `src/emulator/mod.rs::Emulator`. Key methods:
 - `save_layout` — async; where this game's saves and states live
   (`src/emulator/layout.rs`). `saves` is a `SaveSet`: `Dir` (a directory tree,
   one zip: Switch, Wii), `Bundle` (a set of files, one flat zip: GameCube
-  `.gci`) or `Files` (one RomM entry per file). A `Dir` save may span several
+  `.gci`), `Files` (one RomM entry per file), or a unit converted from the
+  emulator's files: `N64`, `Ps1Cards`, `Ps2Cards`. A `Dir` save may span several
   directories, each under its own zip root (`extra_roots`, used by 3DS). `states` is a `FileSet`. `None`
   means that kind is not synced. Called before launch and again after exit, so
   it may return more once the session created things (Ryujinx's slot,
@@ -279,7 +281,7 @@ account save (`switch::sigil_areas`). Save family includes argosy's IDs
   profiles**. `0/` is read; restores write both. A slot must also be
   registered in the save index (`bis/system/save/8000000000000000/{0,1}/`:
   `imkvdb.arc` and `lastPublishedId`). Without a slot the layout points at the
-  next ID with a `GameSaveDir::create` hook, which the sync runs only to
+  next ID with a `GameSaveDir::create` `Hook`, which the sync runs only to
   restore a save: it creates the slot and index entry as Ryujinx would (sizes
   0 — Ryujinx doesn't check them, so the NACP isn't decrypted), and refuses
   while a Ryujinx process runs (it rewrites the index from memory on start
@@ -352,8 +354,18 @@ localized title, save title), falling back to the gamelist cache title.
 CRC is the XOR of the boot program's 32-bit words (`ps_disc::read_ps2_boot`).
 CHD/CSO images, which `ps_disc` can't read, get both from PCSX2's
 `cache/gamelist.cache` (version 34 only). Launched with `-batch` so PCSX2 quits
-with the game. Memory cards are not synced: the default cards hold every game's
-saves (`dev/backlog.md`, PS2 memory cards).
+with the game. Saves: the cards every game shares, `[MemoryCards]
+Slot<N>_Filename` (enabled slots) in the `MemoryCards` folder, sync as a
+`Ps2Cards` unit, argosy's (`ps2_card`, Sigil `card_ps2.c`): a fresh 8 MB card
+with ECC (root time 2000-01-01) holding the game's save folders, slot 1 first,
+uploaded as `<rom stem>.ps2` with its MD5 as hash. A folder is the game's when
+its name carries the serial (`BASLUS-20152…`; system folders like
+`BADATA-SYSTEM` never match). Restore deletes the game's folders from every
+card, puts each back on the card it was on (new ones on slot 1, an erased or
+missing card formatted), writes nothing until all fit and read back, backs up
+each changed card, and refuses while PCSX2 runs (`Ps2Cards::writable`: it keeps
+the cards open). Folder cards are skipped (`dev/backlog.md`). Save family:
+argosy's `aethersx2`, `nethersx2`, `armsx2`.
 
 **N64 (gopher64, RMG):** saves are a `SaveSet::N64` unit, read region by
 region as Sigil does (`sync_n64.c`): `eeprom`, `pak1`–`pak4`, `sram`, `flash`,

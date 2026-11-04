@@ -33,7 +33,7 @@ and uploads your progress when you quit.
 | GameCube / Wii | [Dolphin](https://dolphin-emu.org) | `dolphin` | ✓ | ✓ |
 | Game Boy Advance | [mGBA](https://mgba.io) | `mgba` | ✓ | ✓ |
 | PlayStation | [DuckStation](https://www.duckstation.org) | `duckstation` | ✓ (memory cards) | ✓ |
-| PlayStation 2 | [PCSX2](https://pcsx2.net) | `pcsx2` | — (not yet) | ✓ |
+| PlayStation 2 | [PCSX2](https://pcsx2.net) | `pcsx2` | ✓ (memory cards) | ✓ |
 | Nintendo 64 | [gopher64](https://github.com/gopher64/gopher64) | `gopher64` | ✓ | ✓ |
 | Nintendo 64 | [RMG](https://github.com/Rosalie241/RMG) | `rmg` | ✓ | ✓ |
 
@@ -53,17 +53,13 @@ launch requests. Things to know:
 - **GameCube:** memory card slot A must be a GCI folder (Dolphin's default).
   A raw memory card image holds every game's saves in one file and is not
   synced.
-- **PlayStation 2:** save states sync; memory cards don't yet. PCSX2's cards
-  hold every game's saves in one file, and syncing one game's saves out of
-  them is planned. rommd reads the game's serial from `.iso` and `.bin`
+- **PlayStation 2:** a game's saves are taken off PCSX2's shared memory
+  cards and synced as one card of their own, the same as argosy-launcher's;
+  restoring puts them back without touching other games' saves. PCSX2 must be
+  closed for a restore, since it keeps the cards open. Folder memory cards
+  aren't synced yet. rommd reads the game's serial from `.iso` and `.bin`
   images; for `.chd` and `.cso`, add rommd's ROM folder to PCSX2's game list
   once, so PCSX2's cache knows the game.
-- **Nintendo 64:** a game's save (EEPROM, SRAM, flash and controller paks) is
-  synced in one form whichever emulator wrote it, so it moves between gopher64,
-  RMG, argosy-launcher and RomM's in-browser player. RMG names save files
-  after its ROM database; when rommd can't read that database (RMG's AppImage),
-  a save RMG hasn't created yet on this computer is restored once the game
-  has saved for the first time, not before the first launch.
 
 ## Install
 

@@ -102,6 +102,47 @@ impl ProcessManager {
     }
 }
 
+/// Whether an emulator runs, by process name: one of `names` or the
+/// configured binary's. When the check itself fails, it counts as running.
+pub fn program_running(binary: &std::path::Path, names: &[&str]) -> bool {
+    let mut names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+    if let Some(stem) = binary.file_stem() {
+        names.push(stem.to_string_lossy().into_owned());
+    }
+    names.iter().any(|name| process_running(name))
+}
+
+#[cfg(unix)]
+fn process_running(name: &str) -> bool {
+    // Linux matches against the first 15 bytes of the process name.
+    let name: String = if cfg!(target_os = "linux") {
+        name.chars().take(15).collect()
+    } else {
+        name.to_owned()
+    };
+    match std::process::Command::new("pgrep")
+        .args(["-i", "-x", &name])
+        .output()
+    {
+        Ok(out) => out.status.code() != Some(1),
+        Err(_) => true,
+    }
+}
+
+#[cfg(windows)]
+fn process_running(name: &str) -> bool {
+    let image = format!("{name}.exe");
+    match std::process::Command::new("tasklist")
+        .args(["/FI", &format!("IMAGENAME eq {image}"), "/FO", "CSV", "/NH"])
+        .output()
+    {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .to_lowercase()
+            .contains(&image.to_lowercase()),
+        _ => true,
+    }
+}
+
 /// Spawn a background task that waits for the game to exit, then syncs
 /// saves/states to RomM and cleans up any launch artifacts. `child` is `None`
 /// for an attached launch, whose emulator is another process's child; its

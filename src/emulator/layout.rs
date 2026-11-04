@@ -42,12 +42,28 @@ pub enum SaveSet {
     /// A PlayStation game's memory cards, synced as one card of its saves
     /// (`ps1_card`).
     Ps1Cards(Ps1Cards),
+    /// A PS2 game's saves on the shared memory cards, synced as one card of
+    /// its saves (`ps2_card`).
+    Ps2Cards(Ps2Cards),
 }
 
 /// The game's memory cards in slot 1 and slot 2; either may not exist.
 #[derive(Debug, Clone)]
 pub struct Ps1Cards {
     pub cards: [PathBuf; 2],
+}
+
+/// The PS2 memory cards every game shares, and which saves on them are this
+/// game's.
+#[derive(Debug, Clone)]
+pub struct Ps2Cards {
+    /// The cards in slot order; a file may not exist yet.
+    pub cards: Vec<PathBuf>,
+    /// The product codes the game's save folders are named with (its serial).
+    pub game_ids: Vec<String>,
+    /// Refuses to write the cards, e.g. while the emulator, which keeps them
+    /// open, runs.
+    pub writable: Option<Hook>,
 }
 
 /// A game's N64 save files (`.eep`, `.sra`, `.fla`, `.mpk`) in one folder.
@@ -89,16 +105,17 @@ pub struct GameSaveDir {
     /// Makes `dir` exist before a save is restored into it, for emulators
     /// where a save location is more than a folder (a Ryujinx slot must also
     /// be registered in its save index). Only called when `dir` is missing.
-    pub create: Option<CreateDir>,
+    pub create: Option<Hook>,
 }
 
-/// See `GameSaveDir::create`.
+/// Something the sync runs before it writes a save: making its folder
+/// (`GameSaveDir::create`) or checking it may (`Ps2Cards::writable`).
 #[derive(Clone)]
-pub struct CreateDir(pub Arc<dyn Fn() -> anyhow::Result<()> + Send + Sync>);
+pub struct Hook(pub Arc<dyn Fn() -> anyhow::Result<()> + Send + Sync>);
 
-impl std::fmt::Debug for CreateDir {
+impl std::fmt::Debug for Hook {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("CreateDir")
+        f.write_str("Hook")
     }
 }
 
