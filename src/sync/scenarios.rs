@@ -1070,3 +1070,48 @@ async fn a_ps2_save_moves_between_shared_cards() {
     a.sync(&fake, &PCSX2, &ps2(&a), None).await;
     assert_eq!(fake.writes().len(), writes, "in sync on both sides");
 }
+
+// ── argosy's hardcore marker ──────────────────────────────────────────────────
+
+fn with_hardcore_marker(data: &[u8]) -> Vec<u8> {
+    let json = br#"{"h":true,"v":1}"#;
+    let mut out = data.to_vec();
+    out.extend_from_slice(json);
+    out.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"ARGOSY\x01\x00");
+    out
+}
+
+#[tokio::test]
+async fn argosys_hardcore_marker_never_reaches_the_save() {
+    use crate::ps1_card::tests::{card, save};
+    let fake = FakeRomm::start().await;
+    let melee = gci("GALE01", "SuperSmashBros", b"melee");
+    fake.seed_save(
+        ROM,
+        "Game.gci",
+        "dolphin",
+        Some("autosave"),
+        &with_hardcore_marker(&melee),
+    );
+    let gc = Device::new("hardcore-gc");
+    gc.sync(&fake, &DOLPHIN, &gc.gamecube(), None).await;
+    assert_eq!(read(gc.path("card/01-GALE-SuperSmashBros.gci")), melee);
+    gc.sync(&fake, &DOLPHIN, &gc.gamecube(), None).await;
+    assert!(fake.writes().is_empty(), "in sync with the marked upload");
+
+    let kf = card(&[save("BISLPS-00017KF", 1, 1)]);
+    let fake = FakeRomm::start().await;
+    fake.seed_save(
+        ROM,
+        "Game.mcd",
+        "duckstation",
+        Some("autosave"),
+        &with_hardcore_marker(&kf),
+    );
+    let ps1_device = Device::new("hardcore-ps1");
+    ps1_device
+        .sync(&fake, &DUCKSTATION, &ps1(&ps1_device), None)
+        .await;
+    assert_eq!(read(ps1_device.path("memcards/Game_1.mcd")), kf);
+}

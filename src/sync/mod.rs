@@ -488,6 +488,7 @@ async fn remote_matches(ctx: &SyncCtx<'_>, unit: &Unit, remote: &Remote, local_h
         Ok(()) => {
             let local = unit.local.clone();
             tokio::task::spawn_blocking(move || match local {
+                _ if save_archive::strip_hardcore_marker(&file).is_err() => None,
                 Local::N64(_) => n64::read_unit(&file).ok().and_then(|s| s.hash()),
                 Local::Ps1(_) => ps1_card::remote_hash(&file).ok(),
                 Local::Ps2(cards) => ps2_card::remote_hash(&cards, &file).ok(),
@@ -643,6 +644,9 @@ fn apply_download(
             "downloaded content hash {} differs from RomM's {:?}",
             actual, expected_hash
         );
+    }
+    if save_archive::strip_hardcore_marker(downloaded)? {
+        info!("left out argosy-launcher's hardcore marker from the restored save");
     }
     let had_local = local.mtime().is_some();
     match local {

@@ -103,6 +103,46 @@ pub fn zip_members(members: &[(String, Vec<u8>)], dest: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Remove the marker argosy-launcher appends to a save uploaded from a
+/// RetroAchievements hardcore session (`SaveArchiver.appendHardcoreTrailer`;
+/// Sigil's `sigil_sync_unmarked_len`): JSON holding `"h":true`, its length as
+/// a little-endian u32, then `ARGOSY` 01 00. Left in, it would become part of
+/// the save. Returns whether there was one.
+pub fn strip_hardcore_marker(path: &Path) -> Result<bool> {
+    const MAGIC: &[u8] = b"ARGOSY\x01\x00";
+    const JSON_MAX: u64 = 1024;
+    let tail_len = MAGIC.len() as u64 + 4;
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+    let len = file.metadata()?.len();
+    if len < tail_len {
+        return Ok(false);
+    }
+    let read_at = |file: &mut std::fs::File, at: u64, n: u64| -> Result<Vec<u8>> {
+        use std::io::Seek;
+        file.seek(std::io::SeekFrom::Start(at))?;
+        let mut buf = vec![0u8; n as usize];
+        file.read_exact(&mut buf)?;
+        Ok(buf)
+    };
+    let tail = read_at(&mut file, len - tail_len, tail_len)?;
+    if &tail[4..] != MAGIC {
+        return Ok(false);
+    }
+    let json_len = u32::from_le_bytes(tail[..4].try_into().unwrap()) as u64;
+    if json_len > JSON_MAX || json_len > len - tail_len {
+        return Ok(false);
+    }
+    let json = read_at(&mut file, len - tail_len - json_len, json_len)?;
+    if !json.windows(8).any(|w| w == b"\"h\":true") {
+        return Ok(false);
+    }
+    file.set_len(len - tail_len - json_len)?;
+    Ok(true)
+}
+
 pub fn file_md5(path: &Path) -> Result<String> {
     let mut ctx = md5::Md5::new();
     std::io::copy(&mut std::fs::File::open(path)?, &mut ctx)?;
@@ -692,6 +732,37 @@ mod tests {
             b"account"
         );
         assert!(!account.join("device.bin").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn strips_argosys_hardcore_marker_only() {
+        let base = scratch("hardcore");
+        let path = base.join("save.gci");
+        let marker = |json: &[u8]| {
+            let mut m = json.to_vec();
+            m.extend_from_slice(&(json.len() as u32).to_le_bytes());
+            m.extend_from_slice(b"ARGOSY\x01\x00");
+            m
+        };
+        let mut data = b"GALE01 the save".to_vec();
+        data.extend(marker(br#"{"h":true,"v":1}"#));
+        std::fs::write(&path, &data).unwrap();
+        assert!(strip_hardcore_marker(&path).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"GALE01 the save");
+        assert!(
+            !strip_hardcore_marker(&path).unwrap(),
+            "nothing left to strip"
+        );
+
+        let mut softcore = b"GALE01 the save".to_vec();
+        softcore.extend(marker(br#"{"h":false,"v":1}"#));
+        std::fs::write(&path, &softcore).unwrap();
+        assert!(!strip_hardcore_marker(&path).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), softcore);
+
+        std::fs::write(&path, b"short").unwrap();
+        assert!(!strip_hardcore_marker(&path).unwrap());
         let _ = std::fs::remove_dir_all(&base);
     }
 }

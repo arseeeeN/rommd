@@ -236,7 +236,11 @@ another's only copy. Games with several save files should be a `Bundle`. Uploads
 `overwrite=true`, or RomM answers content already in the slot with that older
 entry, and a revert would be undone by the next sync. **Downloads** back up the local
 version to `save-backups/<emu>/<rom_id>/<time>/` next to the sync state (last 5 kept per game) and
-write atomically (flat files via temp + rename).
+write atomically (flat files via temp + rename). A download ending in the
+marker argosy appends for RetroAchievements hardcore sessions (`{"h":true,…}`,
+its length, `ARGOSY` 01 00) has it stripped before anything is restored
+(`save_archive::strip_hardcore_marker`), as Sigil does; RomM's hash still
+covers it.
 
 **argosy shapes.** argosy-launcher has two upload formats: its older
 per-emulator ones, used with RomM before 5.5, and Sigil's units, which it
