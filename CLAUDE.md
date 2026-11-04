@@ -361,8 +361,9 @@ with ECC (root time 2000-01-01) holding the game's save folders, slot 1 first,
 uploaded as `<rom stem>.ps2` with its MD5 as hash. A folder is the game's when
 its name carries the serial (`BASLUS-20152…`; system folders like
 `BADATA-SYSTEM` never match). Restore deletes the game's folders from every
-card, puts each back on the card it was on (new ones on slot 1, an erased or
-missing card formatted), writes nothing until all fit and read back, backs up
+card, puts each back on the card it was on (new ones on slot 1, whose card is
+formatted when erased or missing: unlike Sigil, which takes the first card
+file present), writes nothing until all fit and read back, backs up
 each changed card, and refuses while PCSX2 runs (`Ps2Cards::writable`: it keeps
 the cards open). Folder cards are skipped (`dev/backlog.md`). Save family:
 argosy's `aethersx2`, `nethersx2`, `armsx2`.

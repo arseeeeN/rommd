@@ -170,11 +170,12 @@ pub fn restore(cards: &Ps2Cards, remote: &Path, backup: &Path) -> Result<()> {
             }
         }
     }
-    // A new folder goes on the slot 1 card: the first card file there,
-    // formatted now when it holds no card yet.
-    let primary = cards.cards.iter().position(|p| p.exists()).unwrap_or(0);
+    // A new folder goes on the slot 1 card, formatted now when it holds no
+    // card yet. Sigil takes the first card file present, which is slot 2's
+    // when slot 1's is missing, but games look in slot 1 first, and PCSX2
+    // creates a missing card when it starts.
     for (folder, on) in incoming.iter().zip(placed_on) {
-        let c = on.unwrap_or(primary);
+        let c = on.unwrap_or(0);
         let (path, card, changed) = &mut loaded[c];
         let card = card.get_or_insert_with(|| Card::formatted(BUILT_TOD));
         card.inject(folder).with_context(|| {
@@ -355,6 +356,27 @@ mod tests {
             local_hash(&set).unwrap().unwrap()
         );
         assert!(!root.path().join("Mcd002.ps2").exists());
+    }
+
+    #[test]
+    fn a_new_save_goes_to_slot_1_even_when_only_slot_2_has_a_card() {
+        let root = TempDir::new("ps2-slot1");
+        write(&root.path().join("Mcd002.ps2"), &vec![0xFF; 8_650_752]);
+        let a = folder("BASLUS-20152AAA", &[("data", vec![1; 100])]);
+        let unit = root.path().join("unit.ps2");
+        write(&unit, &card_with(std::slice::from_ref(&a)));
+        restore(&cards(root.path()), &unit, &root.path().join("bk")).unwrap();
+        assert_eq!(
+            std::fs::read(root.path().join("Mcd001.ps2")).unwrap(),
+            card_with(&[a])
+        );
+        assert!(
+            std::fs::read(root.path().join("Mcd002.ps2"))
+                .unwrap()
+                .iter()
+                .all(|&b| b == 0xFF),
+            "slot 2's erased card untouched"
+        );
     }
 
     #[test]
