@@ -18,6 +18,7 @@ pub struct AppState {
     pub sync_store: Arc<SyncStore>,
     pub updater: Arc<Updater>,
     pub launches: Arc<Launches>,
+    pub recent: Arc<crate::recent::RecentGames>,
 }
 
 impl AppState {

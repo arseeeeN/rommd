@@ -292,6 +292,20 @@ impl Launch {
         };
         let started_at = SystemTime::now();
         info!("launched {} pid={} rom_id={}", emulator_id, pid, req.rom_id);
+        if let Some(rom) = &rom {
+            state.recent.record(crate::recent::RecentGame {
+                rom_id: rom.id,
+                name: rom.name.clone().unwrap_or_else(|| rom.fs_name.clone()),
+                platform: rom
+                    .platform_display_name
+                    .clone()
+                    .unwrap_or_else(|| rom.platform_slug.clone()),
+                emulator: emulator_id.clone(),
+                played_at: started_at
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs()),
+            });
+        }
 
         state
             .processes
@@ -651,6 +665,18 @@ pub async fn games(
 
 #[utoipa::path(
     get,
+    path = "/recent",
+    responses(
+        (status = 200, description = "The games started last, newest first (at most 10).",
+            body = Vec<crate::recent::RecentGame>)
+    )
+)]
+pub async fn recent(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(state.recent.list())
+}
+
+#[utoipa::path(
+    get,
     path = "/saves/conflicts",
     responses(
         (status = 200, description = "Recent save conflicts rommd resolved automatically, newest first. \
@@ -789,6 +815,9 @@ mod tests {
             emulators,
             sync_store: Arc::new(crate::sync::SyncStore::load(dir.path().join("sync.json"))),
             launches: Default::default(),
+            recent: Arc::new(crate::recent::RecentGames::load(
+                dir.path().join("recent.json"),
+            )),
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());

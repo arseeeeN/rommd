@@ -15,6 +15,7 @@ mod process;
 mod profile;
 mod ps1_card;
 mod ps2_card;
+mod recent;
 mod romm;
 mod save_archive;
 mod server;
@@ -303,6 +304,9 @@ async fn run_daemon(background: bool) -> Result<()> {
         emulators,
         sync_store: Arc::new(sync::SyncStore::load(sync::SyncStore::default_path())),
         launches: Default::default(),
+        recent: Arc::new(recent::RecentGames::load(
+            recent::RecentGames::default_path(),
+        )),
     });
 
     let port = state.config().server.port;

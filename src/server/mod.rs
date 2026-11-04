@@ -33,6 +33,7 @@ use types::*;
         handlers::snapshot,
         handlers::list_controllers,
         handlers::save_conflicts,
+        handlers::recent,
         handlers::clear_save_conflicts,
         handlers::update_status,
         handlers::update_install,
@@ -58,6 +59,7 @@ use types::*;
         ControllerInfo,
         ControllerType,
         crate::sync::ConflictRecord,
+        crate::recent::RecentGame,
         crate::update::UpdateStatus,
         crate::update::UpdateMode,
         UpdateInstalled,
@@ -79,6 +81,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/launches/{id}/attached", post(handlers::attached_launch))
         .route("/status", get(handlers::status))
+        .route("/recent", get(handlers::recent))
         .route("/stop", post(handlers::stop))
         .route("/snapshot", post(handlers::snapshot))
         .route("/controllers", get(handlers::list_controllers))
