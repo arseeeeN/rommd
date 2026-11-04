@@ -184,7 +184,8 @@ backups, and the update. No native UI code; the tray's "Open rommd" opens it.
 It is an origin of its own, so it may only use the actions the API already
 has, never the config.
 
-**3. A tray item, `rommd tray`**: a separate process and a client of the
+**3. A tray item, `rommd tray`** (done on Linux; Windows and macOS: see
+"The tray on Windows and macOS"): a separate process and a client of the
 daemon over HTTP, like `rommd play`, started at login by its own autostart
 entry; `[tray] enabled = false` (or no autostart entry) leaves the daemon on
 its own. Never part of the daemon: the daemon runs without a display (systemd
@@ -203,6 +204,82 @@ have native APIs. Menu: status, recent games, "Update available, install",
   and covers as the Steam shortcuts, so a desktop launcher's search finds
   them.
 - Discord Rich Presence: "Playing Super Mario 64 via RomM".
+
+## The tray on Windows and macOS
+
+`rommd tray` runs on Linux only (`src/tray/linux.rs`, `ksni`). The user is
+writing the Windows and macOS versions on those machines. What is shared and
+what each OS needs:
+
+**Shared already, keep it so.** `src/tray/mod.rs` decides everything: what
+the menu shows (`menu(&View) -> Vec<Entry>`, unit-tested), the tooltip, what
+an `Action` does (`perform`, over `client::Daemon`), the 10 s refresh and the
+refresh when the menu opens (`Action::Refresh`). A platform file only turns
+`Entry`s into native items, sends chosen `Action`s down the channel, and
+replaces the view on `show`. Mirror `linux::Tray`'s surface (`spawn(tx,
+icon) -> handle`, `show(View)`, `shutdown()`) so `run()` only grows a `cfg`
+per OS, not a second loop.
+
+**Crate.** `tray-icon` + `muda` (Tauri's) for both; native on Windows
+(Shell_NotifyIcon) and macOS (NSStatusItem), no C libraries. Gate it with
+`[target.'cfg(any(windows, target_os = "macos"))'.dependencies]`: its Linux
+backend needs GTK, which the static musl build can't link, so Linux stays
+on `ksni`. Writing Shell_NotifyIcon by hand with `windows-sys` (already a
+dependency) is the fallback if `tray-icon` pulls in too much.
+
+**Event loop: the main difference from Linux.** `ksni` runs on tokio;
+`tray-icon` needs the OS loop on the thread that created the icon, and on
+macOS that must be the *main* thread (AppKit). `main.rs` currently does
+`Runtime::new()?.block_on(tray::run())` on the main thread for
+`Command::Tray`, so on macOS: run tokio (the refresh loop, `perform`) on a
+spawned thread and the AppKit loop on main, talking through channels
+(`tray-icon`'s `MenuEvent::receiver()` towards tokio; view updates back via
+the event loop's proxy / `dispatch` to main). On Windows any one thread
+with a message pump works, but the same split keeps the code alike.
+
+**Icon.** `assets/rommd-tray.svg` is a single-colour 24×24 shape (fill
+`currentColor`); neither OS takes SVG in the tray. Pre-render PNGs into
+`assets/` (e.g. `rsvg-convert -w 32`/`-w 64`) and `include_bytes!` them; no
+SVG renderer at runtime.
+- macOS: a black-on-transparent PNG set as a *template* image
+  (`with_icon_as_template(true)`), so the menu bar recolours it for light
+  and dark. ~18 pt tall, so 36 px for Retina.
+- Windows: 16 and 32 px (more at high DPI). The tray doesn't recolour, so
+  white for the default dark taskbar, or follow the
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`
+  `SystemUsesLightTheme` value (black on light) and re-read it on
+  `WM_SETTINGCHANGE`.
+
+**Starting at login** (`apply_autostart(enabled)`, called by `rommd service
+install`/`uninstall` and `rommd setup`; must also remove what it made):
+- Windows: an `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value
+  `rommd tray` → `"<exe>" tray`, or a second logon task like the daemon's
+  (`service.rs`). The exe is a console-subsystem binary, so the tray must
+  detach from its console as `--background` does for the daemon (or the
+  user sees a window at login); log to `<data dir>/rommd-tray.log` then.
+- macOS: a second LaunchAgent (`~/Library/LaunchAgents/
+  <label>.tray.plist`, `RunAtLoad`, no `KeepAlive` so "Quit" stays quit),
+  beside the daemon's in `service.rs`. A bare binary in the menu bar
+  works without an app bundle; set the activation policy to *accessory*
+  so no Dock icon appears.
+
+**Other bits that are Linux-specific in `mod.rs` today:**
+- `supported()` is `cfg!(target_os = "linux")`; `desktop_session()` checks
+  `DISPLAY`/`WAYLAND_DISPLAY`: on Windows and macOS a logged-in user always
+  has a desktop (SSH sessions aside), so `true`.
+- `other_tray_running()` uses `pgrep -f "rommd tray$"`: fine on macOS; on
+  Windows use a named mutex (`CreateMutexW` `Local\rommd-tray`,
+  `ERROR_ALREADY_EXISTS` = another runs).
+- `start_now()` spawns `rommd tray` detached via a Unix process group; on
+  Windows `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` (and no console).
+- `open()` already uses `open` / `explorer`.
+- `Action::Quit` must end the OS loop too, not only the tokio side.
+
+**Menu behaviour to keep:** refresh when the menu opens (macOS: the menu's
+`menuWillOpen`, `tray-icon` has no hook, so refresh on the icon's click
+event before showing it; Windows: on the click / `WM_CONTEXTMENU`), and
+"Working…" while an action runs. Submenus (`Entry::Submenu`, the recent
+games' fullscreen / windowed) map to `muda::Submenu`.
 
 ## Emulators that stay open after the game
 
