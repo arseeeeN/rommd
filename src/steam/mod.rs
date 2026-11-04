@@ -149,32 +149,7 @@ pub async fn games(config: &Config, romm: &RommClient, emulators: &Emulators) ->
 /// `rommd steam sync` (or with `remove`, `rommd steam remove`).
 pub async fn run(remove: bool, options: Options) -> Result<()> {
     let dry_run = options.dry_run;
-    let config = Config::read(&Config::path()).context("reading the config")?;
-    let romm_config = config
-        .romm
-        .as_ref()
-        .context("the config has no [romm] section; run rommd setup")?;
-    let romm = RommClient::new(romm_config);
-    let emulators: Emulators = crate::emulator::all()
-        .into_iter()
-        .map(|e| (e.id().to_owned(), e))
-        .collect();
-    let account = account_config_dir()?;
-    let exe = std::env::current_exe()
-        .and_then(|p| p.canonicalize())
-        .context("finding rommd's own program")?;
-    let games = if remove {
-        Vec::new()
-    } else {
-        games(&config, &romm, &emulators).await?
-    };
-    let sgdb = config
-        .steam
-        .steamgriddb_api_key
-        .as_deref()
-        .filter(|k| !k.is_empty())
-        .map(sgdb::Client::new);
-    let changes = sync(&romm, sgdb.as_ref(), &account, &games, &exe, options).await?;
+    let (changes, account) = sync_from_config(remove, options).await?;
 
     let list = |names: &[String]| names.join(", ");
     let verb = if dry_run { "Would add" } else { "Added" };
@@ -203,6 +178,38 @@ pub async fn run(remove: bool, options: Options) -> Result<()> {
         println!("Start Steam to see them.");
     }
     Ok(())
+}
+
+/// A sync (or with `remove`, taking them all out) as the config says, for
+/// this account. Returns what changed and the account's config folder.
+pub async fn sync_from_config(remove: bool, options: Options) -> Result<(Changes, PathBuf)> {
+    let config = Config::read(&Config::path()).context("reading the config")?;
+    let romm_config = config
+        .romm
+        .as_ref()
+        .context("the config has no [romm] section; run rommd setup")?;
+    let romm = RommClient::new(romm_config);
+    let emulators: Emulators = crate::emulator::all()
+        .into_iter()
+        .map(|e| (e.id().to_owned(), e))
+        .collect();
+    let account = account_config_dir()?;
+    let exe = std::env::current_exe()
+        .and_then(|p| p.canonicalize())
+        .context("finding rommd's own program")?;
+    let games = if remove {
+        Vec::new()
+    } else {
+        games(&config, &romm, &emulators).await?
+    };
+    let sgdb = config
+        .steam
+        .steamgriddb_api_key
+        .as_deref()
+        .filter(|k| !k.is_empty())
+        .map(sgdb::Client::new);
+    let changes = sync(&romm, sgdb.as_ref(), &account, &games, &exe, options).await?;
+    Ok((changes, account))
 }
 
 /// The details of `ids`, a few at a time.

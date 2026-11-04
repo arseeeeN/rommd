@@ -27,6 +27,7 @@ mod switch;
 mod sync;
 #[cfg(test)]
 mod testing;
+mod tray;
 mod update;
 
 use anyhow::{Context, Result};
@@ -118,6 +119,10 @@ enum Command {
         #[command(subcommand)]
         action: SteamAction,
     },
+    /// Show rommd in the system tray: what it is doing, the games played
+    /// last, the update, and updating the Steam shortcuts. Needs rommd
+    /// running. Linux only so far.
+    Tray,
     /// Run rommd in the background from login, and start, stop or restart it.
     Service {
         #[command(subcommand)]
@@ -206,6 +211,7 @@ fn main() -> Result<()> {
             };
             tokio::runtime::Runtime::new()?.block_on(steam::run(remove, options))
         }
+        Some(Command::Tray) => tokio::runtime::Runtime::new()?.block_on(tray::run()),
         Some(Command::Service { action }) => match action {
             ServiceAction::Install => service::install(),
             ServiceAction::Start => control(service::Control::Start),
