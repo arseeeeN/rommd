@@ -88,8 +88,11 @@ impl Emulator for DuckStation {
             _ => {}
         }
 
+        // `-batch`: DuckStation quits when the game shuts down
+        // (`MainWindow::onSystemDestroyed`), so the session and its sync end
+        // there; `--` ends the options, so no file name is read as one.
         let mut command = LaunchCommand::new(&config.binary);
-        command.arg(rom_path);
+        command.arg("-batch").arg("--").arg(rom_path);
         Ok((command, LaunchContext::default()))
     }
     fn fullscreen_args(&self, fullscreen: bool) -> &'static [&'static str] {
@@ -436,5 +439,22 @@ mod tests {
         assert_eq!(lookup_save_title(&path, "SLUS-99999"), None);
         let _ = std::fs::remove_file(&path);
         assert_eq!(sanitize_file_name("Game: Part 1/2?"), "Game_ Part 1_2_");
+    }
+
+    #[tokio::test]
+    async fn launches_in_batch_mode_so_duckstation_quits_with_the_game() {
+        let config = EmulatorConfig {
+            binary: "duckstation-qt".into(),
+            config_dir: "/d".into(),
+        };
+        let (mut command, _) = DuckStation
+            .command(&config, Path::new("/roms/psx/-game.cue"), None, None)
+            .await
+            .unwrap();
+        command.set_fullscreen(&DuckStation, true);
+        assert_eq!(
+            command.args,
+            ["-fullscreen", "-batch", "--", "/roms/psx/-game.cue"]
+        );
     }
 }

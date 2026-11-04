@@ -341,7 +341,9 @@ zip. Title IDs come from the ROM header; update and DLC IDs
 map to the base title. States are `states/<TITLE ID>.<NN>.cst` (00 is the
 quicksave). Save family: Citra forks (citra, citra_mmj, lime3ds, borked3ds).
 
-**DuckStation:** states are `<serial>_N.sav`. A game's memory cards (`_1`,
+**DuckStation:** launched with `-batch --` so it quits when the game shuts
+down; batch mode doesn't rescan DuckStation's game list, so a CHD it never
+scanned in a normal session has no serial for rommd. States are `<serial>_N.sav`. A game's memory cards (`_1`,
 `_2`) sync as one `Ps1Cards` unit, argosy's (`ps1_card`, Sigil `card_ps1.c`):
 a freshly formatted raw card holding the saves of both cards, slot 1 first,
 uploaded as `<rom stem>.mcd` with its MD5 as hash, byte for byte what Sigil

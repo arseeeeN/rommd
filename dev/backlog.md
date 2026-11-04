@@ -204,6 +204,27 @@ have native APIs. Menu: status, recent games, "Update available, install",
   them.
 - Discord Rich Presence: "Playing Super Mario 64 via RomM".
 
+## Emulators that stay open after the game
+
+rommd's session (post-exit sync, the tray's "Playing", the updater's wait)
+ends when the emulator's process exits. PCSX2 (`-batch`), DuckStation
+(`-batch`), Dolphin (`-b`), RMG (`--quit-after-emulation`) and gopher64 quit
+with the game. These have no such option (checked 2026-11-04 against
+their default branches) and go back to their game list instead, so the
+session lasts until the user closes the emulator:
+
+- mGBA (Qt): `Window::gameStopped` shows the logo; only closing the window
+  quits. The SDL binary `mgba` ends with the game.
+- Ryujinx: `AppHost_AppExit` brings back the game list; only closing the
+  main window quits.
+- Eden: `OnEmulationStopped` shows the game list; `yuzu-cmd` (SDL) ends with
+  the game.
+- Azahar: `ShutdownGame` shows the game list; no SDL frontend any more.
+
+Options: an upstream flag in each (small, the others' implementations are
+there to copy), or rommd noticing the game stopped another way (the
+emulator's log, its window title).
+
 ## User documentation beyond the README
 
 The README carries install, configuration and per-emulator notes, and keeps
