@@ -145,15 +145,64 @@ localhost: the client spawns it, nothing new is exposed on the network, and
 would also work, but MCP clients send no RomM `Origin`, so it would need its
 own place in the access rules.
 
-## A status surface for the background daemon
+## Being visible without a UI of its own
 
-Windows users expect a background app to have a notification-area icon
-(status, open config or log, check for updates, quit). A tray icon means
-platform-specific UI code on three platforms, so it is deferred. The
-preferred direction is to configure and watch rommd from RomM instead, which
-depends on what RomM's API can carry. Until then the log file
-(`<data dir>/rommd.log` under the logon task) and the HTTP API are the
-interface.
+rommd has no window, which holds it back more than any missing feature.
+Rather than a launcher app, rommd should show up where people already are:
+Steam, the system tray, a browser tab, RomM. In order:
+
+**1. Steam shortcuts (in progress).** One non-Steam shortcut per game,
+running `rommd play --attach id:N` (Game Mode's process tree, see the Steam
+Deck entry), with RomM's cover as its portrait capsule. Which games:
+- every game rommd has downloaded, by default (no setup);
+- plus every game in the RomM collections `[steam] collections` names,
+  downloaded or not: the launch downloads it, so a collection is how a game
+  reaches Game Mode without a trip to Desktop Mode. A collection adds games;
+  it doesn't filter, which could only ever show games already fetched.
+- `[steam] downloaded = false` leaves only the collections.
+
+`rommd steam sync` writes them; `rommd steam remove` takes them all out.
+rommd only ever touches shortcuts it made (its own program, `play --attach
+id:`), never the user's others. Facts to keep in mind:
+- `userdata/<account>/config/shortcuts.vdf` is binary VDF (maps, strings,
+  int32s); Steam rewrites it from memory when it exits, so rommd edits it
+  only while Steam is closed, and Steam sees changes after a restart.
+- Artwork goes to `userdata/<account>/config/grid/` named after the
+  shortcut's app ID: `<id>p` portrait (RomM's cover), `<id>` wide, `<id>_hero`,
+  `<id>_logo`. RomM's `path_cover_large` is named `big.png` but can hold a
+  JPEG, so the extension follows the bytes. SteamGridDB (which RomM can
+  query) could fill the other three later.
+- The app ID is `crc32(exe + name) | 0x80000000`, as Steam ROM Manager
+  computes it; two games of one name get their platform in the name.
+- Flatpak Steam can't run a host program without `flatpak-spawn --host`.
+- To verify on a Deck: that Game Mode picks the shortcuts and their art up
+  after a restart, and that launching one downloads and starts the game.
+
+**2. A local page served by rommd** (`http://localhost:7497/`): status,
+running game, downloads in progress, recent games, save conflicts with their
+backups, and the update. No native UI code; the tray's "Open rommd" opens it.
+It is an origin of its own, so it may only use the actions the API already
+has, never the config.
+
+**3. A tray item, `rommd tray`**: a separate process and a client of the
+daemon over HTTP, like `rommd play`, started at login by its own autostart
+entry; `[tray] enabled = false` (or no autostart entry) leaves the daemon on
+its own. Never part of the daemon: the daemon runs without a display (systemd
+user unit), and the Linux release is a static musl build, so a tray crate
+needing GTK can't go in. On Linux `ksni` (StatusNotifierItem over D-Bus, pure
+Rust; KDE and the Deck's desktop, GNOME needs an extension); Windows and macOS
+have native APIs. Menu: status, recent games, "Update available, install",
+"Update Steam shortcuts", "Open rommd" (the page), "Open log", quit.
+
+**Further ideas:**
+- The Launch button in RomM itself: a small RomM PR for a configurable
+  external launcher on the game page would make RomM the UI and retire the
+  userscript. To ask the RomM devs.
+- Desktop notifications: save synced, download finished, save conflict.
+- App-menu entries (Linux `.desktop`, Windows Start menu) from the same games
+  and covers as the Steam shortcuts, so a desktop launcher's search finds
+  them.
+- Discord Rich Presence: "Playing Super Mario 64 via RomM".
 
 ## User documentation beyond the README
 
