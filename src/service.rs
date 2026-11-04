@@ -13,11 +13,23 @@ use crate::config::{Config, ServerConfig};
 
 pub fn install() -> Result<()> {
     let exe = std::env::current_exe().context("locating the rommd binary")?;
-    platform::install(&exe)
+    platform::install(&exe)?;
+    // The tray starts at login as the config says; on an upgrade too, since
+    // the install scripts run this every time.
+    let tray = Config::load_or_create().map_or(true, |c| c.tray.enabled);
+    if let Err(e) = crate::tray::apply_autostart(tray) {
+        eprintln!("Could not set up the tray to start at login: {e:#}");
+    } else if tray && crate::tray::supported() {
+        println!("The tray icon starts at login too ([tray] enabled = false turns it off).");
+        let _ = crate::tray::start_now();
+    }
+    Ok(())
 }
 
 pub fn uninstall() -> Result<()> {
-    platform::uninstall()
+    platform::uninstall()?;
+    let _ = crate::tray::apply_autostart(false);
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

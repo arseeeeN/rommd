@@ -22,6 +22,9 @@ pub struct RecentGame {
     /// fullscreen, a plain one follows the config.
     #[serde(default)]
     pub fullscreen: Option<bool>,
+    /// The profile it was started with, to start it again with the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<crate::profile::ProfileBlob>,
 }
 
 pub struct RecentGames {
@@ -87,6 +90,7 @@ mod tests {
             emulator: "rmg".into(),
             played_at,
             fullscreen: None,
+            profile: None,
         }
     }
 

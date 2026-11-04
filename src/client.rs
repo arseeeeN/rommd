@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use crate::config::{Config, ServerConfig};
 use crate::launches::LaunchInfo;
+use crate::profile::ProfileBlob;
 use crate::recent::RecentGame;
 use crate::server::types::{GamesResponse, StatusResponse};
 use crate::update::UpdateStatus;
@@ -53,6 +54,7 @@ impl Daemon {
         emulator: &str,
         attach: bool,
         fullscreen: Option<bool>,
+        profile: Option<&ProfileBlob>,
     ) -> Result<Launched> {
         let request = self
             .client
@@ -62,6 +64,7 @@ impl Daemon {
                 "emulator": emulator,
                 "attach": attach,
                 "fullscreen": fullscreen,
+                "profile": profile,
             }));
         let response = self.send(request).await?;
         let accepted = response.status() == reqwest::StatusCode::ACCEPTED;

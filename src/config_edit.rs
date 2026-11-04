@@ -91,6 +91,10 @@ pub struct Settings {
     pub romm: Option<(String, String)>,
     pub roms_dir: Option<std::path::PathBuf>,
     pub update_mode: Option<UpdateMode>,
+    /// `[tray] enabled`.
+    pub tray: Option<bool>,
+    /// `[steam] steamgriddb_api_key`.
+    pub steamgriddb_api_key: Option<String>,
 }
 
 /// The commented examples in the generated config, filled in where they are
@@ -154,7 +158,7 @@ pub fn with_settings(text: &str, path: &Path, settings: &Settings) -> Result<Str
         });
     }
     if let Some(dir) = &settings.roms_dir {
-        set(doc.as_table_mut(), "roms_dir", &config_path(dir));
+        set(doc.as_table_mut(), "roms_dir", config_path(dir));
         expected.roms_dir = Some(dir.clone());
     }
     if let Some(mode) = settings.update_mode {
@@ -165,6 +169,24 @@ pub fn with_settings(text: &str, path: &Path, settings: &Settings) -> Result<Str
             .context("[updates] is not a table rommd can change")?;
         set(updates, "mode", mode_name(mode));
         expected.updates.mode = mode;
+    }
+    if let Some(enabled) = settings.tray {
+        let tray = doc
+            .entry("tray")
+            .or_insert_with(|| Item::Table(Table::new()))
+            .as_table_mut()
+            .context("[tray] is not a table rommd can change")?;
+        set(tray, "enabled", enabled);
+        expected.tray.enabled = enabled;
+    }
+    if let Some(key) = &settings.steamgriddb_api_key {
+        let steam = doc
+            .entry("steam")
+            .or_insert_with(|| Item::Table(Table::new()))
+            .as_table_mut()
+            .context("[steam] is not a table rommd can change")?;
+        set(steam, "steamgriddb_api_key", key.as_str());
+        expected.steam.steamgriddb_api_key = Some(key.clone());
     }
     let updated = doc.to_string();
 
@@ -177,11 +199,12 @@ pub fn with_settings(text: &str, path: &Path, settings: &Settings) -> Result<Str
 }
 
 /// Set `key`, keeping the comment after an existing value.
-fn set(table: &mut Table, key: &str, new: &str) {
+fn set(table: &mut Table, key: &str, new: impl Into<toml_edit::Value>) {
+    let new: toml_edit::Value = new.into();
     match table.get_mut(key).and_then(Item::as_value_mut) {
         Some(old) => {
             let decor = old.decor().clone();
-            *old = new.into();
+            *old = new;
             *old.decor_mut() = decor;
         }
         None => {
@@ -406,6 +429,7 @@ switch = "eden"
                 romm: Some(("https://romm.example".into(), "tok\"en".into())),
                 roms_dir: Some(PathBuf::from(dir)),
                 update_mode: Some(UpdateMode::Notify),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -435,6 +459,31 @@ switch = "eden"
             out,
             "[romm]\nbase_url = \"https://new\"   # my NAS\nusername = \"me\"\npassword = \"pw\"\napi_token = \"t\"\n\n[updates]\nmode = \"off\"\n"
         );
+    }
+
+    #[test]
+    fn sets_the_tray_and_the_steamgriddb_key() {
+        let text = "[steam]\ncollections = [\"Deck\"]   # mine\n";
+        let out = with_settings(
+            text,
+            Path::new("c.toml"),
+            &Settings {
+                tray: Some(false),
+                steamgriddb_api_key: Some("k3y".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            out.starts_with(
+                "[steam]\ncollections = [\"Deck\"]   # mine\nsteamgriddb_api_key = \"k3y\"\n"
+            ),
+            "{out}"
+        );
+        let config = Config::parse(&out, Path::new("c.toml")).unwrap();
+        assert!(!config.tray.enabled);
+        assert_eq!(config.steam.steamgriddb_api_key.as_deref(), Some("k3y"));
+        assert_eq!(config.steam.collections, ["Deck"]);
     }
 
     #[test]

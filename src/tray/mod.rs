@@ -10,7 +10,7 @@
 #[cfg(target_os = "linux")]
 mod linux;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::time::Duration;
 
 use crate::client::{Daemon, Launched};
@@ -35,10 +35,12 @@ pub struct View {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
+    /// Start a game again as it was started last.
     Play {
         rom_id: i64,
         emulator: String,
         fullscreen: Option<bool>,
+        profile: Option<crate::profile::ProfileBlob>,
     },
     Stop {
         pid: u32,
@@ -163,6 +165,7 @@ pub fn menu(view: &View) -> Vec<Entry> {
                         rom_id: g.rom_id,
                         emulator: g.emulator.clone(),
                         fullscreen: g.fullscreen,
+                        profile: g.profile.clone(),
                     },
                 )
             })
@@ -225,7 +228,11 @@ async fn perform(daemon: &Daemon, action: Action) -> Option<String> {
             rom_id,
             emulator,
             fullscreen,
-        } => match daemon.launch(rom_id, &emulator, false, fullscreen).await {
+            profile,
+        } => match daemon
+            .launch(rom_id, &emulator, false, fullscreen, profile.as_ref())
+            .await
+        {
             Ok(Launched::Started(_) | Launched::Downloading(_)) => Ok(None),
             Err(e) => Err(e),
         },
@@ -280,10 +287,97 @@ fn open(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+// ── Starting at login ─────────────────────────────────────────────────────────
+
+/// Whether this OS has the tray.
+pub fn supported() -> bool {
+    cfg!(target_os = "linux")
+}
+
+/// Whether there is a desktop to show a tray icon on.
+pub fn desktop_session() -> bool {
+    supported()
+        && ["WAYLAND_DISPLAY", "DISPLAY"]
+            .iter()
+            .any(|v| std::env::var_os(v).is_some())
+}
+
+/// The XDG autostart entry desktops (KDE, GNOME, Xfce) start at login.
+fn autostart_entry() -> Option<std::path::PathBuf> {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))?;
+    Some(config.join("autostart/rommd-tray.desktop"))
+}
+
+/// Start the tray at login, or with `enabled` false no longer; for
+/// `[tray] enabled`. Nothing on an OS without the tray.
+pub fn apply_autostart(enabled: bool) -> Result<()> {
+    if !supported() {
+        return Ok(());
+    }
+    let entry = autostart_entry().context("finding the autostart folder")?;
+    if !enabled {
+        match std::fs::remove_file(&entry) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+            _ => return Ok(()),
+        }
+    }
+    let exe = std::env::current_exe()?.canonicalize()?;
+    let text = format!(
+        "[Desktop Entry]\nType=Application\nName=rommd\nComment=rommd in the system tray\n\
+         Exec=\"{}\" tray\nIcon=input-gaming\nTerminal=false\nNoDisplay=true\n\
+         X-GNOME-Autostart-enabled=true\n",
+        exe.display()
+    );
+    if let Some(dir) = entry.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&entry, text)?;
+    Ok(())
+}
+
+/// Whether another `rommd tray` runs.
+fn other_tray_running() -> bool {
+    let Ok(out) = std::process::Command::new("pgrep")
+        .args(["-f", "rommd tray$"])
+        .output()
+    else {
+        return false;
+    };
+    let me = std::process::id().to_string();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .any(|pid| pid.trim() != me)
+}
+
+/// Start the tray now, apart from this process, when there is a desktop and
+/// it doesn't run yet.
+pub fn start_now() -> Result<()> {
+    if !desktop_session() || other_tray_running() {
+        return Ok(());
+    }
+    let exe = std::env::current_exe()?;
+    let mut command = std::process::Command::new(exe);
+    command
+        .arg("tray")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    command.spawn().context("starting the tray")?;
+    Ok(())
+}
+
 /// Run the tray until the user quits it.
 pub async fn run() -> Result<()> {
     #[cfg(target_os = "linux")]
     {
+        if other_tray_running() {
+            return Ok(());
+        }
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let tray = linux::Tray::spawn(tx).await?;
         let daemon = Daemon::new()?;
@@ -338,6 +432,7 @@ mod tests {
             emulator: "rmg".into(),
             played_at: 0,
             fullscreen: Some(true),
+            profile: None,
         }]
     }
 
@@ -416,6 +511,7 @@ mod tests {
                     rom_id: 35,
                     emulator: "rmg".into(),
                     fullscreen: Some(true),
+                    profile: None,
                 }
             )]
         );

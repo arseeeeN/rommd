@@ -100,6 +100,31 @@ pub async fn run(options: Options) -> Result<()> {
     if existing.is_some() {
         console.say("rommd picks up the change by itself if it is running.")?;
     }
+
+    if crate::tray::supported() {
+        crate::tray::apply_autostart(answers.tray)?;
+        if answers.tray {
+            crate::tray::start_now()?;
+        }
+    }
+    if answers.steam_sync {
+        if crate::process::program_running(Path::new(""), &["steam", "steam_osx"]) {
+            console
+                .say("Steam is running: close it, then run `rommd steam sync` to add the games.")?;
+        } else {
+            console.say("Adding the games to Steam ...")?;
+            match crate::steam::sync_from_config(false, Default::default()).await {
+                Ok((changes, _)) => console.say(&format!(
+                    "  {} games are in Steam now; start Steam to see them. \
+                     `rommd steam sync` updates them later.",
+                    changes.added.len() + changes.kept.len()
+                ))?,
+                Err(e) => {
+                    console.say(&format!("  {e:#}\n  Run `rommd steam sync` to try again."))?
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -113,6 +138,10 @@ struct Answers {
     settings: Settings,
     /// Emulators to add to the config.
     emulators: Vec<Found>,
+    /// Whether the tray starts at login, as the config will say.
+    tray: bool,
+    /// Make the Steam shortcuts once the config is saved.
+    steam_sync: bool,
 }
 
 /// Prompts on a terminal, or (`ask` false) the defaults without asking.
@@ -187,12 +216,58 @@ async fn ask(
 
     answers.settings.romm = romm(console, config.and_then(|c| c.romm.as_ref()), given).await?;
     answers.emulators = emulators(console, config, found)?;
+    let tray_now = config.is_none_or(|c| c.tray.enabled);
+    answers.tray = tray_now;
+    if crate::tray::desktop_session() {
+        answers.tray = tray(console, tray_now)?;
+        if answers.tray != tray_now {
+            answers.settings.tray = Some(answers.tray);
+        }
+    }
+    if console.ask && crate::steam::account_config_dir().is_ok() {
+        let has_key = config.is_some_and(|c| c.steam.steamgriddb_api_key.is_some());
+        let (sync, key) = steam(console, has_key)?;
+        answers.steam_sync = sync;
+        answers.settings.steamgriddb_api_key = key;
+    }
 
     if console.ask && console.yes_no("\nChange more settings (ROM folder, updates)?", false)? {
         answers.settings.roms_dir = roms_dir(console, config)?;
         answers.settings.update_mode = update_mode(console, config)?;
     }
     Ok(answers)
+}
+
+/// Whether the tray icon starts at login.
+fn tray(console: &mut Console<'_>, current: bool) -> Result<bool> {
+    console.say(
+        "\nThe tray icon shows what rommd is doing, starts the games you played \
+         last and installs updates.",
+    )?;
+    console.yes_no("Show rommd in the system tray?", current)
+}
+
+/// Whether to put the RomM games into Steam, and a SteamGridDB API key for
+/// their artwork when the config has none.
+fn steam(console: &mut Console<'_>, has_key: bool) -> Result<(bool, Option<String>)> {
+    console.say(
+        "\nrommd can add your RomM games to Steam, to start them from Steam (and \
+         a Steam Deck's Game Mode): every game you downloaded and every RomM \
+         favorite, the favorites downloading on first launch.",
+    )?;
+    if !console.yes_no("Add your RomM games to Steam?", false)? {
+        return Ok((false, None));
+    }
+    if has_key {
+        return Ok((true, None));
+    }
+    console.say(
+        "Their artwork comes from SteamGridDB, as Steam ROM Manager's does. Without a \
+         key they get RomM's covers and screenshots, and no logos. For a key: \
+         steamgriddb.com, log in, Preferences > API.",
+    )?;
+    let key = console.line("SteamGridDB API key (Enter to skip): ")?;
+    Ok((true, (!key.is_empty()).then_some(key)))
 }
 
 /// The RomM address and token, both checked against the server. `None`
@@ -431,6 +506,31 @@ mod tests {
             normalize_url("https://example.com/romm"),
             "https://example.com/romm",
             "RomM under a path stays there"
+        );
+    }
+
+    #[test]
+    fn the_tray_and_steam_steps() {
+        let mut out = Vec::new();
+        assert!(tray(&mut console("\n", &mut out), true).unwrap());
+        assert!(!tray(&mut console("n\n", &mut out), true).unwrap());
+
+        assert_eq!(
+            steam(&mut console("\n", &mut out), false).unwrap(),
+            (false, None)
+        );
+        assert_eq!(
+            steam(&mut console("y\nk3y\n", &mut out), false).unwrap(),
+            (true, Some("k3y".into()))
+        );
+        assert_eq!(
+            steam(&mut console("y\n\n", &mut out), false).unwrap(),
+            (true, None)
+        );
+        assert_eq!(
+            steam(&mut console("y\n", &mut out), true).unwrap(),
+            (true, None),
+            "no question for a key the config has"
         );
     }
 

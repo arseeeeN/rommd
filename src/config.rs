@@ -29,6 +29,8 @@ pub struct Config {
     pub launch: LaunchConfig,
     #[serde(default)]
     pub steam: SteamConfig,
+    #[serde(default)]
+    pub tray: TrayConfig,
 }
 
 /// `[platforms]` entry: `switch = "eden"`, or a table such as
@@ -94,6 +96,19 @@ impl From<PlatformConfig> for PlatformEntry {
                 PlatformEntry::Settings(PlatformSettings { emulator, folder })
             }
         }
+    }
+}
+
+/// `[tray]`: whether `rommd tray` starts at login (Linux).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct TrayConfig {
+    pub enabled: bool,
+}
+
+impl Default for TrayConfig {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
 

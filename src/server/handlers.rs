@@ -306,6 +306,7 @@ impl Launch {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs()),
                 fullscreen,
+                profile: req.profile.clone(),
             });
         }
 

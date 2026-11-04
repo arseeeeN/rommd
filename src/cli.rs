@@ -81,7 +81,7 @@ async fn play_attached(
 ) -> Result<()> {
     let config = Config::read(&Config::path()).context("reading the config")?;
     let id = match daemon
-        .launch(game.rom_id, emulator, true, fullscreen)
+        .launch(game.rom_id, emulator, true, fullscreen, None)
         .await?
     {
         Launched::Downloading(id) => id,
@@ -211,7 +211,7 @@ async fn launch_showing_progress(
     fullscreen: Option<bool>,
 ) -> Result<u64> {
     tokio::select! {
-        launched = daemon.launch(game.rom_id, emulator, false, fullscreen) => match launched? {
+        launched = daemon.launch(game.rom_id, emulator, false, fullscreen, None) => match launched? {
             Launched::Started(pid) => Ok(pid),
             Launched::Downloading(id) => match follow(daemon, id, false).await? {
                 Followed::Started(pid) => Ok(pid),
