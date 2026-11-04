@@ -1,7 +1,7 @@
 //! SteamGridDB, where Steam ROM Manager gets its artwork, picked the way SRM
 //! picks it by default (`src/core/artwork-providers.ts`): the first game the
 //! title search finds, then per kind the first static image that is neither
-//! NSFW nor humor, in SteamGridDB's own order.
+//! NSFW nor humor, in SteamGridDB's own order, skipping locked ones.
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -68,6 +68,10 @@ struct GameHit {
 #[derive(Deserialize)]
 struct Image {
     url: String,
+    /// A locked image serves a DMCA takedown placeholder instead of the
+    /// artwork; RomM and SRM skip them too.
+    #[serde(default)]
+    lock: bool,
 }
 
 pub struct Client {
@@ -131,7 +135,11 @@ impl Client {
             path.push_str(&format!("&dimensions={dimensions}"));
         }
         let images: Option<Vec<Image>> = self.get(&path).await?;
-        Ok(images.and_then(|i| i.into_iter().next()).map(|i| i.url))
+        Ok(images
+            .unwrap_or_default()
+            .into_iter()
+            .find(|i| !i.lock && !i.url.ends_with('?'))
+            .map(|i| i.url))
     }
 
     pub async fn download(&self, url: &str) -> Result<Vec<u8>> {
