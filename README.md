@@ -219,6 +219,20 @@ and restart refuse while a game is running, so its saves still sync. Running
 Logs: `journalctl --user -u rommd -f` on Linux, `~/Library/Logs/rommd.log` on
 macOS, `%LOCALAPPDATA%\rommd\rommd.log` on Windows.
 
+### Tray icon
+
+`rommd tray` shows rommd in the system tray (the menu bar on macOS): what it
+is doing, the games played last to start again, the running game or download
+to stop, the update, and updating the Steam shortcuts. `rommd service install`
+and `rommd setup` start it at login too; to turn that off:
+
+```toml
+[tray]
+enabled = false
+```
+
+On GNOME the tray needs the AppIndicator extension.
+
 ## Updates
 
 ```toml
