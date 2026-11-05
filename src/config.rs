@@ -289,7 +289,8 @@ impl Config {
     pub fn parse(content: &str, path: &Path) -> Result<Self> {
         let config: Self = toml::from_str(content).map_err(|e| {
             // The usual cause: a Windows path in double quotes.
-            let hint = if e.message().contains("escape") {
+            // `\U` (C:\Users) fails as a unicode escape, not an invalid one.
+            let hint = if e.message().contains("escape") || e.message().contains("unicode") {
                 "\nhint: in double quotes a backslash starts an escape sequence; \
                  write Windows paths in single quotes ('C:\\Games\\rom.gba') \
                  or with forward slashes (\"C:/Games/rom.gba\")"
@@ -391,7 +392,7 @@ const TEMPLATE_HEAD: &str = r#"# rommd configuration — edit to match your setu
 # ROMs are stored under roms_dir/<platform folder>/<rom_file>, by default in
 # {ROMS_DIR}. The platform folder is the one RomM uses, unless
 # [platforms] below names another.
-# roms_dir = "~/Roms"
+# roms_dir = '~/Roms'
 
 [server]
 port = 7497
@@ -755,13 +756,15 @@ folder = "/mnt/sd/wii"
 
     #[test]
     fn backslashes_in_double_quotes_get_a_hint() {
-        let err = Config::parse(
+        for toml in [
             "[emulators.mgba]\nbinary = \"C:\\Program Files\\mGBA\\mGBA.exe\"\nconfig_dir = \"x\"\n",
-            Path::new("config.toml"),
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(err.contains("single quotes"), "{err}");
+            "roms_dir = \"C:\\Users\\me\\Roms\"\n",
+        ] {
+            let err = Config::parse(toml, Path::new("config.toml"))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("single quotes"), "{err}");
+        }
     }
 
     const ALL_OS: [Os; 3] = [Os::Mac, Os::Windows, Os::Linux];
