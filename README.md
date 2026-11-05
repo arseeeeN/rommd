@@ -107,7 +107,7 @@ your own build, set `mode = "off"` under `[updates]`.
 
 `rommd setup` asks for your RomM server's address and an API token (create
 one in RomM under Settings > API Tokens), checks both against the server,
-and adds the emulators it finds on this computer (macOS and Linux so far).
+and adds the emulators it finds on this computer.
 Choosing to change more settings also asks for the ROM folder and how updates
 are installed. It only changes what you answer, keeps everything else in the
 file as it is, and can be run again any time.

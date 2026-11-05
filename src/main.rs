@@ -122,7 +122,7 @@ enum Command {
     },
     /// Show rommd in the system tray: what it is doing, the games played
     /// last, the update, and updating the Steam shortcuts. Needs rommd
-    /// running. Linux only so far.
+    /// running.
     Tray,
     /// Run rommd in the background from login, and start, stop or restart it.
     Service {
